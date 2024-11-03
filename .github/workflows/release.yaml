@@ -60,7 +60,7 @@ jobs:
           git config --local user.email "$GITHUB_ACTOR"
           git config --local user.name "$GITHUB_ACTOR@users.noreply.github.com"
           git add index.html
-          git commit -m "Update Helm charts page version ${{ needs.release.outputs.changed_charts  }}" || exit 0  # Don't fail if no changes
+          git commit -m "Update Helm charts page version: ${{ needs.release.outputs.changed_charts  }}" || exit 0  # Don't fail if no changes
           git push
 
   deploy:
