@@ -70,6 +70,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       id-token: write  # Needed to deploy to GitHub Pages
+      pages: write
     needs:
       - generate-page
     steps:
