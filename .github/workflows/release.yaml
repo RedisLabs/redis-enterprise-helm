@@ -68,6 +68,8 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Needed to commit the generated file
     needs:
       - generate-page
     steps:
