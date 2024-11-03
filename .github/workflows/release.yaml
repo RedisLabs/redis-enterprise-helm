@@ -69,7 +69,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Needed to commit the generated file
+      id-token: write  # Needed to deploy to GitHub Pages
     needs:
       - generate-page
     steps:
