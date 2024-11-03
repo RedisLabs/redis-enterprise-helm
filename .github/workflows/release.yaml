@@ -11,6 +11,9 @@ jobs:
       contents: write # to push chart release and create a release (helm/chart-releaser-action)
 
     runs-on: ubuntu-latest
+    outputs:
+      changed_charts: ${{ steps.chart-releaser.outputs.changed_charts }}
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -28,6 +31,7 @@ jobs:
 
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@v1.6.0
+        id: chart-releaser
         env:
           CR_TOKEN: "${{ github.token }}"
 
@@ -37,17 +41,12 @@ jobs:
       contents: write  # Needed to commit the generated file
     needs: 
       - release
+    if: needs.release.outputs.changed_charts != ''
     steps:
       - uses: actions/checkout@v4
         with:
           ref: gh-pages
           fetch-depth: 0
-
-      - name: debug-print
-        run: |
-          echo "Current directory is $(pwd)"
-          echo "Contents of the directory are $(ls -la)"
-          echo "Contents of the directory are $(ls -la /home/runner/work/helm-release/helm-release/)"
 
       - name: Generate Helm Charts HTML
         uses: ./.github/actions/generate-helm-html-index
@@ -62,3 +61,24 @@ jobs:
           git add index.html
           git commit -m "Update Helm charts page" || exit 0  # Don't fail if no changes
           git push
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs:
+      - generate-page
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # Upload entire repository
+          path: '.'
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
