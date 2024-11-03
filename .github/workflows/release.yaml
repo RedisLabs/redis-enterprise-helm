@@ -52,8 +52,8 @@ jobs:
       - name: Generate Helm Charts HTML
         uses: ./.github/actions/generate-helm-html-index
         with:
-          index-file: 'index.yaml'
-          output-file: 'index.html'
+          index_file: 'index.yaml'
+          output_file: 'index.html'
       
       - name: Commit and Push
         run: |
