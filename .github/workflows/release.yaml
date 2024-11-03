@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       changed_charts: ${{ steps.chart-releaser.outputs.changed_charts }}
+      chart_version: ${{ steps.chart-releaser.outputs.chart_version }}
 
     steps:
       - name: Checkout Code
@@ -23,7 +24,7 @@ jobs:
       - name: Configure Git
         run: |
           git config user.name "$GITHUB_ACTOR"
-          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"  
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
       - name: Set up Helm
         uses: azure/setup-helm@v3.5
         with:
@@ -56,10 +57,10 @@ jobs:
       
       - name: Commit and Push
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
+          git config --local user.email "$GITHUB_ACTOR"
+          git config --local user.name "$GITHUB_ACTOR@users.noreply.github.com"
           git add index.html
-          git commit -m "Update Helm charts page" || exit 0  # Don't fail if no changes
+          git commit -m "Update Helm charts page version ${{ needs.release.outputs.changed_charts  }}" || exit 0  # Don't fail if no changes
           git push
 
   deploy:
