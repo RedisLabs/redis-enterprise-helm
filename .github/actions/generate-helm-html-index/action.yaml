@@ -33,7 +33,6 @@ runs:
     - name: Run Generator Script
       shell: bash
       run: |
-        python ${{ github.action_path }}/generate_index.py \
-          ${{ inputs.index_file }} \
+        python ${{ github.action_path }}/htidx.py ${{ inputs.index_file }} \
           --output ${{ inputs.output_file }} \
           --repo-url ${{ inputs.repo_url }}
