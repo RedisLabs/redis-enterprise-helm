@@ -1,103 +1,308 @@
-
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Helm Charts Repository</title>
+    <title>Redis Enterprise Operator - Helm Chart</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 40px auto; max-width: 1200px; padding: 0 20px; }
-        .chart { border: 1px solid #ddd; margin: 20px 0; padding: 20px; border-radius: 8px; }
-        .chart-header { display: flex; align-items: center; justify-content: space-between; }
-        .chart-icon { max-width: 100px; }
-        .version { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; }
-        .download-btn { 
+        body {
+            font-family: -apple-system, system-ui, sans-serif;
+            line-height: 1.5;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .chart-icon {
+            width: 64px;
+            height: 64px;
+        }
+        .title-section h1 {
+            margin: 0;
+            color: #2a2a2a;
+        }
+        .description {
+            color: #666;
+            margin: 10px 0;
+        }
+        .metadata {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            margin: 20px 0;
+            padding: 15px;
+            background: #f8f8f8;
+            border-radius: 6px;
+        }
+        .metadata div {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .metadata div::before {
+            content: "•";
+            color: #666;
+        }
+        .search-section {
+            margin: 20px 0;
+            display: flex;
+            gap: 10px;
+        }
+        input[type="text"] {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            flex: 1;
+        }
+        .versions-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        .versions-table th {
+            text-align: left;
+            padding: 12px;
+            background: #f0f0f0;
+            border-bottom: 2px solid #ddd;
+        }
+        .versions-table td {
+            padding: 12px;
+            border-bottom: 1px solid #eee;
+        }
+        .download-btn {
             display: inline-block;
-            padding: 10px 20px;
-            background: #0066cc;
+            padding: 6px 12px;
+            background: #0366d6;
             color: white;
             text-decoration: none;
-            border-radius: 5px;
-            margin-top: 10px;
+            border-radius: 4px;
+            font-size: 14px;
         }
-        .download-btn:hover { background: #0052a3; }
+        .download-btn:hover {
+            background: #0255b3;
+        }
+        .installation {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f8f8;
+            border-radius: 6px;
+        }
+        .command {
+            background: #2a2a2a;
+            color: white;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: monospace;
+            margin: 10px 0;
+            position: relative;
+        }
+        .copy-btn {
+            position: absolute;
+            right: 5px;
+            top: 5px;
+            padding: 5px 10px;
+            background: #444;
+            border: none;
+            color: white;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .copy-btn:hover {
+            background: #555;
+        }
+        .hidden {
+            display: none;
+        }
     </style>
 </head>
 <body>
-    <h1>Helm Charts Repository</h1>
+    <div class="container">
+        <div class="header">
+            <img src="https://redis.com/wp-content/themes/wpx/assets/images/logo-redis.svg" class="chart-icon" alt="redis-enterprise-operator">
+            <div class="title-section">
+                <h1>Redis Enterprise Operator</h1>
+                <div class="description">A Helm chart for Redis Enterprise Operator for Kubernetes</div>
+            </div>
+        </div>
+        <div class="metadata">
+            <div>Type: application</div>
+            <div>Latest: v0.2.4</div>
+            <div>App Version: 7.4.2-2</div>
+            <div>Home: <a href="https://redis.com">https://redis.com</a></div>
+        </div>
+        <div class="installation">
+            <h3>Installation</h3>
+            <p>Add this Helm repository:</p>
+            <div class="command">
+                $ helm repo add myrepo https://helm.redis.io
+                <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
+            </div>
+            <p>Install the chart:</p>
+            <div class="command" id="install-command">
+                $ helm install my-release myrepo/redis-enterprise-operator
+                <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
+            </div>
+        </div>
+        <div class="search-section">
+            <input type="text" id="versionSearch"
+                   placeholder="Search versions (e.g., 0.2 or 7.4)..."
+                   onkeyup="filterVersions()">
+        </div>
+        <table class="versions-table">
+            <thead>
+                <tr>
+                    <th>Version</th>
+                    <th>App Version</th>
+                    <th>Created</th>
+                    <th>Digest</th>
+                    <th>Download</th>
+                </tr>
+            </thead>
+            <tbody>
+                
+        <tr class="version-row" data-version="0.2.4"
+            data-appversion="7.4.2-2" data-command="helm install my-release myrepo/redis-enterprise-operator:0.2.4">
+            <td>
+                <input type="radio" name="version" value="0.2.4"
+                    onclick="toggleVersion(this)" data-default="helm install my-release myrepo/redis-enterprise-operator">
+                0.2.4
+            </td>
+            <td>7.4.2-2</td>
+            <td>2024-11-03</td>
+            <td>076a6ba1</td>
+            <td><a href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-enterprise-operator-0.2.4/redis-enterprise-operator-0.2.4.tgz" class="download-btn">Download</a></td>
+        </tr>
 
-        <div class="chart">
-            <div class="chart-header">
-                <h2>redis-enterprise-operator</h2>
-                <img src="https://redis.com/wp-content/themes/wpx/assets/images/logo-redis.svg" class="chart-icon" alt="Chart icon">
-            </div>
-            <p>A Helm chart for Redis Enterprise Operator for Kubernetes</p>
-            <div class="version">
-                <h3>Version 0.2.4</h3>
-                <p>App Version: 7.4.2-2</p>
-                <p>Created: 2024-11-03T16:26:49.970225759Z</p>
-                <a href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-enterprise-operator-0.2.4/redis-enterprise-operator-0.2.4.tgz" class="download-btn">Download Chart</a>
-            </div>
-        </div>
-        
-        <div class="chart">
-            <div class="chart-header">
-                <h2>redis-enterprise-operator</h2>
-                <img src="https://redis.com/wp-content/themes/wpx/assets/images/logo-redis.svg" class="chart-icon" alt="Chart icon">
-            </div>
-            <p>A Helm chart for Redis Enterprise Operator for Kubernetes</p>
-            <div class="version">
-                <h3>Version 0.2.3</h3>
-                <p>App Version: 7.4.2-2</p>
-                <p>Created: 2024-11-03T16:17:52.133141607Z</p>
-                <a href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-enterprise-operator-0.2.3/redis-enterprise-operator-0.2.3.tgz" class="download-btn">Download Chart</a>
-            </div>
-        </div>
-        
-        <div class="chart">
-            <div class="chart-header">
-                <h2>redis-enterprise-operator</h2>
-                <img src="https://redis.com/wp-content/themes/wpx/assets/images/logo-redis.svg" class="chart-icon" alt="Chart icon">
-            </div>
-            <p>A Helm chart for Redis Enterprise Operator for Kubernetes</p>
-            <div class="version">
-                <h3>Version 0.2.2</h3>
-                <p>App Version: 7.4.2-2</p>
-                <p>Created: 2024-11-03T13:24:42.338751946Z</p>
-                <a href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-enterprise-operator-0.2.2/redis-enterprise-operator-0.2.2.tgz" class="download-btn">Download Chart</a>
-            </div>
-        </div>
-        
-        <div class="chart">
-            <div class="chart-header">
-                <h2>redis-enterprise-operator</h2>
-                <img src="https://redis.com/wp-content/themes/wpx/assets/images/logo-redis.svg" class="chart-icon" alt="Chart icon">
-            </div>
-            <p>A Helm chart for Redis Enterprise Operator for Kubernetes</p>
-            <div class="version">
-                <h3>Version 0.2.1</h3>
-                <p>App Version: 7.4.2-2</p>
-                <p>Created: 2024-11-03T13:21:55.901630987Z</p>
-                <a href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-enterprise-operator-0.2.1/redis-enterprise-operator-0.2.1.tgz" class="download-btn">Download Chart</a>
-            </div>
-        </div>
-        
-        <div class="chart">
-            <div class="chart-header">
-                <h2>redis-enterprise-operator</h2>
-                <img src="https://redis.com/wp-content/themes/wpx/assets/images/logo-redis.svg" class="chart-icon" alt="Chart icon">
-            </div>
-            <p>A Helm chart for Redis Enterprise Operator for Kubernetes</p>
-            <div class="version">
-                <h3>Version 0.2.0</h3>
-                <p>App Version: 7.4.2-2</p>
-                <p>Created: 2024-11-03T09:28:32.891267882Z</p>
-                <a href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-enterprise-operator-0.2.0/redis-enterprise-operator-0.2.0.tgz" class="download-btn">Download Chart</a>
-            </div>
-        </div>
-        
-    <footer>
-        <p>Generated on 2024-11-03 19:40:06</p>
-    </footer>
+        <tr class="version-row" data-version="0.2.3"
+            data-appversion="7.4.2-2" data-command="helm install my-release myrepo/redis-enterprise-operator:0.2.3">
+            <td>
+                <input type="radio" name="version" value="0.2.3"
+                    onclick="toggleVersion(this)" data-default="helm install my-release myrepo/redis-enterprise-operator">
+                0.2.3
+            </td>
+            <td>7.4.2-2</td>
+            <td>2024-11-03</td>
+            <td>614ebf96</td>
+            <td><a href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-enterprise-operator-0.2.3/redis-enterprise-operator-0.2.3.tgz" class="download-btn">Download</a></td>
+        </tr>
+
+        <tr class="version-row" data-version="0.2.2"
+            data-appversion="7.4.2-2" data-command="helm install my-release myrepo/redis-enterprise-operator:0.2.2">
+            <td>
+                <input type="radio" name="version" value="0.2.2"
+                    onclick="toggleVersion(this)" data-default="helm install my-release myrepo/redis-enterprise-operator">
+                0.2.2
+            </td>
+            <td>7.4.2-2</td>
+            <td>2024-11-03</td>
+            <td>3a0814cd</td>
+            <td><a href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-enterprise-operator-0.2.2/redis-enterprise-operator-0.2.2.tgz" class="download-btn">Download</a></td>
+        </tr>
+
+        <tr class="version-row" data-version="0.2.1"
+            data-appversion="7.4.2-2" data-command="helm install my-release myrepo/redis-enterprise-operator:0.2.1">
+            <td>
+                <input type="radio" name="version" value="0.2.1"
+                    onclick="toggleVersion(this)" data-default="helm install my-release myrepo/redis-enterprise-operator">
+                0.2.1
+            </td>
+            <td>7.4.2-2</td>
+            <td>2024-11-03</td>
+            <td>1b3ba2ab</td>
+            <td><a href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-enterprise-operator-0.2.1/redis-enterprise-operator-0.2.1.tgz" class="download-btn">Download</a></td>
+        </tr>
+
+        <tr class="version-row" data-version="0.2.0"
+            data-appversion="7.4.2-2" data-command="helm install my-release myrepo/redis-enterprise-operator:0.2.0">
+            <td>
+                <input type="radio" name="version" value="0.2.0"
+                    onclick="toggleVersion(this)" data-default="helm install my-release myrepo/redis-enterprise-operator">
+                0.2.0
+            </td>
+            <td>7.4.2-2</td>
+            <td>2024-11-03</td>
+            <td>d96641c1</td>
+            <td><a href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-enterprise-operator-0.2.0/redis-enterprise-operator-0.2.0.tgz" class="download-btn">Download</a></td>
+        </tr>
+            </tbody>
+        </table>
+    </div>
+<script>
+    function filterVersions() {
+        const searchText = document.getElementById('versionSearch').value
+            .toLowerCase();
+        const rows = document.getElementsByClassName('version-row');
+        for (const row of rows) {
+            const version = row.dataset.version.toLowerCase();
+            const appVersion = row.dataset.appversion.toLowerCase();
+            if (version === 'latest') {
+                row.classList.toggle('hidden', searchText !== '');
+            } else {
+                const matches = version.includes(searchText) ||
+                              appVersion.includes(searchText);
+                row.classList.toggle('hidden', !matches);
+            }
+        }
+    }
+
+    let lastClickedRadio = null;
+
+    function toggleVersion(radio) {
+        if (lastClickedRadio === radio) {
+            // Clicking the same radio again - uncheck it
+            radio.checked = false;
+            lastClickedRadio = null;
+            updateInstallCommand(radio.dataset.default);
+        } else {
+            // Clicking a different radio - update selection
+            lastClickedRadio = radio;
+            const row = radio.closest('tr');
+            const command = row.dataset.command;
+            updateInstallCommand(command);
+        }
+    }
+
+    function updateInstallCommand(command) {
+        const commandDiv = document.getElementById('install-command');
+        commandDiv.textContent = '$ ' + command;
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'copy-btn';
+        copyBtn.onclick = function() { copyCommand(this); };
+        copyBtn.textContent = 'Copy';
+        commandDiv.appendChild(copyBtn);
+    }
+
+    function copyCommand(button) {
+        const command = button.parentElement.textContent.trim()
+            .replace('Copy', '').trim();
+        navigator.clipboard.writeText(command);
+        const originalText = button.textContent;
+        button.textContent = 'Copied!';
+        setTimeout(() => {
+            button.textContent = originalText;
+        }, 2000);
+    }
+
+    // Initialize with default command on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        const defaultCmd = document.querySelector('input[type="radio"]')
+            .dataset.default;
+        updateInstallCommand(defaultCmd);
+    });
+</script>
 </body>
 </html>
