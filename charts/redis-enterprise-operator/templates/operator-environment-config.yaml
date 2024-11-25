@@ -6,9 +6,4 @@ metadata:
   name: operator-environment-config
   namespace: {{ $.Release.Namespace }}
   annotations:
-    "redis/operator-ver": {{ .Values.operator.image.tag }}
-    "redis/helm-chart-ver": {{ .Chart.Version }}
-data:
-  {{- with .Values.operator }}
-  ACTIVE_ACTIVE_DATABASE_CONTROLLER_ENABLED: {{ .activeActiveDatabaseControllerEnabled | quote }}
-  {{- end }}
+    {{- include "redis-enterprise-operator.annotations" . | nindent 4}}
