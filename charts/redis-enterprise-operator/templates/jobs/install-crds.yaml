@@ -17,7 +17,6 @@ spec:
       labels:
         app: redis-enterprise
     spec:
-      serviceAccountName: redis-enterprise-crds
       containers:
         - name: gatekeeper-crds
           image: {{ include "redis-enterprise-operator.operator.image" . | printf "%s" | trim }}
@@ -35,9 +34,15 @@ spec:
             - "-crdPaths=/crds/rec_crd.yaml,/crds/redb_crd.yaml,/crds/reaadb_crd.yaml,/crds/rerc_crd.yaml"
           resources:
             limits:
-              cpu: 500m
-              memory: 256Mi
+              cpu: 100m
+              memory: 100Mi
+      serviceAccountName: redis-enterprise-crds
       restartPolicy: OnFailure
+      imagePullSecrets:
+      {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+      {{- end }}
+
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

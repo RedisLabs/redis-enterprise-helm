@@ -2,12 +2,10 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
     annotations:
-        redis/helm-chart-ver: {{ .Chart.Version }}
-        redis/operator-ver: {{ .Values.operator.image.tag }}
+        {{- include "redis-enterprise-operator.annotations" . | nindent 8}}
     labels:
         app: redis-enterprise
     name: redis-enterprise-operator
-    namespace: {{ .Release.Namespace }}
 roleRef:
     apiGroup: rbac.authorization.k8s.io
     kind: Role

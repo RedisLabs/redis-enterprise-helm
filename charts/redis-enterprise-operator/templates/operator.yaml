@@ -2,12 +2,10 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
     annotations:
-        redis/helm-chart-ver: {{ .Chart.Version }}
-        redis/operator-ver: {{ .Values.operator.image.tag }}
+        {{- include "redis-enterprise-operator.annotations" . | nindent 8}}
     labels:
         app: redis-enterprise
     name: redis-enterprise-operator
-    namespace: {{ .Release.Namespace }}
 spec:
     replicas: 1
     selector:
@@ -40,9 +38,25 @@ spec:
                             fieldPath: metadata.name
                     - name: OPERATOR_NAME
                       value: redis-enterprise-operator
-                    {{- if .Values.isOpenshift }}
-                    - name: DEPLOY_RHEL
+                    {{- if .Values.openshift.mode }}
+                    - name: IS_OPENSHIFT
                       value: "true"
+                    {{- end }}
+                    {{- if (.Values.global).azure }}
+                    {{- with .Values.global.azure.images }}
+                    - name: DEFAULT_RS_IMAGE_REPOSITORY
+                      value: {{ .rs.registry }}/{{ .rs.image }}
+                    - name: DEFAULT_RIGGER_IMAGE_REPOSITORY
+                      value: {{ .rigger.registry }}/{{ .rigger.image }}
+                    - name: DEFAULT_BOOTSTRAPPER_IMAGE_REPOSITORY
+                      value: {{ .operator.registry }}/{{ .operator.image }}
+                    - name: DEFAULT_RS_IMAGE_DIGEST
+                      value: {{ .rs.digest }}
+                    - name: DEFAULT_RIGGER_IMAGE_DIGEST
+                      value: {{ .rigger.digest }}
+                    - name: DEFAULT_BOOTSTRAPPER_IMAGE_DIGEST
+                      value: {{ .operator.digest }}
+                    {{- end }}
                     {{- end }}
                   envFrom:
                     - configMapRef:
@@ -135,13 +149,13 @@ spec:
                     privileged: false
                     readOnlyRootFilesystem: true
             securityContext: 
-                {{- if not .Values.isOpenshift}}
+                {{- if not .Values.openshift.mode}}
               seccompProfile:
                 type: RuntimeDefault
                 {{- end }}
               runAsNonRoot: true
             serviceAccountName: redis-enterprise-operator
-              {{- if .Values.imagePullSecret }}
             imagePullSecrets:
-              - name: .Values.imagePullSecret
-              {{- end }}
+            {{- range .Values.imagePullSecrets }}
+              - name: {{ . }}
+            {{- end }}

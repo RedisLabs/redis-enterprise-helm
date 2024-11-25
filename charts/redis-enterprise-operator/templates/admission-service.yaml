@@ -4,10 +4,12 @@ metadata:
   name: admission
   labels:
     app: redis-enterprise
+  annotations:
+    {{- include "redis-enterprise-operator.annotations" . | nindent 4}}
 spec:
   ports:
-  - port: 443
-    protocol: TCP
-    targetPort: 8443
+    - port: 443
+      protocol: TCP
+      targetPort: 8443
   selector:
     name: redis-enterprise-operator

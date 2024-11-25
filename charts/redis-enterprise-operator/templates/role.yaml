@@ -2,12 +2,10 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
     annotations:
-        redis/helm-chart-ver: {{ .Chart.Version }}
-        redis/operator-ver: {{ .Values.operator.image.tag }}
+        {{- include "redis-enterprise-operator.annotations" . | nindent 8}}
     labels:
         app: redis-enterprise
     name: redis-enterprise-operator
-    namespace: {{ .Release.Namespace }}
 rules:
     - apiGroups:
         - rbac.authorization.k8s.io
@@ -17,18 +15,11 @@ rules:
         - serviceaccounts
         - rolebindings
       verbs:
-        - bind
-        - escalate
-        - impersonate
-        - userextras
         - create
         - get
-        - list
-        - watch
         - update
         - patch
         - delete
-        - deletecollection
     - apiGroups:
         - app.redislabs.com
       resources:
@@ -46,7 +37,6 @@ rules:
         - redisenterpriseactiveactivedatabases/finalizers
       verbs:
         - delete
-        - deletecollection
         - get
         - list
         - patch
@@ -60,17 +50,11 @@ rules:
       verbs:
         - update
         - get
-        - read
-        - list
-        - listallnamespaces
-        - watch
-        - watchlist
-        - watchlistallnamespaces
         - create
         - patch
-        - replace
         - delete
-        - deletecollection
+        - list
+        - watch
     - apiGroups:
         - ""
       resources:
@@ -95,11 +79,10 @@ rules:
       verbs:
         - create
         - delete
-        - deletecollection
         - get
-        - list
         - patch
         - update
+        - list
         - watch
     - apiGroups:
         - policy
@@ -120,8 +103,8 @@ rules:
         - delete
         - get
         - update
-        - list
         - watch
+        - list
     - apiGroups:
         - ""
       resources:
@@ -139,23 +122,23 @@ rules:
         - pods
       verbs:
         - get
-        - watch
         - list
         - update
         - patch
         - delete
+        - watch
     - apiGroups:
         - ""
       resources:
         - services
       verbs:
         - get
-        - watch
         - list
         - update
         - patch
         - create
         - delete
+        - watch
     - apiGroups:
         - policy
       resourceNames:
@@ -171,19 +154,11 @@ rules:
       verbs:
         - create
         - patch
-        - replace
         - delete
-        - deletecollection
-        - read
         - list
-        - listallnamespaces
-        - watch
-        - watchlist
-        - watchlistallnamespaces
-        - patchstatus
-        - readstatus
-        - replacestatus
         - update
+        - get
+        - watch
     - apiGroups:
         - networking.istio.io
       resources:
@@ -191,18 +166,32 @@ rules:
         - virtualservices
       verbs:
         - get
-        - watch
         - list
         - update
         - patch
         - create
         - delete
-	{{- if .Values.isOpenshift }}
-    - apiGroups: ["route.openshift.io"]
-      resources: ["routes", "routes/custom-host"]
-      verbs: ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
-    - apiGroups: ["security.openshift.io"]
-      resourceNames: ["nonroot"]
-      resources: ["securitycontextconstraints"]
-      verbs: ["use"]
-	{{- end }}
+        - watch
+	  {{- if .Values.openshift.mode }}
+    - apiGroups:
+        - route.openshift.io
+      resources:
+        - routes
+        - routes/custom-host
+      verbs:
+        - create
+        - delete
+        - get
+        - list
+        - patch
+        - update
+        - watch
+    - apiGroups:
+        - security.openshift.io
+      resourceNames:
+        - nonroot
+      resources:
+        - securitycontextconstraints
+      verbs:
+        - use
+	  {{- end }}{{/* if .Values.openshift.mode */}}

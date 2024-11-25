@@ -9,7 +9,7 @@ Official Helm chart for installing, configuring and upgrading **Redis Enterprise
 
 - Kubernetes 1.23+  
   Supported Kubernetes versions can vary according to the Kubernetes distribution being used.  
-  Please consult the [release notes](https://docs.redis.com/latest/kubernetes/release-notes/) for detailed supported distributions information per operator version.
+  Please consult the [release notes](https://redis.io/docs/latest/operate/kubernetes/release-notes/) for detailed supported distributions information per operator version.
 - Helm 3.10+
 
 ## Installing the Chart
@@ -22,11 +22,11 @@ helm install [RELEASE_NAME] [PATH_TO_CHART]
 
 The `[PATH_TO_CHART]` may be a path to the chart root directory, or a chart archive on the local filesystem.  
   
-To install the chart on **OpenShift**, set the `isOpenshift=true` value:
+To install the chart on **OpenShift**, set the `openshift.mode=true` value:
 
 ```sh
 helm install [RELEASE_NAME] [PATH_TO_CHART] \
-     --set isOpenshift=true
+     --set openshift.mode=true
 ```
 
 To create and select a namespace for the installation, specify the `--namespace` and `--create-namespace` flags:
@@ -109,7 +109,7 @@ spec:
 kubectl apply -f rec.yaml -n [NAMESPACE]
 ```
 
-See [Create a Redis Enterprise cluster](https://docs.redis.com/latest/kubernetes/deployment/quick-start/#create-a-redis-enterprise-cluster-rec) and [Redis Enterprise Cluster API](https://github.com/RedisLabs/redis-enterprise-k8s-docs/blob/master/redis_enterprise_cluster_api.md) for more information and options for creating a Redis Enterprise Cluster.
+See [Create a Redis Enterprise cluster](https://redis.io/docs/latest/operate/kubernetes/deployment/quick-start/#create-a-redis-enterprise-cluster-rec) and [Redis Enterprise Cluster API](https://github.com/RedisLabs/redis-enterprise-k8s-docs/blob/master/redis_enterprise_cluster_api.md) for more information and options for creating a Redis Enterprise Cluster.
 
 ## Configuration
 
@@ -138,7 +138,7 @@ See [Customizing the Chart Before Installing](https://helm.sh/docs/intro/using_h
 This is a preliminary release of this Helm chart, and as of now some if its functionality is still limited:
 
 - The chart only installs the Redis Enterprise Operator, but doesn't create a Redis Enterprise Cluster. See [Creating a Redis Enterprise Cluster](#creating-a-redis-enterprise-cluster) section for instructions on how to directly create a Redis Enterprise Cluster.
-- Several configuration options for the operator are still unsupported, including multiple REDB namespaces, rack-aware, and vault integration. These options can be enabled by following the relevant instructions in the [product documentation](https://docs.redis.com/latest/kubernetes/).
+- Several configuration options for the operator are still unsupported, including multiple REDB namespaces, rack-aware, and vault integration. These options can be enabled by following the relevant instructions in the [product documentation](https://redis.io/docs/latest/operate/kubernetes/).
 - CRDs installed by the chart are not removed upon chart uninstallation. These could be manually removed when the chart is uninstalled and are no longer needed, using the following command:
   ```sh
   kubectl delete crds -l app=redis-enterprise
@@ -146,6 +146,4 @@ This is a preliminary release of this Helm chart, and as of now some if its func
 - Helm chart upgrades are not supported, nor migrations from a non-Helm deployment to a Helm deployment.
 - Limited testing in advanced setups such as Active-Active configurations, airgapped deployments, IPv6/dual-stack environments.
 - The chart is still unpublished in a "helm repo" or ArtifactHub, and thus can only be installed from a local source (chart directory/archive).
-- While not really a limitation, please note that this chart also installs the [admission controller](https://docs.redis.com/latest/kubernetes/deployment/quick-start/#enable-the-admission-controller) by default, and there's no option to disable it (as opposed to the non-Helm deployment).
-
-small change
+- While not really a limitation, please note that this chart also installs the [admission controller](https://redis.io/docs/latest/operate/kubernetes/deployment/quick-start/#enable-the-admission-controller) by default, and there's no option to disable it (as opposed to the non-Helm deployment).
