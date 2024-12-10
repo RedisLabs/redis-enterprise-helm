@@ -266,7 +266,7 @@ def generate_index_html(index_data: dict, repo_url: str) -> str:
             </div>
             <p>Install the chart:</p>
             <div class="command" id="install-command">
-                $ helm install my-release myrepo/{chart_name}
+                $ helm install my-release myrepo/{chart_name}:{latest}
                 <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
             </div>
         </div>
