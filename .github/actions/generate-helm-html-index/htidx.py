@@ -71,15 +71,16 @@ def generate_version_rows(chart_name: str, versions: list) -> str:
     rows = []
 
     default_cmd = f"helm install my-release myrepo/{chart_name}"
-    for v in versions:
+    for i,v in enumerate(versions):
         created_date = format_date(v["created"])
         cmd = f"helm install my-release myrepo/{chart_name}:{v['version']}"
+        checked = " checked" if i == 0 else ""
         rows.append(f'''
         <tr class="version-row" data-version="{v['version']}"
             data-appversion="{v['appVersion']}" data-command="{cmd}">
             <td>
                 <input type="radio" name="version" value="{v['version']}"
-                    onclick="toggleVersion(this)" data-default="{default_cmd}">
+                    onclick="toggleVersion(this)" data-default="{default_cmd}"{checked}>
                 {v['version']}
             </td>
             <td>{v['appVersion']}</td>
