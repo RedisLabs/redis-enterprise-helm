@@ -37,4 +37,22 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-enterprise-operator-7.8.2-6/redis-enterprise-operator-7.8.2-6.tgz
     version: 7.8.2-6
-generated: "2024-12-10T09:35:56.700373177Z"
+  - apiVersion: v2
+    appVersion: 7.8.2-6
+    created: "2024-12-10T09:40:53.282344418Z"
+    description: A Helm chart for Redis Enterprise Operator for Kubernetes
+    digest: aca1c51ad5d6d58b6c0e853ca29d05177331e6a0d7741bf40469f8ff4e68f582
+    home: https://redis.com
+    icon: https://redis.com/wp-content/themes/wpx/assets/images/logo-redis.svg
+    keywords:
+    - redis
+    - database
+    maintainers:
+    - name: Redis
+      url: https://redis.com/company/contact/
+    name: redis-enterprise-operator
+    type: application
+    urls:
+    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-enterprise-operator-7.8.2-6/redis-enterprise-operator-7.8.2-6.tgz
+    version: 7.8.2-6
+generated: "2024-12-10T09:40:53.282406093Z"
