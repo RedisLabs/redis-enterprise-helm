@@ -71,16 +71,15 @@ def generate_version_rows(chart_name: str, versions: list) -> str:
     rows = []
 
     default_cmd = f"helm install my-release myrepo/{chart_name}"
-    for i,v in enumerate(versions):
+    for v in versions:
         created_date = format_date(v["created"])
         cmd = f"helm install my-release myrepo/{chart_name}:{v['version']}"
-        checked = " checked" if i == 0 else ""
         rows.append(f'''
         <tr class="version-row" data-version="{v['version']}"
             data-appversion="{v['appVersion']}" data-command="{cmd}">
             <td>
                 <input type="radio" name="version" value="{v['version']}"
-                    onclick="toggleVersion(this)" data-default="{default_cmd}"{checked}>
+                    onclick="toggleVersion(this)" data-default="{default_cmd}">
                 {v['version']}
             </td>
             <td>{v['appVersion']}</td>
@@ -266,7 +265,7 @@ def generate_index_html(index_data: dict, repo_url: str) -> str:
             </div>
             <p>Install the chart:</p>
             <div class="command" id="install-command">
-                $ helm install my-release myrepo/{chart_name}:{latest['appVersion']}
+                $ helm install my-release myrepo/{chart_name}
                 <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
             </div>
         </div>
