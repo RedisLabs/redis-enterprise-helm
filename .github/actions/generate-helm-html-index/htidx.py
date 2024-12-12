@@ -70,17 +70,30 @@ def generate_version_rows(chart_name: str, versions: list) -> str:
     """
     rows = []
 
-    default_cmd = f"helm install my-release myrepo/{chart_name}"
+    default_cmd = f"helm install redis-operator redis/{chart_name}"
+    latest_version = versions[0]['version']
+
     for v in versions:
         created_date = format_date(v["created"])
-        cmd = f"helm install my-release myrepo/{chart_name}:{v['version']}"
+        cmd = f"helm install redis-operator redis/{chart_name} --version {v['version']}"
+        is_latest = v['version'] == latest_version
+        latest_badge = ""
+        checked = ""
+        lst_version = ""
+        if is_latest:
+            checked = "checked"
+            lst_version = ' latest-version'
+            latest_badge = '<span class="latest-badge">Latest</span>'
+
         rows.append(f'''
-        <tr class="version-row" data-version="{v['version']}"
-            data-appversion="{v['appVersion']}" data-command="{cmd}">
+        <tr class="version-row{lst_version}"
+            data-version="{v['version']}"
+            data-appversion="{v['appVersion']}"
+            data-command="{cmd}">
             <td>
                 <input type="radio" name="version" value="{v['version']}"
-                    onclick="toggleVersion(this)" data-default="{default_cmd}">
-                {v['version']}
+                    onclick="toggleVersion(this)" data-default="{default_cmd}" {checked}>
+                {v['version']} {latest_badge}
             </td>
             <td>{v['appVersion']}</td>
             <td>{created_date}</td>
@@ -108,6 +121,8 @@ def generate_index_html(index_data: dict, repo_url: str) -> str:
     versions.sort(key=lambda x: x['created'], reverse=True)
     latest = versions[0]
     version_rows = generate_version_rows(chart_name, versions)
+    initial_install_cmd = f"helm install redis-operator redis/{chart_name} --version {latest['version']}"
+
     return f'''<!DOCTYPE html>
 <html>
 <head>
@@ -237,6 +252,36 @@ def generate_index_html(index_data: dict, repo_url: str) -> str:
         .hidden {{
             display: none;
         }}
+        .latest-version {{
+            background-color: #f8f8ff;
+        }}
+        .latest-badge {{
+            background-color: #0366d6;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 12px;
+            font-size: 12px;
+            margin-left: 8px;
+        }}
+        tr.latest-version td {{
+            font-weight: 500;
+        }}
+        .version-controls {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }}
+        .toggle-latest {{
+            padding: 6px 12px;
+            background: #f0f0f0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+        }}
+        .toggle-latest:hover {{
+            background: #e5e5e5;
+        }}
     </style>
 </head>
 <body>
@@ -260,16 +305,21 @@ def generate_index_html(index_data: dict, repo_url: str) -> str:
             <h3>Installation</h3>
             <p>Add this Helm repository:</p>
             <div class="command">
-                $ helm repo add myrepo {repo_url}
+                $ helm repo add redis {repo_url}
                 <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
             </div>
             <p>Install the chart:</p>
             <div class="command" id="install-command">
-                $ helm install my-release myrepo/{chart_name}
+                $ {initial_install_cmd}
                 <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
             </div>
         </div>
         <div class="search-section">
+            <div class="version-controls">
+                <button class="toggle-latest" onclick="toggleLatestVersion()">
+                    Show/Hide Other Versions
+                </button>
+            </div>
             <input type="text" id="versionSearch"
                    placeholder="Search versions (e.g., 0.2 or 7.4)..."
                    onkeyup="filterVersions()">
@@ -290,6 +340,18 @@ def generate_index_html(index_data: dict, repo_url: str) -> str:
         </table>
     </div>
 <script>
+    let showOnlyLatest = false;
+
+    function toggleLatestVersion() {{
+        showOnlyLatest = !showOnlyLatest;
+        const rows = document.getElementsByClassName('version-row');
+        for (const row of rows) {{
+            if (!row.classList.contains('latest-version')) {{
+                row.classList.toggle('hidden', showOnlyLatest);
+            }}
+        }}
+    }}
+
     function filterVersions() {{
         const searchText = document.getElementById('versionSearch').value
             .toLowerCase();
@@ -297,32 +359,24 @@ def generate_index_html(index_data: dict, repo_url: str) -> str:
         for (const row of rows) {{
             const version = row.dataset.version.toLowerCase();
             const appVersion = row.dataset.appversion.toLowerCase();
-            if (version === 'latest') {{
-                row.classList.toggle('hidden', searchText !== '');
-            }} else {{
-                const matches = version.includes(searchText) ||
-                              appVersion.includes(searchText);
-                row.classList.toggle('hidden', !matches);
+            if (showOnlyLatest && !row.classList.contains('latest-version')) {{
+                row.classList.add('hidden');
+                continue;
             }}
+            const matches = version.includes(searchText) ||
+                          appVersion.includes(searchText);
+            row.classList.toggle('hidden', !matches);
         }}
     }}
 
-    let lastClickedRadio = null;
 
     function toggleVersion(radio) {{
-        if (lastClickedRadio === radio) {{
-            // Clicking the same radio again - uncheck it
-            radio.checked = false;
-            lastClickedRadio = null;
-            updateInstallCommand(radio.dataset.default);
-        }} else {{
-            // Clicking a different radio - update selection
-            lastClickedRadio = radio;
-            const row = radio.closest('tr');
-            const command = row.dataset.command;
-            updateInstallCommand(command);
-        }}
+        // Always update the command when a radio is clicked
+        const row = radio.closest('tr');
+        const command = row.dataset.command;
+        updateInstallCommand(command);
     }}
+
 
     function updateInstallCommand(command) {{
         const commandDiv = document.getElementById('install-command');
@@ -336,7 +390,9 @@ def generate_index_html(index_data: dict, repo_url: str) -> str:
 
     function copyCommand(button) {{
         const command = button.parentElement.textContent.trim()
-            .replace('Copy', '').trim();
+            .replace('Copy', '')
+            .replace('$', '')
+            .trim();
         navigator.clipboard.writeText(command);
         const originalText = button.textContent;
         button.textContent = 'Copied!';
@@ -345,11 +401,13 @@ def generate_index_html(index_data: dict, repo_url: str) -> str:
         }}, 2000);
     }}
 
-    // Initialize with default command on page load
     document.addEventListener('DOMContentLoaded', function() {{
-        const defaultCmd = document.querySelector('input[type="radio"]')
-            .dataset.default;
-        updateInstallCommand(defaultCmd);
+        const radio = document.querySelector('input[type="radio"][checked]');
+        if (radio) {{
+            const row = radio.closest('tr');
+            const command = row.dataset.command;
+            updateInstallCommand(command);
+        }}
     }});
 </script>
 </body>
@@ -374,20 +432,27 @@ def main() -> int:
                         default='https://helm.redis.io',
                         help='Repository URL')
     args = parser.parse_args()
+
     if not os.path.exists(args.index_file):
         print(f"Error: Index file not found: {args.index_file}")
         return 1
-    try:
-        index_data = read_index_yaml(args.index_file)
-        html_content = generate_index_html(index_data, args.repo_url)
-        with open(args.output, 'w', encoding='utf-8') as f:
-            f.write(html_content)
-        print(f"Generated index page at: {args.output}")
-        return 0
-    except (yaml.YAMLError, ValueError, KeyError, StopIteration) as e:
-        print(f"Error generating index: {str(e)}")
+
+    index_data = read_index_yaml(args.index_file)
+    if not index_data or 'entries' not in index_data or not index_data[
+            'entries']:
+        print("Error: No entries found in index.yaml")
         return 1
 
+    html_content = generate_index_html(index_data, args.repo_url)
+    if not html_content:
+        print("Error: Failed to generate HTML content")
+        return 1
 
-if __name__ == "__main__":
+    with open(args.output, 'w', encoding='utf-8') as f:
+        f.write(html_content)
+    print(f"Generated index page at: {args.output}")
+    return 0
+
+
+if __name__ == '__main__':
     sys.exit(main())
