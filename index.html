@@ -127,12 +127,42 @@
         .hidden {
             display: none;
         }
+        .latest-version {
+            background-color: #f8f8ff;
+        }
+        .latest-badge {
+            background-color: #0366d6;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 12px;
+            font-size: 12px;
+            margin-left: 8px;
+        }
+        tr.latest-version td {
+            font-weight: 500;
+        }
+        .version-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .toggle-latest {
+            padding: 6px 12px;
+            background: #f0f0f0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .toggle-latest:hover {
+            background: #e5e5e5;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <img src="https://redis.com/wp-content/themes/wpx/assets/images/logo-redis.svg" class="chart-icon" alt="redis-enterprise-operator">
+            <img src="https://redis.io/wp-content/uploads/2024/04/Logotype.svg" class="chart-icon" alt="redis-enterprise-operator">
             <div class="title-section">
                 <h1>Redis Enterprise Operator</h1>
                 <div class="description">A Helm chart for Redis Enterprise Operator for Kubernetes</div>
@@ -148,16 +178,21 @@
             <h3>Installation</h3>
             <p>Add this Helm repository:</p>
             <div class="command">
-                $ helm repo add myrepo https://helm.redis.io
+                $ helm repo add redis https://helm.redis.io
                 <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
             </div>
             <p>Install the chart:</p>
             <div class="command" id="install-command">
-                $ helm install my-release myrepo/redis-enterprise-operator
+                $ helm install redis-operator redis/redis-enterprise-operator --version 7.8.2-6
                 <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
             </div>
         </div>
         <div class="search-section">
+            <div class="version-controls">
+                <button class="toggle-latest" onclick="toggleLatestVersion()">
+                    Show/Hide Other Versions
+                </button>
+            </div>
             <input type="text" id="versionSearch"
                    placeholder="Search versions (e.g., 0.2 or 7.4)..."
                    onkeyup="filterVersions()">
@@ -174,61 +209,36 @@
             </thead>
             <tbody>
                 
-        <tr class="version-row" data-version="7.8.2-6"
-            data-appversion="7.8.2-6" data-command="helm install my-release myrepo/redis-enterprise-operator:7.8.2-6">
+        <tr class="version-row latest-version"
+            data-version="7.8.2-6"
+            data-appversion="7.8.2-6"
+            data-command="helm install redis-operator redis/redis-enterprise-operator --version 7.8.2-6">
             <td>
                 <input type="radio" name="version" value="7.8.2-6"
-                    onclick="toggleVersion(this)" data-default="helm install my-release myrepo/redis-enterprise-operator">
-                7.8.2-6
+                    onclick="toggleVersion(this)" data-default="helm install redis-operator redis/redis-enterprise-operator" checked>
+                7.8.2-6 <span class="latest-badge">Latest</span>
             </td>
             <td>7.8.2-6</td>
-            <td>2024-12-10</td>
-            <td>044ad63a</td>
-            <td><a href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-enterprise-operator-7.8.2-6/redis-enterprise-operator-7.8.2-6.tgz" class="download-btn">Download</a></td>
-        </tr>
-
-        <tr class="version-row" data-version="7.8.2-6"
-            data-appversion="7.8.2-6" data-command="helm install my-release myrepo/redis-enterprise-operator:7.8.2-6">
-            <td>
-                <input type="radio" name="version" value="7.8.2-6"
-                    onclick="toggleVersion(this)" data-default="helm install my-release myrepo/redis-enterprise-operator">
-                7.8.2-6
-            </td>
-            <td>7.8.2-6</td>
-            <td>2024-12-10</td>
-            <td>aca1c51a</td>
-            <td><a href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-enterprise-operator-7.8.2-6/redis-enterprise-operator-7.8.2-6.tgz" class="download-btn">Download</a></td>
-        </tr>
-
-        <tr class="version-row" data-version="7.8.2-6"
-            data-appversion="7.8.2-6" data-command="helm install my-release myrepo/redis-enterprise-operator:7.8.2-6">
-            <td>
-                <input type="radio" name="version" value="7.8.2-6"
-                    onclick="toggleVersion(this)" data-default="helm install my-release myrepo/redis-enterprise-operator">
-                7.8.2-6
-            </td>
-            <td>7.8.2-6</td>
-            <td>2024-12-10</td>
-            <td>f0c3a5c7</td>
-            <td><a href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-enterprise-operator-7.8.2-6/redis-enterprise-operator-7.8.2-6.tgz" class="download-btn">Download</a></td>
-        </tr>
-
-        <tr class="version-row" data-version="7.8.2-6"
-            data-appversion="7.8.2-6" data-command="helm install my-release myrepo/redis-enterprise-operator:7.8.2-6">
-            <td>
-                <input type="radio" name="version" value="7.8.2-6"
-                    onclick="toggleVersion(this)" data-default="helm install my-release myrepo/redis-enterprise-operator">
-                7.8.2-6
-            </td>
-            <td>7.8.2-6</td>
-            <td>2024-12-10</td>
-            <td>148f5f1a</td>
+            <td>2024-12-12</td>
+            <td>1284127a</td>
             <td><a href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-enterprise-operator-7.8.2-6/redis-enterprise-operator-7.8.2-6.tgz" class="download-btn">Download</a></td>
         </tr>
             </tbody>
         </table>
     </div>
 <script>
+    let showOnlyLatest = false;
+
+    function toggleLatestVersion() {
+        showOnlyLatest = !showOnlyLatest;
+        const rows = document.getElementsByClassName('version-row');
+        for (const row of rows) {
+            if (!row.classList.contains('latest-version')) {
+                row.classList.toggle('hidden', showOnlyLatest);
+            }
+        }
+    }
+
     function filterVersions() {
         const searchText = document.getElementById('versionSearch').value
             .toLowerCase();
@@ -236,32 +246,24 @@
         for (const row of rows) {
             const version = row.dataset.version.toLowerCase();
             const appVersion = row.dataset.appversion.toLowerCase();
-            if (version === 'latest') {
-                row.classList.toggle('hidden', searchText !== '');
-            } else {
-                const matches = version.includes(searchText) ||
-                              appVersion.includes(searchText);
-                row.classList.toggle('hidden', !matches);
+            if (showOnlyLatest && !row.classList.contains('latest-version')) {
+                row.classList.add('hidden');
+                continue;
             }
+            const matches = version.includes(searchText) ||
+                          appVersion.includes(searchText);
+            row.classList.toggle('hidden', !matches);
         }
     }
 
-    let lastClickedRadio = null;
 
     function toggleVersion(radio) {
-        if (lastClickedRadio === radio) {
-            // Clicking the same radio again - uncheck it
-            radio.checked = false;
-            lastClickedRadio = null;
-            updateInstallCommand(radio.dataset.default);
-        } else {
-            // Clicking a different radio - update selection
-            lastClickedRadio = radio;
-            const row = radio.closest('tr');
-            const command = row.dataset.command;
-            updateInstallCommand(command);
-        }
+        // Always update the command when a radio is clicked
+        const row = radio.closest('tr');
+        const command = row.dataset.command;
+        updateInstallCommand(command);
     }
+
 
     function updateInstallCommand(command) {
         const commandDiv = document.getElementById('install-command');
@@ -275,7 +277,9 @@
 
     function copyCommand(button) {
         const command = button.parentElement.textContent.trim()
-            .replace('Copy', '').trim();
+            .replace('Copy', '')
+            .replace('$', '')
+            .trim();
         navigator.clipboard.writeText(command);
         const originalText = button.textContent;
         button.textContent = 'Copied!';
@@ -284,11 +288,13 @@
         }, 2000);
     }
 
-    // Initialize with default command on page load
     document.addEventListener('DOMContentLoaded', function() {
-        const defaultCmd = document.querySelector('input[type="radio"]')
-            .dataset.default;
-        updateInstallCommand(defaultCmd);
+        const radio = document.querySelector('input[type="radio"][checked]');
+        if (radio) {
+            const row = radio.closest('tr');
+            const command = row.dataset.command;
+            updateInstallCommand(command);
+        }
     });
 </script>
 </body>
