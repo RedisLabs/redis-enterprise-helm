@@ -8,7 +8,7 @@ version: 7.8.2-6
 appVersion: 7.8.2-6
 
 home: https://redis.com
-icon: https://redis.com/wp-content/themes/wpx/assets/images/logo-redis.svg
+icon: https://redis.io/wp-content/uploads/2024/04/Logotype.svg
 keywords:
   - redis
   - database
