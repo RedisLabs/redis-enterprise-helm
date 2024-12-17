@@ -1,0 +1,5 @@
+repositoryID: 015c2fb3-d059-44b2-9be9-825583d681c3
+owners: # (optional, used to claim repository ownership)
+  - name: Brad Ascar
+    email: brad.ascar@redis.com
+    url: https://redis.io/docs/latest/operate/kubernetes/
