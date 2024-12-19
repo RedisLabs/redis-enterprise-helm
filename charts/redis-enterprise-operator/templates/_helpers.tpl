@@ -4,7 +4,7 @@
 {{ .registry }}/{{ .image }}@{{ .digest }}
 {{- end }}
 {{- else }}
-{{- $defaultRepository := ternary "registry.connect.redhat.com/redislabs/redis-enterprise-operator" "redislabs/operator-internal" .Values.openshift.mode }}
+{{- $defaultRepository := ternary "registry.connect.redhat.com/redislabs/redis-enterprise-operator" "redislabs/operator" .Values.openshift.mode }}
 {{- $repository := default $defaultRepository .Values.operator.image.repository }}
 {{ $repository }}:{{ .Values.operator.image.tag }}
 {{- end }}
