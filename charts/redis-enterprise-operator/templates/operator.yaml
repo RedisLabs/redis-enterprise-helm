@@ -44,14 +44,10 @@ spec:
                     {{- end }}
                     {{- if (.Values.global).azure }}
                     {{- with .Values.global.azure.images }}
-                    - name: DEFAULT_RS_IMAGE_REPOSITORY
-                      value: {{ .rs.registry }}/{{ .rs.image }}
                     - name: DEFAULT_RIGGER_IMAGE_REPOSITORY
                       value: {{ .rigger.registry }}/{{ .rigger.image }}
                     - name: DEFAULT_BOOTSTRAPPER_IMAGE_REPOSITORY
                       value: {{ .operator.registry }}/{{ .operator.image }}
-                    - name: DEFAULT_RS_IMAGE_DIGEST
-                      value: {{ .rs.digest }}
                     - name: DEFAULT_RIGGER_IMAGE_DIGEST
                       value: {{ .rigger.digest }}
                     - name: DEFAULT_BOOTSTRAPPER_IMAGE_DIGEST
