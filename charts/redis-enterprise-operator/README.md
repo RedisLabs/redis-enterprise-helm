@@ -21,7 +21,14 @@ helm install [RELEASE_NAME] [PATH_TO_CHART]
 ```
 
 The `[PATH_TO_CHART]` may be a path to the chart root directory, or a chart archive on the local filesystem.  
-  
+
+Install using the Redis helm repository.
+
+```sh
+helm repo add redis-enterprise-operator https://helm.redis.io/
+helm install my-redis-enterprise-operator redis-enterprise-operator/redis-enterprise-operator --version 7.8.6-1
+```
+
 To install the chart on **OpenShift**, set the `openshift.mode=true` value:
 
 ```sh
