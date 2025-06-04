@@ -26,7 +26,7 @@ Install using the Redis helm repository.
 
 ```sh
 helm repo add redis-enterprise-operator https://helm.redis.io/
-helm install my-redis-enterprise-operator redis-enterprise-operator/redis-enterprise-operator --version 7.22.0-7
+helm install my-redis-enterprise-operator redis-enterprise-operator/redis-enterprise-operator --version 7.22.0-11
 ```
 
 To install the chart on **OpenShift**, set the `openshift.mode=true` value:
