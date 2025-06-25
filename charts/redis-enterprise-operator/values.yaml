@@ -20,7 +20,7 @@ operator:
 
     # Image tag for the operator image.
     # This typically represents the operator version.
-    tag: 7.22.0-11
+    tag: 7.8.6-3
 
 # Configuration options for the admission webhook
 admission:
@@ -41,7 +41,7 @@ openshift:
   scc:
     
     # Whether to install the SecurityContextConstraints object for Redis Enterprise
-    install: false
+    install: true
 
     # Whether to keep (avoid deleting) the SecurityContextConstraints object when uninstaling the chart.
     # This can be useful if installing the chart multiple times in the cluster, such that the SCC

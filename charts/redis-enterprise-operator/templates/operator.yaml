@@ -48,14 +48,10 @@ spec:
                       value: {{ .rigger.registry }}/{{ .rigger.image }}
                     - name: DEFAULT_BOOTSTRAPPER_IMAGE_REPOSITORY
                       value: {{ .operator.registry }}/{{ .operator.image }}
-                    - name: DEFAULT_CALL_HOME_IMAGE_REPOSITORY
-                      value: {{ .callhome.registry }}/{{ .callhome.image }}
                     - name: DEFAULT_RIGGER_IMAGE_DIGEST
                       value: {{ .rigger.digest }}
                     - name: DEFAULT_BOOTSTRAPPER_IMAGE_DIGEST
                       value: {{ .operator.digest }}
-                    - name: DEFAULT_CALL_HOME_IMAGE_DIGEST
-                      value: {{ .callhome.digest }}
                     {{- end }}
                     {{- end }}
                   envFrom:
