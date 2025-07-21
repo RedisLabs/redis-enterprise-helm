@@ -20,12 +20,14 @@ operator:
 
     # Image tag for the operator image.
     # This typically represents the operator version.
-    tag: 7.22.0-11
+    tag: 7.22.0-15
 
 # Configuration options for the admission webhook
 admission:
 
-  # Whether to create a new CA key and certificate for the admission webhook
+  # Whether to create a new CA key and certificate for the admission webhook as part of the chart installation.
+  # When disabled, the CA key and certificate will be created by the operator upon startup and stored in a secret named admission-tls,
+  # which needs to be manually copied to the ValidatingWebhookConfiguration object.
   setCABundle: true
 
   # Whether to deploy the admission webhook limited to objects in the installation namespace.

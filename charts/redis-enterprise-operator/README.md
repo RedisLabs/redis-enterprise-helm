@@ -7,10 +7,10 @@ Official Helm chart for installing, configuring and upgrading **Redis Enterprise
 
 ## Prerequisites
 
-- Kubernetes 1.23+  
+- Kubernetes 1.28+  
   Supported Kubernetes versions can vary according to the Kubernetes distribution being used.  
   Please consult the [release notes](https://redis.io/docs/latest/operate/kubernetes/release-notes/) for detailed supported distributions information per operator version.
-- Helm 3.10+
+- Helm 3.10+ (or 3.18 for migrating from a non-Helm installation)
 
 ## Installing the Chart
 
@@ -22,11 +22,11 @@ helm install [RELEASE_NAME] [PATH_TO_CHART]
 
 The `[PATH_TO_CHART]` may be a path to the chart root directory, or a chart archive on the local filesystem.  
 
-Install using the Redis helm repository.
+Install using the Redis Helm repository:
 
 ```sh
 helm repo add redis-enterprise-operator https://helm.redis.io/
-helm install my-redis-enterprise-operator redis-enterprise-operator/redis-enterprise-operator --version 7.22.0-11
+helm install my-redis-enterprise-operator redis-enterprise-operator/redis-enterprise-operator --version [VERSION]
 ```
 
 To install the chart on **OpenShift**, set the `openshift.mode=true` value:
@@ -64,6 +64,39 @@ helm install [RELEASE_NAME] [PATH_TO_CHART] \
 See [Configuration](#configuration) section below for various configuration options.  
 See [Creating a Redis Enterprise Cluster](#creating-a-redis-enterprise-cluster) section below for instructions for creating a Redis Enterprise Cluster.  
 See [helm install](https://helm.sh/docs/helm/helm_install/) and [Using Helm](https://helm.sh/docs/intro/using_helm/#helm-install-installing-a-package) for more information and options when installing charts.
+
+## Upgrading the Chart
+
+To upgrade to a new version of the chart:
+
+```sh
+helm upgrade [RELEASE_NAME] [PATH_TO_CHART]
+```
+
+For example, to upgrade the chart with release name "my-redis-enterprise" from within the chart's root directory:
+
+```sh
+helm upgrade my-redis-enterprise .
+```
+
+You can also upgrade using the Redis Helm repository:
+
+```sh
+helm upgrade my-redis-enterprise-operator redis-enterprise-operator/redis-enterprise-operator --version [VERSION]
+```
+
+To upgrade the chart on **OpenShift**, make sure to include the `openshift.mode=true` parameter:
+
+```sh
+helm upgrade [RELEASE_NAME] [PATH_TO_CHART] \
+     --set openshift.mode=true
+```
+
+The upgrade process will automatically update the operator and its components, including the CRDs. The CRDs are versioned and will only be updated if the new version is higher than the existing one.
+
+After upgrading the operator, you may need to upgrade your Redis Enterprise Clusters depending on the Redis Software version bundled with the operator. For detailed information on the upgrade process, please refer to the [Redis Enterprise for Kubernetes Upgrade documentation](https://redis.io/docs/latest/operate/kubernetes/upgrade/).
+
+See [helm upgrade](https://helm.sh/docs/helm/helm_upgrade/) for more information and options when upgrading charts.
 
 ## Uninstalling the Chart
 
@@ -140,6 +173,27 @@ helm install [RELEASE_NAME] [PATH_TO_CHART] \
 
 See [Customizing the Chart Before Installing](https://helm.sh/docs/intro/using_helm/#customizing-the-chart-before-installing) for additional information on how to customize the chart installation.
 
+## Migrating from a non-Helm installation
+
+To migrate an existing, non-Helm installation of the Redis Enterprise Operator to a Helm-based installation, follow these steps:
+1. Upgrade the Redis Enterprise Operator to the same version as the desired Helm chart version, using the same non-Helm deployment method previously used.
+   See [Upgrade instructions] for further information.
+2. Install the Helm chart using the same steps as in the [Installing the Chart](#installing-the-chart) section, but add the `--take-ownership` flag:
+   ```sh
+   helm install [RELEASE_NAME] [PATH_TO_CHART] --take-ownership
+   ```
+   - The `--take-ownership` flag is available with Helm versions 3.18 or newer.
+   - This flag is only needed with the first installation of the chart; Subsequent upgrades of the chart don't need this flag.
+   - Note the use of `helm install` command, and not `helm upgrade`.
+3. Delete the old `ValidatingWebhookConfiguration` object of the previous non-Helm installation:
+   ```sh
+   kubectl delete validatingwebhookconfiguration redis-enterprise-admission
+   ```
+   
+   This step is only needed when the `admission.limitToNamespace` chart value is set to `true` (which is the default), in which case
+   the webhook object installed by the chart is named `redis-enterprise-admission-<namespace>`. If `admission.limitToNamespace` is set to `false`,
+   then the webhook installed by the chart is named `redis-enterprise-admission`, and hence the existing webhook object is re-used.
+Â
 ## Known Limitations
 
 This is a preliminary release of this Helm chart, and as of now some if its functionality is still limited:
@@ -150,7 +204,4 @@ This is a preliminary release of this Helm chart, and as of now some if its func
   ```sh
   kubectl delete crds -l app=redis-enterprise
   ```
-- Helm chart upgrades are not supported, nor migrations from a non-Helm deployment to a Helm deployment.
 - Limited testing in advanced setups such as Active-Active configurations, airgapped deployments, IPv6/dual-stack environments.
-- The chart is still unpublished in a "helm repo" or ArtifactHub, and thus can only be installed from a local source (chart directory/archive).
-- While not really a limitation, please note that this chart also installs the [admission controller](https://redis.io/docs/latest/operate/kubernetes/deployment/quick-start/#enable-the-admission-controller) by default, and there's no option to disable it (as opposed to the non-Helm deployment).

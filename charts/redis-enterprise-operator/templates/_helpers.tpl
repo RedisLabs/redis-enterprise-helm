@@ -12,8 +12,8 @@
 
 {{- define "redis-enterprise-operator.annotations" }}
 {{- if ne .Values.versionAnnotations false -}}
-redis.io/helm-chart-ver: {{ .Chart.Version }}
-redis.io/operator-ver: {{ .Values.operator.image.tag }}
+redis.io/helm-chart-version: {{ .Chart.Version }}
+redis.io/operator-version: {{ .Chart.AppVersion }}
 {{- end }}
 {{- end }}
 
