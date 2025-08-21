@@ -1,0 +1,154 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: redisenterprisedatabaseroles.app.redislabs.com
+spec:
+  group: app.redislabs.com
+  names:
+    kind: RedisEnterpriseDatabaseRole
+    listKind: RedisEnterpriseDatabaseRoleList
+    plural: redisenterprisedatabaseroles
+    singular: redisenterprisedatabaserole
+    shortNames:
+    - redbrole
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    additionalPrinterColumns:
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    schema:
+      openAPIV3Schema:
+        description: RedisEnterpriseDatabaseRole is a role definition that grants
+          access to databases within a Redis Enterprise Cluster.
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: RedisEnterpriseDatabaseRoleSpec defines the desired state
+              of a RedisEnterpriseDatabaseRole.
+            properties:
+              acls:
+                description: List of ACLs and databases bindings for this role. Each
+                  binding consists of a list of databases to which this role grants
+                  access to, based on the specified ACL.
+                items:
+                  description: ACLBinding specifies a binding of an ACL rule to one
+                    or more databases.
+                  properties:
+                    acl:
+                      description: ACL determines the level of access granted to each
+                        of the databases in this ACL binding. By default, this is
+                        a reference to a RedisEnterpriseACL object, in which case
+                        the 'kind' field can be left empty, or set to RedisEnterpriseACL;
+                        Or, a reference to an internal Redis ACL object within the
+                        Redis Enterprise Cluster, in which case the 'kind' field should
+                        be set to 'internal'. Note that internal object references
+                        are only allowed when explicitly enabled via the RedisEnterpriseCluster
+                        object.
+                      properties:
+                        kind:
+                          description: Kind of the referent.
+                          type: string
+                        name:
+                          description: Name of the referent.
+                          type: string
+                        namespace:
+                          description: Namespace of the referent.
+                          type: string
+                      type: object
+                    databases:
+                      description: Databases to grant access to for this ACL.
+                      items:
+                        description: A reference to another object(s), either directly
+                          by name, or via a label selector.
+                        properties:
+                          kind:
+                            description: Kind of the referent.
+                            type: string
+                          name:
+                            description: Name of the referent.
+                            type: string
+                          namespace:
+                            description: Namespace of the referent.
+                            type: string
+                          selector:
+                            description: Selector based on label attached to the object.
+                            properties:
+                              matchExpressions:
+                                description: matchExpressions is a list of label selector
+                                  requirements. The requirements are ANDed.
+                                items:
+                                  description: A label selector requirement is a selector
+                                    that contains values, a key, and an operator that
+                                    relates the key and values.
+                                  properties:
+                                    key:
+                                      description: key is the label key that the selector
+                                        applies to.
+                                      type: string
+                                    operator:
+                                      description: operator represents a key's relationship
+                                        to a set of values. Valid operators are In,
+                                        NotIn, Exists and DoesNotExist.
+                                      type: string
+                                    values:
+                                      description: values is an array of string values.
+                                        If the operator is In or NotIn, the values
+                                        array must be non-empty. If the operator is
+                                        Exists or DoesNotExist, the values array must
+                                        be empty. This array is replaced during a
+                                        strategic merge patch.
+                                      items:
+                                        type: string
+                                      type: array
+                                  required:
+                                  - key
+                                  - operator
+                                  type: object
+                                type: array
+                              matchLabels:
+                                additionalProperties:
+                                  type: string
+                                description: matchLabels is a map of {key,value} pairs.
+                                  A single {key,value} in the matchLabels map is equivalent
+                                  to an element of matchExpressions, whose key field
+                                  is "key", the operator is "In", and the values array
+                                  contains only "value". The requirements are ANDed.
+                                type: object
+                            type: object
+                        type: object
+                      type: array
+                  type: object
+                type: array
+            type: object
+          status:
+            description: RedisEnterpriseDatabaseRoleStatus defines the observed state
+              of a RedisEnterpriseDatabaseRole.
+            properties:
+              uid:
+                description: The internal UID of the Role object defined in the Redis
+                  Enterprise Cluster.
+                type: string
+              observedGeneration:
+                description: The most recent generation of this resource that was
+                  observed and acted upon by the controller.
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
