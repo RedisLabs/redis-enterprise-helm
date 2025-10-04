@@ -1,2 +1,2 @@
 # Redis Enterprise Operator Helm Chart
-# IMPORTANT preview version - don't use in production.
+Official documentation exists [here](https://redis.io/docs/latest/operate/kubernetes/deployment/helm/])
