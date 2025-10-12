@@ -170,8 +170,8 @@
         </div>
         <div class="metadata">
             <div>Type: application</div>
-            <div>Latest: v7.22.0-17</div>
-            <div>App Version: 7.22.0-17</div>
+            <div>Latest: v7.8.6-8</div>
+            <div>App Version: 7.8.6-8</div>
             <div>Home: <a href="https://redis.com">https://redis.com</a></div>
         </div>
         <div class="installation">
@@ -183,7 +183,7 @@
             </div>
             <p>Install the chart:</p>
             <div class="command" id="install-command">
-                $ helm install redis-operator redis/redis-enterprise-operator --version 7.22.0-17
+                $ helm install redis-operator redis/redis-enterprise-operator --version 7.8.6-8
                 <button class="copy-btn" onclick="copyCommand(this)">Copy</button>
             </div>
         </div>
@@ -210,13 +210,28 @@
             <tbody>
                 
         <tr class="version-row latest-version"
+            data-version="7.8.6-8"
+            data-appversion="7.8.6-8"
+            data-command="helm install redis-operator redis/redis-enterprise-operator --version 7.8.6-8">
+            <td>
+                <input type="radio" name="version" value="7.8.6-8"
+                    onclick="toggleVersion(this)" data-default="helm install redis-operator redis/redis-enterprise-operator" checked>
+                7.8.6-8 <span class="latest-badge">Latest</span>
+            </td>
+            <td>7.8.6-8</td>
+            <td>2025-10-12</td>
+            <td>29b74046</td>
+            <td><a href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-enterprise-operator-7.8.6-8/redis-enterprise-operator-7.8.6-8.tgz" class="download-btn">Download</a></td>
+        </tr>
+
+        <tr class="version-row"
             data-version="7.22.0-17"
             data-appversion="7.22.0-17"
             data-command="helm install redis-operator redis/redis-enterprise-operator --version 7.22.0-17">
             <td>
                 <input type="radio" name="version" value="7.22.0-17"
-                    onclick="toggleVersion(this)" data-default="helm install redis-operator redis/redis-enterprise-operator" checked>
-                7.22.0-17 <span class="latest-badge">Latest</span>
+                    onclick="toggleVersion(this)" data-default="helm install redis-operator redis/redis-enterprise-operator" >
+                7.22.0-17 
             </td>
             <td>7.22.0-17</td>
             <td>2025-08-24</td>
