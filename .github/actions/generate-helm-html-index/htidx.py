@@ -9,10 +9,25 @@ versions.
 """
 import argparse
 import os
+import re
 import sys
 from datetime import datetime
+from typing import Tuple
 
 import yaml
+
+
+def parse_version(version: str) -> Tuple[int, ...]:
+    version = version.lstrip('v')
+    parts = re.split(r'[.-]', version)
+    numeric_parts = []
+    for part in parts:
+        try:
+            numeric_parts.append(int(part))
+        except ValueError:
+            break
+
+    return tuple(numeric_parts) if numeric_parts else (0,)
 
 
 def read_index_yaml(file_path: str) -> dict:
@@ -118,7 +133,7 @@ def generate_index_html(index_data: dict, repo_url: str) -> str:
     display_name = chart_name.replace('-', ' ').title()
 
     versions = index_data['entries'][chart_name]
-    versions.sort(key=lambda x: x['created'], reverse=True)
+    versions.sort(key=lambda x: parse_version(x['version']), reverse=True)
     latest = versions[0]
     version_rows = generate_version_rows(chart_name, versions)
     initial_install_cmd = f"helm install redis-operator redis/{chart_name} --version {latest['version']}"
