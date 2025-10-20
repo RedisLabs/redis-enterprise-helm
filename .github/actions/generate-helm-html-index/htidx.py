@@ -13,6 +13,7 @@ import sys
 from datetime import datetime
 
 import yaml
+from packaging import version
 
 
 def read_index_yaml(file_path: str) -> dict:
@@ -118,7 +119,7 @@ def generate_index_html(index_data: dict, repo_url: str) -> str:
     display_name = chart_name.replace('-', ' ').title()
 
     versions = index_data['entries'][chart_name]
-    versions.sort(key=lambda x: x['created'], reverse=True)
+    versions.sort(key=lambda x: version.parse(x['version']), reverse=True)
     latest = versions[0]
     version_rows = generate_version_rows(chart_name, versions)
     initial_install_cmd = f"helm install redis-operator redis/{chart_name} --version {latest['version']}"
