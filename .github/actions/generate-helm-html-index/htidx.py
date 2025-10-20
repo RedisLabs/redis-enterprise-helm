@@ -18,16 +18,35 @@ import yaml
 
 
 def parse_version(version: str) -> Tuple[int, ...]:
+    original_version = version
     version = version.lstrip('v')
+
+    if not version:
+        raise ValueError(f"Invalid version format: '{original_version}' - version is empty after removing 'v' prefix")
+
     parts = re.split(r'[.-]', version)
+
+    if not parts:
+        raise ValueError(f"Invalid version format: '{original_version}' - no version parts found")
+
     numeric_parts = []
-    for part in parts:
+    for i, part in enumerate(parts):
+        if not part:
+            raise ValueError(f"Invalid version format: '{original_version}' - empty part at position {i}")
         try:
             numeric_parts.append(int(part))
         except ValueError:
-            break
+            raise ValueError(
+                f"Invalid version format: '{original_version}' - non-numeric part '{part}' at position {i}. "
+                f"Expected format: X.Y.Z-B (all numeric)"
+            )
 
-    return tuple(numeric_parts) if numeric_parts else (0,)
+    if len(numeric_parts) < 3:
+        raise ValueError(
+            f"Invalid version format: '{original_version}' - expected at least 3 parts (X.Y.Z), got {len(numeric_parts)}"
+        )
+
+    return tuple(numeric_parts)
 
 
 def read_index_yaml(file_path: str) -> dict:
