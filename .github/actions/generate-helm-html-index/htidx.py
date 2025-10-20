@@ -119,8 +119,6 @@ def generate_index_html(index_data: dict, repo_url: str) -> str:
     display_name = chart_name.replace('-', ' ').title()
 
     versions = index_data['entries'][chart_name]
-    # Sort by semantic version (descending), not by date
-    # This ensures that 7.22.2-21 appears before 7.20.0-5 even if 7.20.0-5 was pushed later
     versions.sort(key=lambda x: version.parse(x['version']), reverse=True)
     latest = versions[0]
     version_rows = generate_version_rows(chart_name, versions)
