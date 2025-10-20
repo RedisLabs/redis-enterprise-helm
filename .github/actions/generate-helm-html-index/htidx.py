@@ -9,44 +9,11 @@ versions.
 """
 import argparse
 import os
-import re
 import sys
 from datetime import datetime
-from typing import Tuple
 
 import yaml
-
-
-def parse_version(version: str) -> Tuple[int, ...]:
-    original_version = version
-    version = version.lstrip('v')
-
-    if not version:
-        raise ValueError(f"Invalid version format: '{original_version}' - version is empty after removing 'v' prefix")
-
-    parts = re.split(r'[.-]', version)
-
-    if not parts:
-        raise ValueError(f"Invalid version format: '{original_version}' - no version parts found")
-
-    numeric_parts = []
-    for i, part in enumerate(parts):
-        if not part:
-            raise ValueError(f"Invalid version format: '{original_version}' - empty part at position {i}")
-        try:
-            numeric_parts.append(int(part))
-        except ValueError:
-            raise ValueError(
-                f"Invalid version format: '{original_version}' - non-numeric part '{part}' at position {i}. "
-                f"Expected format: X.Y.Z-B (all numeric)"
-            )
-
-    if len(numeric_parts) < 3:
-        raise ValueError(
-            f"Invalid version format: '{original_version}' - expected at least 3 parts (X.Y.Z), got {len(numeric_parts)}"
-        )
-
-    return tuple(numeric_parts)
+from packaging import version
 
 
 def read_index_yaml(file_path: str) -> dict:
@@ -152,7 +119,9 @@ def generate_index_html(index_data: dict, repo_url: str) -> str:
     display_name = chart_name.replace('-', ' ').title()
 
     versions = index_data['entries'][chart_name]
-    versions.sort(key=lambda x: parse_version(x['version']), reverse=True)
+    # Sort by semantic version (descending), not by date
+    # This ensures that 7.22.2-21 appears before 7.20.0-5 even if 7.20.0-5 was pushed later
+    versions.sort(key=lambda x: version.parse(x['version']), reverse=True)
     latest = versions[0]
     version_rows = generate_version_rows(chart_name, versions)
     initial_install_cmd = f"helm install redis-operator redis/{chart_name} --version {latest['version']}"
