@@ -20,7 +20,7 @@ operator:
 
     # Image tag for the operator image.
     # This typically represents the operator version.
-    tag: 7.22.2-21
+    tag: 7.22.2-22
 
 # Configuration options for the admission webhook
 admission:
