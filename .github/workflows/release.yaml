@@ -1,14 +1,22 @@
 name: Release Charts
 
 on:
-  push:
-    tags:
-      - 'v*'         # Run on tags like v1.2.3
+  issue_comment:
+    types: [created]
 
 jobs:
   release:
+    # Only run if:
+    # 1. Comment is on a PR (not an issue)
+    # 2. Comment contains "/release"
+    # 3. PR is open (not closed/merged yet)
+    if: |
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/release') &&
+      github.event.issue.state == 'open'
     permissions:
       contents: write # to push chart release and create a release (helm/chart-releaser-action)
+      pull-requests: read # to read PR details and reviews
 
     runs-on: ubuntu-latest
     outputs:
@@ -16,14 +24,84 @@ jobs:
       chart_version: ${{ steps.chart-releaser.outputs.chart_version }}
 
     steps:
+      - name: Get PR details and check approval
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+
+            // Check if PR is open
+            if (pr.data.state !== 'open') {
+              core.setFailed('PR is not open. Cannot release.');
+              return;
+            }
+
+            // Check if PR is approved
+            const reviews = await github.rest.pulls.listReviews({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+
+            const approvedReviews = reviews.data.filter(review => review.state === 'APPROVED');
+
+            if (approvedReviews.length === 0) {
+              core.setFailed('PR must be approved before release. Please get an approval first.');
+              return;
+            }
+
+            core.info(`PR is approved by: ${approvedReviews.map(r => r.user.login).join(', ')}`);
+
+            core.setOutput('base_ref', pr.data.base.ref);
+            core.setOutput('head_ref', pr.data.head.ref);
+            core.setOutput('head_sha', pr.data.head.sha);
+
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ steps.pr.outputs.head_sha }}  # Checkout the PR branch HEAD
+
       - name: Configure Git
         run: |
           git config user.name "$GITHUB_ACTOR"
           git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Extract version from branch name
+        id: extract-version
+        run: |
+          # Get the base branch name (e.g., "master" or "7.8.6-8")
+          BASE_BRANCH="${{ steps.pr.outputs.base_ref }}"
+
+          # If it's a version branch (matches X.Y.Z-B pattern), use it as version
+          if [[ "$BASE_BRANCH" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$ ]]; then
+            VERSION="$BASE_BRANCH"
+          else
+            # For master branch, extract version from Chart.yaml
+            VERSION=$(grep '^version:' charts/redis-enterprise-operator/Chart.yaml | awk '{print $2}')
+          fi
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected version: $VERSION"
+
+      - name: Create and push release tag
+        run: |
+          VERSION="${{ steps.extract-version.outputs.version }}"
+          TAG_NAME="redis-enterprise-operator-$VERSION"
+
+          # Create the tag
+          git tag "$TAG_NAME"
+
+          # Push the tag
+          git push origin "$TAG_NAME"
+
+          echo "Created and pushed tag: $TAG_NAME"
+
       - name: Set up Helm
         uses: azure/setup-helm@v4
         with:
