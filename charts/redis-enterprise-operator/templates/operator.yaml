@@ -157,10 +157,8 @@ spec:
                     privileged: false
                     readOnlyRootFilesystem: true
             securityContext: 
-                {{- if not .Values.openshift.mode}}
               seccompProfile:
                 type: RuntimeDefault
-                {{- end }}
               runAsNonRoot: true
             serviceAccountName: redis-enterprise-operator
             imagePullSecrets:
