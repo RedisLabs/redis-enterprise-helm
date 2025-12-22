@@ -9,11 +9,9 @@ jobs:
     # Only run if:
     # 1. Comment is on a PR (not an issue)
     # 2. Comment contains "/release"
-    # 3. PR is open (not closed/merged yet)
     if: |
       github.event.issue.pull_request &&
-      contains(github.event.comment.body, '/release') &&
-      github.event.issue.state == 'open'
+      contains(github.event.comment.body, '/release')
     permissions:
       contents: write # to push chart release and create a release (helm/chart-releaser-action)
       pull-requests: read # to read PR details and reviews
