@@ -156,11 +156,23 @@ spec:
                             - ALL
                     privileged: false
                     readOnlyRootFilesystem: true
-            securityContext: 
+            securityContext:
               seccompProfile:
                 type: RuntimeDefault
               runAsNonRoot: true
             serviceAccountName: redis-enterprise-operator
+            {{- with .Values.operator.nodeSelector }}
+            nodeSelector:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+            {{- with .Values.operator.tolerations }}
+            tolerations:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+            {{- with .Values.operator.affinity }}
+            affinity:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
             imagePullSecrets:
             {{- range .Values.imagePullSecrets }}
               - name: {{ . }}
