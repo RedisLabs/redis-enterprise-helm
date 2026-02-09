@@ -44,7 +44,7 @@ webhooks:
       {{- if $.Values.admission.setCABundle }}
       caBundle: {{ get $admissionTLSConfig "cert" }}
       {{- else }}
-      caBundle: "" # Fill in with BASE64 encoded signed cert
+      caBundle: ""  # Fill in with BASE64 encoded signed cert
       {{- end }}
     failurePolicy: Fail
     matchPolicy: Exact

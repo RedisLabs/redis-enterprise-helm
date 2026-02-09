@@ -80,6 +80,18 @@ spec:
         - -namespace={{ .Release.Namespace }}
       serviceAccountName: redis-enterprise-uninstaller
       restartPolicy: OnFailure
+      {{- with .Values.operator.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       imagePullSecrets:
       {{- range .Values.imagePullSecrets }}
       - name: {{ . }}
