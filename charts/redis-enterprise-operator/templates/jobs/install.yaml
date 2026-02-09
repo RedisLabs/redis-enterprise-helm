@@ -1,3 +1,4 @@
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -106,6 +107,18 @@ spec:
       {{- end }}
       serviceAccountName: redis-enterprise-installer
       restartPolicy: OnFailure
+      {{- with .Values.operator.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       imagePullSecrets:
       {{- range .Values.imagePullSecrets }}
       - name: {{ . }}
