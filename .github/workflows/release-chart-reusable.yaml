@@ -27,6 +27,13 @@ jobs:
       chart_version: ${{ steps.extract-version.outputs.version }}
 
     steps:
+      - name: Verify workflow runs from master
+        run: |
+          if [ "${GITHUB_REF_NAME}" != "master" ]; then
+            echo "This workflow can only be run from master. Current ref: ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
