@@ -4,8 +4,8 @@ type: application
 name: redis-agent-memory
 description: Placeholder Helm chart for Redis Agent Memory
 
-version: 0.0.1
-appVersion: 0.0.1
+version: 0.0.7
+appVersion: 0.0.7
 
 home: https://redis.io
 icon: https://redis.io/wp-content/uploads/2024/04/Logotype.svg
