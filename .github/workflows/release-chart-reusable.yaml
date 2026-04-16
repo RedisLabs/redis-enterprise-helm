@@ -127,6 +127,7 @@ jobs:
       - name: Write chart releaser config
         run: |
           cat > cr.yaml <<'EOF'
+          index-path: .cr-index/ai/index.yaml
           package-path: .cr-release-packages
           pages-index-path: ai/index.yaml
           pages-branch: gh-pages
@@ -169,6 +170,7 @@ jobs:
         run: |
           owner=$(cut -d '/' -f 1 <<< "$GITHUB_REPOSITORY")
           repo=$(cut -d '/' -f 2 <<< "$GITHUB_REPOSITORY")
+          mkdir -p .cr-index/ai
           cr index \
             --owner "$owner" \
             --git-repo "$repo" \
