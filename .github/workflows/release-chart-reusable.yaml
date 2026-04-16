@@ -15,72 +15,30 @@ on:
         description: Prefix for the git tag, for example my-chart.
         required: true
         type: string
-      release_command:
-        description: Slash command that triggers the release on a PR comment.
-        required: true
-        type: string
 
 jobs:
   release:
     permissions:
       contents: write
-      pull-requests: read
 
     runs-on: ubuntu-latest
     outputs:
-      changed_charts: ${{ steps.chart-releaser.outputs.changed_charts }}
+      changed_charts: ${{ steps.publish-index.outputs.changed_charts }}
       chart_version: ${{ steps.extract-version.outputs.version }}
 
     steps:
-      - name: Get PR details and check scope
-        id: pr
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-
-            if (pr.data.state !== 'open') {
-              core.setFailed('PR is not open. Cannot release.');
-              return;
-            }
-
-            const files = await github.paginate(github.rest.pulls.listFiles, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number,
-              per_page: 100
-            });
-
-            const chartPath = '${{ inputs.chart_path }}/';
-            const touchesChart = files.some(file => file.filename.startsWith(chartPath));
-            const filesOutsideChart = files
-              .map(file => file.filename)
-              .filter(filename => !filename.startsWith(chartPath));
-
-            if (!touchesChart) {
-              core.setFailed(`PR does not modify ${chartPath}. Refusing to release.`);
-              return;
-            }
-
-            if (filesOutsideChart.length > 0) {
-              core.setFailed(
-                `PR modifies files outside ${chartPath}: ${filesOutsideChart.join(', ')}. Refusing to release.`
-              );
-              return;
-            }
-
-            core.info(`Release command detected: ${{ inputs.release_command }}`);
-            core.setOutput('head_sha', pr.data.head.sha);
+      - name: Verify workflow runs from master
+        run: |
+          if [ "${GITHUB_REF_NAME}" != "master" ]; then
+            echo "This workflow can only be run from master. Current ref: ${GITHUB_REF_NAME}"
+            exit 1
+          fi
 
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ steps.pr.outputs.head_sha }}
+          ref: ${{ github.sha }}
 
       - name: Configure Git
         run: |
@@ -117,6 +75,8 @@ jobs:
       - name: Write chart releaser config
         run: |
           cat > cr.yaml <<'EOF'
+          index-path: .cr-index/ai/index.yaml
+          package-path: .cr-release-packages
           pages-index-path: ai/index.yaml
           pages-branch: gh-pages
           release-name-template: '{{ .Name }}-{{ .Version }}'
@@ -127,13 +87,68 @@ jobs:
         with:
           version: v3.9.2
 
-      - name: Run chart-releaser
+      - name: Install chart releaser
         uses: helm/chart-releaser-action@v1
-        id: chart-releaser
         with:
-          charts_dir: .release-charts
-          package_path: .cr-release-packages
+          install_only: true
           config: cr.yaml
+        env:
+          CR_TOKEN: "${{ github.token }}"
+
+      - name: Package chart
+        run: |
+          cr package ".release-charts/${{ inputs.tag_prefix }}" --config cr.yaml
+        env:
+          CR_TOKEN: "${{ github.token }}"
+
+      - name: Upload chart release
+        run: |
+          owner=$(cut -d '/' -f 1 <<< "$GITHUB_REPOSITORY")
+          repo=$(cut -d '/' -f 2 <<< "$GITHUB_REPOSITORY")
+          cr upload \
+            --owner "$owner" \
+            --git-repo "$repo" \
+            --commit "${{ github.sha }}" \
+            --skip-existing \
+            --config cr.yaml
+        env:
+          CR_TOKEN: "${{ github.token }}"
+
+      - name: Ensure AI Pages directory exists
+        run: |
+          tmpdir=$(mktemp -d)
+          trap 'rm -rf "$tmpdir"' EXIT
+
+          git clone --branch gh-pages --depth 1 \
+            "https://x-access-token:${CR_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "$tmpdir"
+
+          mkdir -p "$tmpdir/ai"
+          touch "$tmpdir/ai/.gitkeep"
+
+          if [[ -n "$(git -C "$tmpdir" status --short)" ]]; then
+            git -C "$tmpdir" config user.name "$GITHUB_ACTOR"
+            git -C "$tmpdir" config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+            git -C "$tmpdir" add ai/.gitkeep
+            git -C "$tmpdir" commit -m "Initialize AI Helm repository directory"
+            git -C "$tmpdir" push origin gh-pages
+          fi
+        env:
+          CR_TOKEN: "${{ github.token }}"
+
+      - name: Update AI Helm repository index
+        id: publish-index
+        run: |
+          owner=$(cut -d '/' -f 1 <<< "$GITHUB_REPOSITORY")
+          repo=$(cut -d '/' -f 2 <<< "$GITHUB_REPOSITORY")
+          git fetch origin gh-pages
+          mkdir -p .cr-index/ai
+          cr index \
+            --owner "$owner" \
+            --git-repo "$repo" \
+            --push \
+            --config cr.yaml
+          echo "changed_charts=${{ inputs.chart_name }}" >> "$GITHUB_OUTPUT"
         env:
           CR_TOKEN: "${{ github.token }}"
 
