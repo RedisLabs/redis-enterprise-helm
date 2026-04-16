@@ -3,17 +3,27 @@ name: Release Redis Agent Memory Chart
 on:
   issue_comment:
     types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to release manually for testing.
+        required: true
+        type: string
 
 jobs:
   call-release-workflow:
     if: |
-      github.event.issue.pull_request &&
-      contains(github.event.comment.body, '/publish-redis-agent-memory') &&
-      github.event.issue.state == 'open'
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.issue.pull_request &&
+        contains(github.event.comment.body, '/publish-redis-agent-memory') &&
+        github.event.issue.state == 'open'
+      )
     uses: ./.github/workflows/release-chart-reusable.yaml
     with:
       chart_name: redis-agent-memory
       chart_path: ai/charts/redis-agent-memory
       tag_prefix: redis-agent-memory
       release_command: /publish-redis-agent-memory
+      pr_number: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || '' }}
     secrets: inherit
