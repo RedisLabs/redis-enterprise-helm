@@ -1,0 +1,168 @@
+name: Release Helm Chart Reusable
+
+on:
+  workflow_call:
+    inputs:
+      chart_name:
+        description: Human-readable chart name for logs and workflow names.
+        required: true
+        type: string
+      chart_path:
+        description: Path to the chart directory, for example charts/my-chart.
+        required: true
+        type: string
+      tag_prefix:
+        description: Prefix for the git tag, for example my-chart.
+        required: true
+        type: string
+      release_command:
+        description: Slash command that triggers the release on a PR comment.
+        required: true
+        type: string
+
+jobs:
+  release:
+    permissions:
+      contents: write
+      pull-requests: read
+
+    runs-on: ubuntu-latest
+    outputs:
+      changed_charts: ${{ steps.chart-releaser.outputs.changed_charts }}
+      chart_version: ${{ steps.extract-version.outputs.version }}
+
+    steps:
+      - name: Get PR details and check scope
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+
+            if (pr.data.state !== 'open') {
+              core.setFailed('PR is not open. Cannot release.');
+              return;
+            }
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              per_page: 100
+            });
+
+            const chartPath = '${{ inputs.chart_path }}/';
+            const touchesChart = files.some(file => file.filename.startsWith(chartPath));
+            const filesOutsideChart = files
+              .map(file => file.filename)
+              .filter(filename => !filename.startsWith(chartPath));
+
+            if (!touchesChart) {
+              core.setFailed(`PR does not modify ${chartPath}. Refusing to release.`);
+              return;
+            }
+
+            if (filesOutsideChart.length > 0) {
+              core.setFailed(
+                `PR modifies files outside ${chartPath}: ${filesOutsideChart.join(', ')}. Refusing to release.`
+              );
+              return;
+            }
+
+            core.info(`Release command detected: ${{ inputs.release_command }}`);
+            core.setOutput('head_sha', pr.data.head.sha);
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.pr.outputs.head_sha }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Verify chart exists
+        run: |
+          test -f "${{ inputs.chart_path }}/Chart.yaml"
+
+      - name: Extract version from Helm chart metadata
+        id: extract-version
+        run: |
+          VERSION=$(grep '^version:' "${{ inputs.chart_path }}/Chart.yaml" | awk '{print $2}')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Detected version for ${{ inputs.chart_name }}: $VERSION"
+
+      - name: Create and push release tag
+        run: |
+          VERSION="${{ steps.extract-version.outputs.version }}"
+          TAG_NAME="${{ inputs.tag_prefix }}-$VERSION"
+
+          git tag "$TAG_NAME"
+          git push origin "$TAG_NAME"
+
+          echo "Created and pushed tag: $TAG_NAME"
+
+      - name: Prepare isolated chart directory
+        run: |
+          rm -rf .release-charts
+          mkdir -p .release-charts
+          cp -R "${{ inputs.chart_path }}" ".release-charts/${{ inputs.tag_prefix }}"
+
+      - name: Write chart releaser config
+        run: |
+          cat > cr.yaml <<'EOF'
+          pages-index-path: ai/index.yaml
+          pages-branch: gh-pages
+          release-name-template: '{{ .Name }}-{{ .Version }}'
+          EOF
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.9.2
+
+      - name: Run chart-releaser
+        uses: helm/chart-releaser-action@v1
+        id: chart-releaser
+        with:
+          charts_dir: .release-charts
+          package_path: .cr-release-packages
+          config: cr.yaml
+        env:
+          CR_TOKEN: "${{ github.token }}"
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      pages: write
+    needs:
+      - release
+    if: needs.release.outputs.changed_charts != ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          fetch-depth: 0
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
