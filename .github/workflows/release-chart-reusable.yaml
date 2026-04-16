@@ -166,6 +166,28 @@ jobs:
         env:
           CR_TOKEN: "${{ github.token }}"
 
+      - name: Ensure AI Pages directory exists
+        run: |
+          tmpdir=$(mktemp -d)
+          trap 'rm -rf "$tmpdir"' EXIT
+
+          git clone --branch gh-pages --depth 1 \
+            "https://x-access-token:${CR_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "$tmpdir"
+
+          mkdir -p "$tmpdir/ai"
+          touch "$tmpdir/ai/.gitkeep"
+
+          if [[ -n "$(git -C "$tmpdir" status --short)" ]]; then
+            git -C "$tmpdir" config user.name "$GITHUB_ACTOR"
+            git -C "$tmpdir" config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+            git -C "$tmpdir" add ai/.gitkeep
+            git -C "$tmpdir" commit -m "Initialize AI Helm repository directory"
+            git -C "$tmpdir" push origin gh-pages
+          fi
+        env:
+          CR_TOKEN: "${{ github.token }}"
+
       - name: Update AI Helm repository index
         run: |
           owner=$(cut -d '/' -f 1 <<< "$GITHUB_REPOSITORY")
