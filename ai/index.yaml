@@ -2,6 +2,24 @@ apiVersion: v1
 entries:
   redis-agent-memory:
   - apiVersion: v2
+    appVersion: 0.0.7
+    created: "2026-04-16T10:20:47.486703084Z"
+    description: Placeholder Helm chart for Redis Agent Memory
+    digest: 185340faba532baaf31231fcaa90da22581bf258476e08c92e64ad49c69ede60
+    home: https://redis.io
+    icon: https://redis.io/wp-content/uploads/2024/04/Logotype.svg
+    keywords:
+    - redis
+    - memory
+    maintainers:
+    - name: Redis
+      url: https://redis.io
+    name: redis-agent-memory
+    type: application
+    urls:
+    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-memory-0.0.7/redis-agent-memory-0.0.7.tgz
+    version: 0.0.7
+  - apiVersion: v2
     appVersion: 0.0.6
     created: "2026-04-16T10:11:43.113559865Z"
     description: Placeholder Helm chart for Redis Agent Memory
@@ -19,4 +37,4 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-memory-0.0.6/redis-agent-memory-0.0.6.tgz
     version: 0.0.6
-generated: "2026-04-16T10:11:43.113574843Z"
+generated: "2026-04-16T10:20:47.486715412Z"
