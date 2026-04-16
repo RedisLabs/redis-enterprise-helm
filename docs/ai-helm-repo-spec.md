@@ -34,12 +34,7 @@ Each chart directory must contain at least:
 
 ## Ownership and Change Boundaries
 
-Each chart release PR must be chart-scoped.
-
-Required rules:
-
-- By default, the release workflow should fail if a release-triggered PR changes files outside `ai/charts/<chart-name>/`.
-- CODEOWNERS should list the AI team members that are responsible for the AI chart repository.
+CODEOWNERS should list the AI team members that are responsible for the AI chart repository.
 
 ## Versioning
 
@@ -59,21 +54,17 @@ Example:
 
 ## Release Trigger
 
-Each chart uses an explicit slash-command trigger on a pull request comment.
+Each chart uses an explicit manual release workflow.
 
-For `redis-agent-memory`, the release trigger is:
-
-```text
-/release-redis-agent-memory
-```
+For `redis-agent-memory`, the release workflow is started with `workflow_dispatch`.
 
 Trigger requirements:
 
-- The comment must be on a PR, not an issue.
-- The PR must be open.
-- The PR diff must be restricted to the target chart path.
+- the workflow must be manually triggered
+- the selected ref must be `master`
+- the released chart content comes from `master`
 
-The workflow must fail fast with a clear error if any condition is not satisfied.
+The workflow must fail fast with a clear error if it is triggered from any branch other than `master`.
 
 ## Release Workflow
 
@@ -81,9 +72,9 @@ The release implementation should use a reusable workflow plus thin product-spec
 
 Required behavior:
 
-1. Wrapper workflow listens for the chart-specific slash command.
-2. Reusable workflow validates PR state and changed-file scope.
-3. Workflow checks out the PR head SHA.
+1. Wrapper workflow exposes a manual `workflow_dispatch` entrypoint only.
+2. Reusable workflow validates that the dispatch runs from `master`.
+3. Workflow checks out the current `master` commit.
 4. Workflow reads the chart version from `Chart.yaml`.
 5. Workflow creates and pushes the chart-specific Git tag.
 6. Workflow packages and publishes only the target chart.
@@ -126,7 +117,7 @@ Implementation requirement:
 The release workflow must not:
 
 - release all charts in the repository by default
-- infer the target chart from any changed folder automatically without an explicit trigger
+- infer the target chart from any changed folder automatically
 - share a generic `/release` command across unrelated products
 
 ## Acceptance Criteria
@@ -137,7 +128,7 @@ The implementation is complete when:
 - the existing Redis Enterprise chart contents and release behavior remain unchanged
 - `ai/charts/redis-agent-memory` exists as a valid chart
 - a chart-scoped release workflow exists for `redis-agent-memory`
-- the workflow fails if the PR touches files outside `ai/charts/redis-agent-memory/`
+- the workflow can only be dispatched from `master`
 - the workflow tags releases as `redis-agent-memory-<version>`
 - only the target chart is packaged and published
 - the AI Helm repository publishes its own `gh-pages/ai/index.yaml` without modifying the Redis Enterprise Helm repository index
