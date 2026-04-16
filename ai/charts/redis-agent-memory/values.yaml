@@ -1,3 +1,135 @@
-# Placeholder values for the redis-agent-memory chart.
-#
-# Add chart configuration here as templates are introduced.
+# Default values for redis-agent-memory.
+
+image:
+  repository: 'redislabs/agent-memory'
+  pullPolicy: IfNotPresent
+  # Must be set explicitly at install or upgrade time to the RAM version being deployed.
+  tag: ""
+
+imagePullSecrets: []
+# Keep the short chart name stable in labels and notes.
+nameOverride: 'redis-agent-memory'
+# Default to stable resource names so the shared on-prem config can always call
+# the dataplane Service at http://redis-agent-memory:9000.
+# This assumes a single release per namespace.
+fullnameOverride: 'redis-agent-memory'
+
+airgap:
+  # Enables disconnected-environment validation for the deployment artifacts
+  # that Helm still controls directly.
+  enabled: false
+
+# Args to pass to the container entrypoint (applied to all pods).
+# The chart appends "--mode=server" or "--mode=worker" automatically.
+args:
+  - "--config"
+  - "/etc/ai/memory-dataplane.config.yaml"
+
+serviceAccount:
+  create: false
+  automount: false
+  annotations: {}
+  name: ''
+
+# Enterprise-safe configuration path:
+# provide a pre-created Secret with the shared on-prem config file.
+config:
+  existingSecret: ""
+  secretKey: "memory-dataplane.config.yaml"
+  existingSecretChecksum: ""
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext: {}
+securityContext: {}
+
+service:
+  type: ClusterIP
+  port: 9000
+
+ingress:
+  enabled: false
+  className: 'nginx'
+  hosts:
+    - host: redis-agent-memory.example.com
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+  tls: []
+  #  - secretName: redis-agent-memory-tls
+  #    hosts:
+  #      - redis-agent-memory.example.com
+
+livenessProbe:
+  httpGet:
+    path: /health/liveness
+    port: http
+readinessProbe:
+  httpGet:
+    path: /health/readiness
+    port: http
+
+# Additional volumes for both server and worker Deployments.
+volumes: []
+# - name: foo
+#   secret:
+#     secretName: mysecret
+#     optional: false
+
+# Additional volumeMounts for both server and worker Deployments.
+volumeMounts: []
+# - name: foo
+#   mountPath: "/etc/foo"
+#   readOnly: true
+
+# Enterprise license file. Provide a customer-specific Secret and reference it
+# with license.existingSecret.
+license:
+  existingSecret: ""
+  secretKey: "license"
+  mountDir: "/etc/redis-agent-memory"
+  fileName: "license"
+  existingSecretChecksum: ""
+
+# ---------------------------------------------------------------------------
+# Per-component settings
+# server.* applies to the API Deployment, worker.* to the background worker.
+# ---------------------------------------------------------------------------
+
+server:
+  replicaCount: 2
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+
+worker:
+  replicaCount: 2
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []

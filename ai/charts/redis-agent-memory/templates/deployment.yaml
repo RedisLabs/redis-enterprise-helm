@@ -1,0 +1,119 @@
+{{- include "redis-agent-memory.validate" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "redis-agent-memory.fullname" . }}
+  labels:
+    {{- include "redis-agent-memory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  {{- if not .Values.server.autoscaling.enabled }}
+  replicas: {{ .Values.server.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "redis-agent-memory.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ .Values.config.existingSecret | sha256sum }}
+        checksum/license: {{ .Values.license.existingSecret | sha256sum }}
+        {{- if .Values.config.existingSecretChecksum }}
+        checksum/config-existing-secret: {{ .Values.config.existingSecretChecksum | quote }}
+        {{- end }}
+        {{- if .Values.license.existingSecretChecksum }}
+        checksum/license-existing-secret: {{ .Values.license.existingSecretChecksum | quote }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "redis-agent-memory.labels" . | nindent 8 }}
+        app.kubernetes.io/component: server
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "redis-agent-memory.serviceAccountName" . }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      containers:
+        - name: {{ include "redis-agent-memory.name" . }}
+          {{- with .Values.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end}}
+          args:
+          {{- with .Values.args }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+            - "--mode=server"
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.server.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/ai
+              readOnly: true
+            - name: license-volume
+              mountPath: {{ .Values.license.mountDir }}
+              readOnly: true
+          {{- with .Values.volumeMounts }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+
+      volumes:
+        - name: config-volume
+          secret:
+            secretName: {{ include "redis-agent-memory.configSecretName" . }}
+            items:
+              - key: {{ .Values.config.secretKey }}
+                path: memory-dataplane.config.yaml
+        - name: license-volume
+          secret:
+            secretName: {{ include "redis-agent-memory.licenseSecretName" . }}
+            items:
+              - key: {{ .Values.license.secretKey }}
+                path: {{ .Values.license.fileName }}
+      {{- with .Values.volumes }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.server.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.server.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.server.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
