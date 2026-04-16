@@ -28,7 +28,6 @@ jobs:
 
     runs-on: ubuntu-latest
     outputs:
-      changed_charts: ${{ steps.chart-releaser.outputs.changed_charts }}
       chart_version: ${{ steps.extract-version.outputs.version }}
 
     steps:
@@ -103,6 +102,11 @@ jobs:
           VERSION="${{ steps.extract-version.outputs.version }}"
           TAG_NAME="${{ inputs.tag_prefix }}-$VERSION"
 
+          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Tag $TAG_NAME already exists locally"
+            exit 1
+          fi
+
           git tag "$TAG_NAME"
           git push origin "$TAG_NAME"
 
@@ -117,6 +121,7 @@ jobs:
       - name: Write chart releaser config
         run: |
           cat > cr.yaml <<'EOF'
+          package-path: .cr-release-packages
           pages-index-path: ai/index.yaml
           pages-branch: gh-pages
           release-name-template: '{{ .Name }}-{{ .Version }}'
@@ -127,42 +132,41 @@ jobs:
         with:
           version: v3.9.2
 
-      - name: Run chart-releaser
+      - name: Install chart releaser
         uses: helm/chart-releaser-action@v1
-        id: chart-releaser
         with:
-          charts_dir: .release-charts
-          package_path: .cr-release-packages
+          install_only: true
           config: cr.yaml
         env:
           CR_TOKEN: "${{ github.token }}"
 
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      pages: write
-    needs:
-      - release
-    if: needs.release.outputs.changed_charts != ''
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: gh-pages
-          fetch-depth: 0
+      - name: Package chart
+        run: |
+          cr package ".release-charts/${{ inputs.tag_prefix }}" --config cr.yaml
+        env:
+          CR_TOKEN: "${{ github.token }}"
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
+      - name: Upload chart release
+        run: |
+          owner=$(cut -d '/' -f 1 <<< "$GITHUB_REPOSITORY")
+          repo=$(cut -d '/' -f 2 <<< "$GITHUB_REPOSITORY")
+          cr upload \
+            --owner "$owner" \
+            --git-repo "$repo" \
+            --commit "${{ steps.pr.outputs.head_sha }}" \
+            --skip-existing \
+            --config cr.yaml
+        env:
+          CR_TOKEN: "${{ github.token }}"
 
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: .
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Update AI Helm repository index
+        run: |
+          owner=$(cut -d '/' -f 1 <<< "$GITHUB_REPOSITORY")
+          repo=$(cut -d '/' -f 2 <<< "$GITHUB_REPOSITORY")
+          cr index \
+            --owner "$owner" \
+            --git-repo "$repo" \
+            --push \
+            --config cr.yaml
+        env:
+          CR_TOKEN: "${{ github.token }}"
