@@ -8,12 +8,12 @@ jobs:
   call-release-workflow:
     if: |
       github.event.issue.pull_request &&
-      contains(github.event.comment.body, '/release-redis-agent-memory') &&
+      contains(github.event.comment.body, '/publish-redis-agent-memory') &&
       github.event.issue.state == 'open'
     uses: ./.github/workflows/release-chart-reusable.yaml
     with:
       chart_name: redis-agent-memory
       chart_path: ai/charts/redis-agent-memory
       tag_prefix: redis-agent-memory
-      release_command: /release-redis-agent-memory
+      release_command: /publish-redis-agent-memory
     secrets: inherit
