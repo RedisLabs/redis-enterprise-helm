@@ -1,0 +1,46 @@
+name: AI Helm Lint
+
+on:
+  pull_request:
+    paths:
+      - 'ai/**'
+      - '.github/workflows/ai-helm-lint.yaml'
+  push:
+    branches:
+      - master
+    paths:
+      - 'ai/**'
+      - '.github/workflows/ai-helm-lint.yaml'
+
+jobs:
+  lint-ai-charts:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.9.2
+
+      - name: Lint all AI Helm charts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          chart_count=0
+
+          for chart_dir in ai/charts/*; do
+            if [[ -d "$chart_dir" && -f "$chart_dir/Chart.yaml" ]]; then
+              chart_count=$((chart_count + 1))
+              echo "Linting $chart_dir"
+              helm lint "$chart_dir"
+            fi
+          done
+
+          if [[ "$chart_count" -eq 0 ]]; then
+            echo "No AI charts found under ai/charts/"
+            exit 1
+          fi
