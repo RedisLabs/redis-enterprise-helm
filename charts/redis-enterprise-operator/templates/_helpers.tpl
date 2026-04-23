@@ -1,14 +1,14 @@
-{{- define "redis-enterprise-operator.operator.image" }}
-{{- if (.Values.global).azure }}
-{{- with .Values.global.azure.images.operator }}
+{{- define "redis-enterprise-operator.operator.image" -}}
+{{- if (.Values.global).azure -}}
+{{- with .Values.global.azure.images.operator -}}
 {{ .registry }}/{{ .image }}@{{ .digest }}
-{{- end }}
-{{- else }}
-{{- $defaultRepository := ternary "registry.connect.redhat.com/redislabs/redis-enterprise-operator" "redislabs/operator" .Values.openshift.mode }}
-{{- $repository := default $defaultRepository .Values.operator.image.repository }}
+{{- end -}}
+{{- else -}}
+{{- $defaultRepository := ternary "registry.connect.redhat.com/redislabs/redis-enterprise-operator" "redislabs/operator" .Values.openshift.mode -}}
+{{- $repository := default $defaultRepository .Values.operator.image.repository -}}
 {{ $repository }}:{{ .Values.operator.image.tag }}
-{{- end }}
-{{- end }}
+{{- end -}}
+{{- end -}}
 
 {{- define "redis-enterprise-operator.annotations" }}
 {{- if ne .Values.versionAnnotations false -}}
