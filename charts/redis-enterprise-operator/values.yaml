@@ -20,7 +20,7 @@ operator:
 
     # Image tag for the operator image.
     # This typically represents the operator version.
-    tag: 8.0.16-25
+    tag: 8.0.18-11
 
   # Node selector for scheduling the operator pod.
   # Uses the same schema as the PodSpec's nodeSelector field.
@@ -62,3 +62,46 @@ openshift:
     # This can be useful if installing the chart multiple times in the cluster, such that the SCC
     # can be shared between multiple chart installations.
     shared: false
+
+# Configuration options for the Redis Enterprise Cluster (REC)
+cluster:
+
+  # Whether to create a Redis Enterprise Cluster as part of the chart installation.
+  # Since the operator can only manage one REC per namespace, this provides a convenient
+  # way to deploy both the operator and cluster together.
+  create: false
+
+  # Name of the Redis Enterprise Cluster
+  name: "rec"
+
+  # Whether to wait for the cluster to be ready during helm install.
+  # If true, helm install will wait until the cluster is fully ready (can take several minutes).
+  # If false, helm install completes quickly after creating the cluster spec.
+  # You can check cluster status with: kubectl get rec
+  waitForReady: false
+
+  # Whether to delete PersistentVolumeClaims when uninstalling the chart.
+  # If true, all PVCs associated with the cluster will be deleted during helm uninstall.
+  # If false (default), PVCs are preserved and can be reused if you reinstall.
+  # WARNING: Deleting PVCs will permanently delete all data stored in the cluster.
+  deletePVCsOnUninstall: false
+
+  # Timeout in seconds for waiting operations (waiting for operator and cluster readiness)
+  timeout: 600
+
+  # Redis Enterprise Cluster spec - all fields from the REC CRD can be specified here.
+  # For available fields, see: https://redis.io/docs/latest/operate/kubernetes/reference/cluster-options/
+  # Example:
+  # spec:
+  #   nodes: 3
+  #   persistentSpec:
+  #     enabled: true
+  #     volumeSize: "20Gi"
+  #   redisEnterpriseNodeResources:
+  #     requests:
+  #       cpu: "2"
+  #       memory: "4Gi"
+  #     limits:
+  #       cpu: "2"
+  #       memory: "4Gi"
+  spec: {}

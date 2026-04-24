@@ -1,0 +1,73 @@
+Thank you for installing {{ .Chart.Name }}.
+
+Your release is named {{ .Release.Name }}.
+
+{{- if .Values.cluster.create }}
+{{- if .Values.cluster.waitForReady }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ REDIS ENTERPRISE CLUSTER CREATED SUCCESSFULLY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+A Redis Enterprise Cluster with {{ .Values.cluster.spec.nodes | default 3 }} nodes has been created and is ready.
+
+Check cluster status:
+
+  kubectl get rec {{ .Values.cluster.name }} -n {{ .Release.Namespace }}
+
+For full documentation on using Redis Enterprise on Kubernetes, visit:
+https://redis.io/docs/latest/operate/kubernetes/
+
+⚠️  IMPORTANT: The cluster will be automatically deleted when you run 'helm uninstall'.
+              Delete all databases (REDB, REAADB, RERC) BEFORE uninstalling!
+
+              If uninstall fails, check: kubectl logs -n {{ .Release.Namespace }} job/redis-enterprise-cluster-deleter
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{{- else }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⏳ REDIS ENTERPRISE CLUSTER CREATION IN PROGRESS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+A Redis Enterprise Cluster with {{ .Values.cluster.spec.nodes | default 3 }} nodes is being created.
+This process typically takes 3-5 minutes to complete.
+
+Monitor cluster creation progress:
+
+  # Watch cluster status (cluster is ready when STATE shows 'Running')
+  kubectl get rec {{ .Values.cluster.name }} -n {{ .Release.Namespace }} -w
+
+  # Watch cluster creation job logs
+  kubectl logs -f job/redis-enterprise-cluster-creator -n {{ .Release.Namespace }}
+
+  # Watch pods
+  kubectl get pods -n {{ .Release.Namespace }} -w
+
+For full documentation on using Redis Enterprise on Kubernetes, visit:
+https://redis.io/docs/latest/operate/kubernetes/
+
+⚠️  NOTE: The cluster will be automatically deleted when you run 'helm uninstall'.
+         Make sure to delete any databases (REDB, REAADB, RERC) before uninstalling.
+
+         If uninstall fails, check the deletion job logs for details:
+         kubectl logs -n {{ .Release.Namespace }} job/redis-enterprise-cluster-deleter
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{{- end }}
+{{- else }}
+
+To create a Redis Enterprise Cluster, apply a RedisEnterpriseCluster custom resource.
+See: https://redis.io/docs/latest/operate/kubernetes/deployment/quick-start/
+
+{{- end }}
+
+To learn more about the release, try:
+
+  $ helm status {{ .Release.Name }} -n {{ .Release.Namespace }}
+  $ helm get all {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+For documentation, visit: https://redis.io/docs/latest/operate/kubernetes/
+

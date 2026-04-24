@@ -144,22 +144,51 @@ After you upgrade the operator, you might need to upgrade your Redis Enterprise 
 
 For more information and options when upgrading charts, see [helm upgrade](https://helm.sh/docs/helm/helm_upgrade/).
 
-## Uninstall
+## Create Redis Enterprise Cluster during installation
 
-1. Delete any custom resources managed by the operator. See [Delete custom resources](https://redis.io/docs/latest/operate/kubernetes/re-clusters/delete-custom-resources/) for detailed steps. You must delete custom resources in the correct order to avoid errors.
-
-2. Uninstall the Helm chart.
+The chart can optionally create a Redis Enterprise Cluster (REC) as part of the installation:
 
 ```sh
+helm install <release-name> <repo-name>/redis-enterprise-operator \
+    --version <chart-version> \
+    --namespace <namespace-name> \
+    --create-namespace \
+    --set cluster.create=true \
+    --set cluster.spec.nodes=3
+```
+
+Or using a values file:
+
+```yaml
+cluster:
+  create: true
+  spec:
+    nodes: 3
+    persistentSpec:
+      enabled: true
+      volumeSize: "20Gi"
+```
+
+For detailed information about cluster creation, configuration options, and upgrade behavior, see the [Redis Enterprise for Kubernetes documentation](https://redis.io/docs/latest/operate/kubernetes/).
+
+## Uninstall
+
+Before uninstalling, delete any custom resources managed by the operator:
+
+```sh
+# If cluster was created by the chart, delete dependent resources first
+kubectl delete redb,reaadb,rerc --all -n <namespace-name>
+
+# Then uninstall the chart
 helm uninstall <release-name>
 ```
 
-This removes all Kubernetes resources associated with the chart and deletes the release.
+If you created the REC manually (not through the chart), see [Delete custom resources](https://redis.io/docs/latest/operate/kubernetes/re-clusters/delete-custom-resources/) for detailed steps.
 
 > **Note:** Custom Resource Definitions (CRDs) installed by the chart are not removed during chart uninstallation. To remove them manually after uninstalling the chart, run `kubectl delete crds -l app=redis-enterprise`.
 
 ## Known limitations
 
-- The steps for creating the RedisEnterpriseCluster (REC) and other custom resources remain the same.
+- The chart can optionally create a Redis Enterprise Cluster (see `cluster.create` option), but this feature is disabled by default and primarily intended for new deployments.
 - The chart doesn't include configuration options for multiple namespaces, rack-awareness, and Vault integration. The steps for configuring these options remain the same.
 - The chart has had limited testing in advanced setups, including Active-Active configurations, air-gapped deployments, and IPv6/dual-stack environments.

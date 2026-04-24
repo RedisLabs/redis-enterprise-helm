@@ -1,0 +1,53 @@
+{{- if .Values.cluster.create }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: redis-enterprise-cluster-deleter
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: redis-enterprise
+  annotations:
+    {{- include "redis-enterprise-operator.annotations" . | nindent 4}}
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: redis-enterprise
+    spec:
+      serviceAccountName: redis-enterprise-operator
+      restartPolicy: Never
+      containers:
+      - name: delete-cluster
+        image: {{ include "redis-enterprise-operator.operator.image" . }}
+        imagePullPolicy: IfNotPresent
+        command:
+        - install-helper
+        args:
+        - -action=deleteREC
+        - -namespace={{ .Release.Namespace }}
+        - -recName={{ .Values.cluster.name }}
+        - -timeout={{ .Values.cluster.timeout }}
+        - -deletePVCs={{ .Values.cluster.deletePVCsOnUninstall }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          limits:
+            cpu: 100m
+            memory: 128Mi
+      imagePullSecrets:
+      {{- range .Values.imagePullSecrets }}
+      - name: {{ . }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: "RuntimeDefault"
+{{- end }}
+
