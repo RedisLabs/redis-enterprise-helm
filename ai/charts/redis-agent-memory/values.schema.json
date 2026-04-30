@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "redis-agent-memory values",
+  "description": "Schema for the redis-agent-memory Helm chart values. Enforced by `helm install`/`helm upgrade` via Helm's built-in JSON Schema validation (see https://helm.sh/docs/topics/charts/#schema-files). Anything not defined here is accepted — the schema's job is to catch typos and invalid values on the keys we care most about, not to document every field.",
+  "type": "object",
+  "properties": {
+    "image": {
+      "type": "object",
+      "properties": {
+        "tag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repository": {
+          "type": "string"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"]
+        }
+      },
+      "required": ["tag"]
+    },
+    "security": {
+      "type": "object",
+      "description": "Application-level security posture selector. See chart README section \"FIPS-oriented posture\" for the list of guardrails each profile activates.",
+      "properties": {
+        "profile": {
+          "type": "string",
+          "description": "Allowed values: \"\" (default, no app-level FIPS guardrails) or \"fips\" (opt-in FIPS-oriented posture). Any other value is rejected at install/upgrade time so typos can't silently fall back to the default posture.",
+          "enum": ["", "fips"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "tests": {
+      "type": "object",
+      "description": "Gate for the `helm test` hooks shipped with this chart. When enabled, the chart renders a test Pod plus a minimal Role + RoleBinding scoped to `get` on the release Deployments. Defaults to false so clusters that never run `helm test` get no extra RBAC.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "When true, render the `helm test` hooks (templates/tests/security-profile.yaml and templates/tests/rbac.yaml). Defaults to false."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

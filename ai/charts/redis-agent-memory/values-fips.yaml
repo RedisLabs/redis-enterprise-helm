@@ -1,0 +1,35 @@
+# values-fips.yaml
+#
+# Opt-in overlay for the FIPS-oriented on-prem posture described in the plan
+# "FIPS posture for on-prem Agent Memory". Apply alongside your normal
+# values file, for example:
+#
+#   helm upgrade --install redis-agent-memory redis-agent-memory/ \
+#     --values values.yaml \
+#     --values values-fips.yaml \
+#     --set image.tag=<ram-version> \
+#     --set config.existingSecret=<your-config-secret> \
+#     --set license.existingSecret=<your-license-secret>
+#
+# Selecting this overlay:
+#
+#   1. Sets security.profile=fips so the container is started with
+#      MEM_SECURITY_PROFILE=fips. The image entrypoint then sets
+#      GODEBUG=fips140=on at process start. See the chart README and
+#      deployment/redis-agent-memory/README.md for the exact effects and
+#      the conservative compliance wording we use.
+#
+#   2. Does NOT automatically rewrite your config Secret. The config file
+#      you mount through config.existingSecret must also:
+#        - remove skip_verify=true from every outbound HTTP client;
+#        - use rediss:// (TLS) URLs for every Redis connection, including
+#          background_jobs.redis_streams.urls and metadata.stores[].urls.
+#      The binary fails startup with a joined error list if either of those
+#      rules is violated while security.profile=fips, so catching this at
+#      install time rather than config-bake time is the intended workflow.
+#
+# This file intentionally only sets the security toggle. Keep your resource
+# sizing, autoscaling, ingress, and image config in your main values file.
+
+security:
+  profile: fips

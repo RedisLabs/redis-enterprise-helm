@@ -19,6 +19,43 @@ airgap:
   # that Helm still controls directly.
   enabled: false
 
+# security.profile selects the application-level security posture for the
+# on-prem Agent Memory binary. See the chart README section
+# "FIPS-oriented posture" for the full list of guarantees, caveats, and
+# required config file changes when profile=fips is selected.
+#
+# Allowed values:
+#   ""     (default) - existing posture, no app-level guardrails applied.
+#                      The Go runtime runs with GODEBUG=fips140=off because
+#                      the image entrypoint forces that value; this matches
+#                      pre-FIPS behavior.
+#   "fips"           - opt-in FIPS-oriented posture. The image entrypoint
+#                      sets GODEBUG=fips140=on so the Go runtime activates
+#                      its FIPS module; the binary additionally refuses to
+#                      start if the config sets skip_verify=true on any
+#                      outbound HTTP client or if any Redis URL is not
+#                      rediss://. This is NOT a formal FIPS compliance
+#                      claim; see the README.
+#
+# This value is propagated to the container as MEM_SECURITY_PROFILE.
+security:
+  profile: ""
+
+# tests.enabled gates the `helm test` hooks shipped with this chart.
+#
+# When true, the chart renders:
+#   - templates/tests/security-profile.yaml - a Pod that asserts the server
+#     Deployment carries the expected MEM_SECURITY_PROFILE env var.
+#   - templates/tests/rbac.yaml - a minimal Role + RoleBinding granting the
+#     chart ServiceAccount `get` on the two release Deployments, scoped to
+#     the release namespace and only for the duration of `helm test`.
+#
+# Defaults to false so clusters that never run `helm test` get no extra
+# RBAC. Enable when you plan to run `helm test <release>` in a validation
+# step, e.g. as part of a customer acceptance gate.
+tests:
+  enabled: false
+
 # Args to pass to the container entrypoint (applied to all pods).
 # The chart appends "--mode=server" or "--mode=worker" automatically.
 args:
@@ -26,8 +63,8 @@ args:
   - "/etc/ai/memory-dataplane.config.yaml"
 
 serviceAccount:
-  create: false
-  automount: false
+  create: true
+  automount: true
   annotations: {}
   name: ''
 
@@ -83,6 +120,16 @@ volumeMounts: []
 # - name: foo
 #   mountPath: "/etc/foo"
 #   readOnly: true
+
+# TLS certificates for outbound connections (Redis, embedding providers, LLM).
+# Mount a CA bundle from a pre-created Secret so the container trusts your
+# private Certificate Authority in addition to the built-in system CAs.
+tls:
+  # Name of a pre-created Secret containing a PEM-encoded CA certificate bundle.
+  # Leave empty to just use the default CA bundle shipped in the container image.
+  caCertSecret: ""
+  # Key inside the Secret that contains the PEM-encoded CA certificate(s).
+  caCertKey: "ca.crt"
 
 # Enterprise license file. Provide a customer-specific Secret and reference it
 # with license.existingSecret.
