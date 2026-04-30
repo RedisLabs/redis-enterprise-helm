@@ -1,0 +1,64 @@
+{{- /*
+Chart test that asserts the rendered server Deployment carries the expected
+MEM_SECURITY_PROFILE env var — i.e. that the `security.profile` values key
+is actually plumbed through to the container, not silently dropped by a
+helper refactor. See the plan "FIPS posture for on-prem Agent Memory"
+(section: Helm).
+
+Run with:
+  helm install <release> ... --set tests.enabled=true
+  helm test <release>
+
+Gated behind `tests.enabled` so the extra RBAC (Role + RoleBinding that grant
+`get` on deployments in the release namespace) is only created in clusters
+where the operator explicitly opts in. Clusters that never run `helm test`
+get no test hooks and no extra RBAC.
+
+The pod shells out to kubectl (using the chart's ServiceAccount) because
+that's the only runtime view of the rendered Deployment available inside
+`helm test`; using the in-cluster API here is the same pattern Bitnami and
+a number of other production charts use for their test hooks.
+*/ -}}
+{{- if .Values.tests.enabled -}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "redis-agent-memory.fullname" . }}-test-security-profile"
+  labels:
+    {{- include "redis-agent-memory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": hook-succeeded,before-hook-creation
+spec:
+  serviceAccountName: {{ include "redis-agent-memory.serviceAccountName" . }}
+  restartPolicy: Never
+  containers:
+    - name: assert
+      image: "bitnami/kubectl:1.29"
+      command:
+        - /bin/bash
+        - -euo
+        - pipefail
+        - -c
+        - |
+          EXPECTED='{{ if .Values.security }}{{ default "" .Values.security.profile }}{{ end }}'
+          DEPLOY='{{ include "redis-agent-memory.fullname" . }}'
+          NS='{{ .Release.Namespace }}'
+
+          echo "Asserting MEM_SECURITY_PROFILE on Deployment $DEPLOY in ns $NS"
+          echo "Expected value: '$EXPECTED'"
+
+          ACTUAL=$(kubectl -n "$NS" get deploy "$DEPLOY" \
+            -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="MEM_SECURITY_PROFILE")].value}')
+
+          echo "Actual value:   '$ACTUAL'"
+
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "FAIL: MEM_SECURITY_PROFILE mismatch. The chart is not wiring"
+            echo "      security.profile through to the container correctly."
+            exit 1
+          fi
+
+          echo "OK: security profile plumbing verified."
+{{- end }}

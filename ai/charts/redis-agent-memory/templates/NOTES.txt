@@ -1,6 +1,22 @@
 Server Deployment : {{ include "redis-agent-memory.fullname" . }}
 Worker Deployment : {{ include "redis-agent-memory.workerFullname" . }}
 Service           : {{ include "redis-agent-memory.fullname" . }}:{{ .Values.service.port }}
+TLS CA bundle     : {{ if and .Values.tls .Values.tls.caCertSecret }}{{ .Values.tls.caCertSecret }} (key: {{ .Values.tls.caCertKey }}){{ else }}system default{{ end }}
+{{- $profile := "" }}{{ if .Values.security }}{{ $profile = default "" .Values.security.profile }}{{ end }}
+Security profile  : {{ if eq $profile "" }}default (no app-level FIPS guardrails){{ else }}{{ $profile }}{{ end }}
+{{- if eq $profile "fips" }}
+
+FIPS-oriented posture is ACTIVE for this release:
+  - Pods start with MEM_SECURITY_PROFILE=fips; the image entrypoint sets
+    GODEBUG=fips140=on so the Go runtime activates its FIPS module.
+  - The binary rejects startup if the mounted config enables skip_verify
+    on any outbound HTTP client or uses a non-rediss:// Redis URL.
+  - On-prem auth is disabled by design: this profile does not add in-
+    process authentication. Access control is YOUR hosting environment's
+    responsibility (ingress, network policy, service mesh auth).
+  - This is NOT a formal FIPS validation claim. See
+    deployment/redis-agent-memory/README.md for exact wording.
+{{- end }}
 
 The worker connects to the server automatically at:
   http://{{ include "redis-agent-memory.fullname" . }}:{{ .Values.service.port }}
