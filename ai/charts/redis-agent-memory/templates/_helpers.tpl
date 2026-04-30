@@ -106,9 +106,61 @@ Validate required enterprise inputs.
 {{- if not .Values.config.secretKey -}}
 {{- fail "config.secretKey is required" -}}
 {{- end -}}
+{{- if eq .Values.image.repository "redislabs/memory-dataplane" -}}
+{{- fail "image.repository=redislabs/memory-dataplane is reserved for cloud releases; use redislabs/agent-memory or a mirrored on-prem registry" -}}
+{{- end -}}
 {{- if .Values.airgap.enabled -}}
 {{- if eq .Values.image.repository "redislabs/agent-memory" -}}
 {{- fail "airgap.enabled=true requires image.repository to point to a mirrored registry reachable from the cluster" -}}
 {{- end -}}
 {{- end -}}
+{{- if .Values.security -}}
+{{- $profile := default "" .Values.security.profile -}}
+{{- if and (ne $profile "") (ne $profile "fips") -}}
+{{- fail (printf "security.profile=%q is not supported (valid values: \"\", \"fips\"). See the chart README section \"FIPS-oriented posture\"." $profile) -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Common container env entries applied to both the server and worker
+Deployments. Centralizing env vars here avoids the classic Helm mistake
+of remembering to add a new env var to one Deployment but not the other.
+Carries MEM_SECURITY_PROFILE (see plan: "FIPS posture for on-prem Agent
+Memory") plus SSL_CERT_DIR when a TLS CA bundle is mounted.
+*/}}
+{{- define "redis-agent-memory.commonEnv" -}}
+- name: MEM_SECURITY_PROFILE
+  value: {{ if .Values.security }}{{ default "" .Values.security.profile | quote }}{{ else }}""{{ end }}
+{{- if and .Values.tls .Values.tls.caCertSecret }}
+- name: SSL_CERT_DIR
+  value: "/etc/ssl/custom"
+{{- end }}
+{{- end }}
+
+{{/*
+TLS CA certificate volume. Renders a projected Secret volume when
+tls.caCertSecret is configured.
+*/}}
+{{- define "redis-agent-memory.tlsVolume" -}}
+{{- if and .Values.tls .Values.tls.caCertSecret }}
+- name: tls-ca-cert
+  secret:
+    secretName: {{ .Values.tls.caCertSecret }}
+    items:
+      - key: {{ .Values.tls.caCertKey }}
+        path: {{ .Values.tls.caCertKey }}
+{{- end }}
+{{- end }}
+
+{{/*
+TLS CA certificate volumeMount. Mounts the CA bundle at /etc/ssl/custom/
+when tls.caCertSecret is configured.
+*/}}
+{{- define "redis-agent-memory.tlsVolumeMount" -}}
+{{- if and .Values.tls .Values.tls.caCertSecret }}
+- name: tls-ca-cert
+  mountPath: /etc/ssl/custom
+  readOnly: true
+{{- end }}
 {{- end }}

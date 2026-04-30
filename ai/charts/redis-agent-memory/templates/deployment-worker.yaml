@@ -17,13 +17,11 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: {{ .Values.config.existingSecret | sha256sum }}
-        checksum/license: {{ .Values.license.existingSecret | sha256sum }}
         {{- if .Values.config.existingSecretChecksum }}
-        checksum/config-existing-secret: {{ .Values.config.existingSecretChecksum | quote }}
+        checksum/config: {{ .Values.config.existingSecretChecksum | quote }}
         {{- end }}
         {{- if .Values.license.existingSecretChecksum }}
-        checksum/license-existing-secret: {{ .Values.license.existingSecretChecksum | quote }}
+        checksum/license: {{ .Values.license.existingSecretChecksum | quote }}
         {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
@@ -60,8 +58,12 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with (include "redis-agent-memory.commonEnv" . | trim) }}
+          env:
+            {{ . | nindent 12 }}
+          {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
@@ -85,6 +87,7 @@ spec:
             - name: license-volume
               mountPath: {{ .Values.license.mountDir }}
               readOnly: true
+          {{- include "redis-agent-memory.tlsVolumeMount" . | nindent 12 }}
           {{- with .Values.volumeMounts }}
             {{- toYaml . | nindent 12 }}
           {{- end }}
@@ -102,6 +105,7 @@ spec:
             items:
               - key: {{ .Values.license.secretKey }}
                 path: {{ .Values.license.fileName }}
+      {{- include "redis-agent-memory.tlsVolume" . | nindent 8 }}
       {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}
       {{- end }}
