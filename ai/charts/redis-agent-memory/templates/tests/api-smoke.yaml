@@ -1,0 +1,246 @@
+{{- /*
+Public API smoke test for a deployed Redis Agent Memory release.
+
+This test intentionally uses the public on-prem RAM API through the in-cluster
+Service instead of reaching into Redis directly. It validates the installed
+configuration end to end by:
+  1. creating one short-term memory session event,
+  2. creating one long-term memory record,
+  3. finding that record through the long-term memory search endpoint.
+
+It is gated separately from tests.enabled because it exercises live data-path
+dependencies, including the configured content store Redis and embedding
+provider. Enable with:
+  --set tests.enabled=true --set tests.smoke.enabled=true
+*/ -}}
+{{- if and .Values.tests.enabled .Values.tests.smoke.enabled -}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "redis-agent-memory.fullname" . }}-test-api-smoke"
+  labels:
+    {{- include "redis-agent-memory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": hook-succeeded,before-hook-creation
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  activeDeadlineSeconds: {{ .Values.tests.smoke.activeDeadlineSeconds }}
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  containers:
+    - name: smoke
+      image: "{{ .Values.tests.smoke.image.repository }}:{{ .Values.tests.smoke.image.tag }}"
+      imagePullPolicy: {{ .Values.tests.smoke.image.pullPolicy }}
+      env:
+        - name: RAM_BASE_URL
+          value: "http://{{ include "redis-agent-memory.fullname" . }}:{{ .Values.service.port }}"
+        - name: RAM_STORE_ID
+          value: {{ .Values.tests.smoke.storeId | quote }}
+        - name: SMOKE_TIMEOUT_SECONDS
+          value: {{ .Values.tests.smoke.timeoutSeconds | quote }}
+        - name: SMOKE_SEARCH_RETRIES
+          value: {{ .Values.tests.smoke.searchRetries | quote }}
+        - name: SMOKE_SEARCH_RETRY_INTERVAL_SECONDS
+          value: {{ .Values.tests.smoke.searchRetryIntervalSeconds | quote }}
+      command:
+        - python
+        - -c
+      args:
+        - |
+          import json
+          import os
+          import sys
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          import uuid
+
+          base_url = os.environ["RAM_BASE_URL"].rstrip("/")
+          store_id = os.environ["RAM_STORE_ID"]
+          timeout = int(os.environ["SMOKE_TIMEOUT_SECONDS"])
+          search_retries = int(os.environ["SMOKE_SEARCH_RETRIES"])
+          search_retry_interval = int(os.environ["SMOKE_SEARCH_RETRY_INTERVAL_SECONDS"])
+
+          run_id = uuid.uuid4().hex
+          session_id = "smoke-" + run_id[:24]
+          memory_id = "smoke-" + run_id
+          namespace = "smoke-" + run_id[:24]
+          owner_id = "helm-smoke"
+          keyword = "ram-smoke-" + run_id[:12]
+          store_path = urllib.parse.quote(store_id, safe="")
+
+          def fail(message):
+              print("FAIL: " + message, file=sys.stderr)
+              sys.exit(1)
+
+          def request(method, path, payload=None, expected=(200,), fatal=True):
+              data = None
+              headers = {}
+
+              if payload is not None:
+                  data = json.dumps(payload).encode("utf-8")
+                  headers["Content-Type"] = "application/json"
+
+              req = urllib.request.Request(
+                  base_url + path,
+                  data=data,
+                  headers=headers,
+                  method=method,
+              )
+
+              try:
+                  with urllib.request.urlopen(req, timeout=timeout) as resp:
+                      status = resp.getcode()
+                      body = resp.read().decode("utf-8")
+              except urllib.error.HTTPError as err:
+                  status = err.code
+                  body = err.read().decode("utf-8")
+              except Exception as err:
+                  message = f"{method} {path} failed: {err}"
+                  if fatal:
+                      fail(message)
+                  raise RuntimeError(message)
+
+              if status not in expected:
+                  message = f"{method} {path} returned HTTP {status}; body: {body}"
+                  if fatal:
+                      fail(message)
+                  raise RuntimeError(message)
+
+              if not body:
+                  return {}
+
+              try:
+                  return json.loads(body)
+              except json.JSONDecodeError as err:
+                  message = f"{method} {path} returned invalid JSON: {err}; body: {body}"
+                  if fatal:
+                      fail(message)
+                  raise RuntimeError(message)
+
+          def cleanup():
+              try:
+                  request(
+                      "DELETE",
+                      f"/v1/stores/{store_path}/long-term-memory",
+                      {"memoryIds": [memory_id]},
+                      expected=(200, 404),
+                      fatal=False,
+                  )
+              except Exception as err:
+                  print(f"WARN: failed to delete smoke long-term memory: {err}", file=sys.stderr)
+
+              try:
+                  session_path = urllib.parse.quote(session_id, safe="")
+                  request(
+                      "DELETE",
+                      f"/v1/stores/{store_path}/session-memory/{session_path}",
+                      expected=(204, 404),
+                      fatal=False,
+                  )
+              except Exception as err:
+                  print(f"WARN: failed to delete smoke session memory: {err}", file=sys.stderr)
+
+          print(f"Running RAM API smoke test against {base_url} store {store_id}")
+
+          try:
+              health = request("GET", "/health")
+              if health.get("status") != "healthy":
+                  fail(f"health check returned unexpected payload: {health}")
+
+              session_body = {
+                  "sessionId": session_id,
+                  "actorId": owner_id,
+                  "role": "USER",
+                  "content": [{"text": f"Helm smoke test session event for {keyword}"}],
+                  "createdAt": int(time.time() * 1000),
+                  "metadata": {
+                      "source": "helm-test",
+                      "keyword": keyword,
+                      "memoryId": memory_id,
+                  },
+              }
+              session = request(
+                  "POST",
+                  f"/v1/stores/{store_path}/session-memory/events",
+                  session_body,
+              )
+
+              event = session.get("event", {})
+              if event.get("sessionId") != session_id:
+                  fail(f"session event response did not contain sessionId {session_id}: {session}")
+
+              memory_text = (
+                  "Helm smoke test long-term memory with unique keyword "
+                  f"{keyword} for Redis Agent Memory verification."
+              )
+              create = request(
+                  "POST",
+                  f"/v1/stores/{store_path}/long-term-memory",
+                  {
+                      "memories": [
+                          {
+                              "id": memory_id,
+                              "text": memory_text,
+                              "memoryType": "semantic",
+                              "sessionId": session_id,
+                              "ownerId": owner_id,
+                              "namespace": namespace,
+                              "topics": ["helm-smoke"],
+                          }
+                      ]
+                  },
+              )
+
+              if memory_id not in create.get("created", []):
+                  fail(f"bulk create did not report created memory {memory_id}: {create}")
+              if create.get("errors"):
+                  fail(f"bulk create returned per-record errors: {create['errors']}")
+
+              search_body = {
+                  "text": keyword,
+                  "filter": {
+                      "namespace": {
+                          "eq": namespace,
+                      },
+                  },
+                  "filterOp": "all",
+                  "limit": 10,
+              }
+
+              last_search = {}
+              for attempt in range(1, search_retries + 1):
+                  last_search = request(
+                      "POST",
+                      f"/v1/stores/{store_path}/long-term-memory/search",
+                      search_body,
+                  )
+                  memories = last_search.get("memories", [])
+                  match = next((m for m in memories if m.get("id") == memory_id), None)
+
+                  if match is not None and keyword in match.get("text", ""):
+                      print(f"OK: found smoke long-term memory {memory_id}")
+                      break
+
+                  if attempt < search_retries:
+                      print(
+                          f"Search attempt {attempt}/{search_retries} did not find "
+                          f"{memory_id}; retrying in {search_retry_interval}s"
+                      )
+                      time.sleep(search_retry_interval)
+              else:
+                  fail(
+                      f"search did not return memory {memory_id} containing "
+                      f"{keyword}; last response: {last_search}"
+                  )
+
+              print("OK: RAM API smoke test passed")
+          finally:
+              cleanup()
+{{- end }}

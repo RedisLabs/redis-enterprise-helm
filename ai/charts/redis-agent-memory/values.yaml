@@ -5,7 +5,7 @@ image:
   pullPolicy: IfNotPresent
   # Defaults to the chart appVersion stamped at release time.
   # Override at install/upgrade to pin a different RAM image version.
-  tag: "0.1.0"
+  tag: "0.1.1"
 
 imagePullSecrets: []
 # Keep the short chart name stable in labels and notes.
@@ -47,6 +47,9 @@ security:
 # When true, the chart renders:
 #   - templates/tests/security-profile.yaml - a Pod that asserts the server
 #     Deployment carries the expected MEM_SECURITY_PROFILE env var.
+#   - templates/tests/api-smoke.yaml - an optional Pod that calls the public
+#     RAM API to verify short-term memory writes, long-term memory writes, and
+#     long-term memory search against the configured store.
 #   - templates/tests/rbac.yaml - a minimal Role + RoleBinding granting the
 #     chart ServiceAccount `get` on the two release Deployments, scoped to
 #     the release namespace and only for the duration of `helm test`.
@@ -56,6 +59,25 @@ security:
 # step, e.g. as part of a customer acceptance gate.
 tests:
   enabled: false
+  smoke:
+    # Enable this with tests.enabled=true to run an API smoke test through
+    # `helm test`. The smoke test writes one short-term session event, writes
+    # one long-term memory record, searches for it, then best-effort deletes
+    # the records it created.
+    enabled: false
+    # Must match a store ID configured in the mounted memory-dataplane config.
+    storeId: "00000000000000000000000000000001"
+    image:
+      repository: python
+      tag: "3.13-alpine"
+      pullPolicy: IfNotPresent
+    # Per HTTP request timeout used by the smoke script.
+    timeoutSeconds: 30
+    # Maximum runtime for the smoke test pod.
+    activeDeadlineSeconds: 180
+    # Search is retried to tolerate Redis index visibility delays.
+    searchRetries: 6
+    searchRetryIntervalSeconds: 5
 
 # Args to pass to the container entrypoint (applied to all pods).
 # The chart appends "--mode=server" or "--mode=worker" automatically.

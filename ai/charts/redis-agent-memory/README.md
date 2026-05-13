@@ -15,8 +15,17 @@ Both workloads use the same license Secret and the same shared application confi
 - Kubernetes 1.19+
 - Helm 3+
 - Redis endpoints reachable from the cluster
-- a RAM license file
+- A license is required to use the on-prem version. Please reach out to your Redis account representative. If you don’t have one, you can contact our sales team here: <https://redis.io/meeting/>
 - a RAM image accessible from the cluster
+
+Prerequisite matrix:
+
+| Area | Requirement | Notes |
+| --- | --- | --- |
+| Kubernetes | Kubernetes 1.19+ and Helm 3+ | The chart installs standard `apps/v1` Deployments, Services, optional HPAs, optional Ingress, and pre-created Secrets. |
+| Content store Redis | Redis 7.2.0 through 8.4.x with RedisJSON and RediSearch / Query Engine, reachable from the RAM server and worker pods | Configure content store endpoints in `metadata.stores[].urls`. The content store holds session memory JSON documents and long-term memory hashes, so it must support JSON commands, hashes, TTLs, `FT.CREATE`, `FT.SEARCH`, JSON indexing, and vector `HNSW` fields. The long-term-memory index uses a `VECTOR` field named `text_vector` with `FLOAT64`, `HNSW`, and `COSINE`. When Redis Cloud databases are selected through the controlplane, the code also requires an active Pro or Essentials database, a public endpoint, default user credentials, a non-Active-Active deployment, and a RediSearch module reported as `search` or `searchlight`. |
+| Job Redis | Redis 6.2+ with Redis Streams, reachable from the RAM server and worker pods | Configure the job Redis endpoint in `background_jobs.redis_streams.urls`. On-prem async work requires `background_jobs.redis_streams.enabled=true`; other async backends are rejected. The job Redis must support Streams and consumer groups (`XADD`, `XGROUP`, `XREADGROUP`, `XACK`, `XDEL`, `XAUTOCLAIM`), strings with TTL for deduplication (`SET NX`, `GET`, `DEL`), and sorted sets for delayed jobs (`ZADD`, range/removal operations). It does not need RediSearch or RedisJSON unless the same Redis also serves as the content store. |
+| Architecture support | Released RAM on-prem images should be treated as `linux/amd64` unless the release artifact explicitly declares a multi-arch manifest | The release pipeline currently builds and pushes a single runner-native Linux image. For ARM64 nodes, use a compatible locally built image or schedule RAM pods onto AMD64 nodes. |
 
 Recommended deployment model:
 
@@ -126,7 +135,7 @@ metadata:
       extraction_strategy: instruct
       short_memory:
         # Retention period for short-term memory entries, in seconds.
-        ttl_seconds: 3600
+        ttl_seconds: 86400
       long_term_memory:
         # Key that selects a provider from embedders_connection_details.
         embedding_provider: openai
@@ -166,6 +175,15 @@ dataplane_client:
 
 # Long-term memory promotion model settings.
 promote_working_memory:
+  # Optional per-strategy windows used to batch rapid session writes into one
+  # promotion job. Each strategy defaults to 5m when omitted. Override with
+  # MEM_PROMOTE_WORKING_MEMORY_STRATEGIES_INSTRUCT_PROMOTION_DEDUPLICATION_WINDOW
+  # or MEM_PROMOTE_WORKING_MEMORY_STRATEGIES_SUMMARY_PROMOTION_DEDUPLICATION_WINDOW.
+  strategies:
+    summary:
+      promotion_deduplication_window: 5m
+    instruct:
+      promotion_deduplication_window: 5m
   llm:
     # LLM provider used for promotion.
     provider: openai
@@ -201,6 +219,7 @@ Most important config fields:
 - `metadata.stores[].long_term_memory.*`: embedding provider, model, and vector size
 - `embedders_connection_details`: embedding endpoint and credentials
 - `promote_working_memory.llm.*`: promotion LLM endpoint, auth, and model
+- `promote_working_memory.strategies.*.promotion_deduplication_window`: optional per-strategy window for batching rapid session writes into one promotion job; defaults to `5m`
 - `client_pool.max_size`: connection pool size for higher concurrency
 - `dataplane_client.base_url`: worker to server callback URL
 
@@ -244,6 +263,68 @@ helm install <release-name> redis-ai/redis-agent-memory \
   --atomic \
   --wait
 ```
+
+## Rotate the License
+
+The chart mounts the license Secret into both the server and worker pods, but
+Redis Agent Memory reads and validates the license file during process startup.
+Its background license checks validate the cached license state; they do not
+reread the mounted Secret file. Rotate the license by updating the Secret and
+changing `license.existingSecretChecksum` so Helm rolls both Deployments.
+
+Replace the data in the existing license Secret:
+
+```sh
+kubectl -n <namespace-name> create secret generic ram-license \
+  --from-file=license=./license \
+  --dry-run=client \
+  -o yaml | kubectl apply -f -
+```
+
+If the original Secret was created with `kubectl create`, `kubectl apply` may
+warn that the Secret is missing the `last-applied-configuration` annotation.
+That warning is expected; Kubernetes patches the annotation and updates the
+Secret.
+
+If your deployment uses a custom license Secret name, use the value from
+`license.existingSecret`. If your Secret uses a custom key, keep using the key
+from `license.secretKey`.
+
+Recalculate the checksum from the same license file and update `ram-values.yaml`:
+
+```sh
+LICENSE_CHECKSUM="$(shasum ./license | awk '{print $1}')"
+```
+
+```yaml
+license:
+  existingSecret: ram-license
+  existingSecretChecksum: "<new-license-checksum>"
+```
+
+Apply the change with Helm:
+
+```sh
+helm upgrade <release-name> redis-ai/redis-agent-memory \
+  --version <chart-version> \
+  --namespace <namespace-name> \
+  -f ram-values.yaml \
+  --atomic \
+  --wait
+```
+
+Confirm both workloads rolled and accepted the new license:
+
+```sh
+kubectl -n <namespace-name> rollout status deploy/redis-agent-memory
+kubectl -n <namespace-name> rollout status deploy/redis-agent-memory-worker
+kubectl -n <namespace-name> logs deploy/redis-agent-memory | grep 'License validated successfully'
+kubectl -n <namespace-name> logs deploy/redis-agent-memory-worker | grep 'License validated successfully'
+```
+
+For immutable Secrets, create a new Secret name instead, then update both
+`license.existingSecret` and `license.existingSecretChecksum` before running the
+same `helm upgrade`.
 
 ## Critical Helm Parameters
 
@@ -406,6 +487,44 @@ Helm's `hook-succeeded,before-hook-creation` hook lifecycle so nothing
 lingers after `helm test` finishes. The offline template test covers both
 the `tests.enabled=false` default (no test resources rendered) and the
 `tests.enabled=true` opt-in (test Pod, Role, and RoleBinding all render).
+
+## API Smoke Test
+
+For a live post-installation check of the RAM data path, enable the optional
+API smoke test in addition to `tests.enabled`:
+
+```sh
+helm upgrade --install redis-agent-memory redis-ai/redis-agent-memory \
+  --values ram-values.yaml \
+  --set tests.enabled=true \
+  --set tests.smoke.enabled=true \
+  --set tests.smoke.storeId=00000000000000000000000000000001 \
+  --namespace <namespace-name> \
+  --atomic --wait
+
+helm test redis-agent-memory --namespace <namespace-name> --logs
+```
+
+`tests.smoke.storeId` must match one store ID from the mounted
+`memory-dataplane.config.yaml`. The default matches the example config in this
+README.
+
+The smoke test calls the in-cluster RAM Service through the public on-prem API:
+
+- `GET /health`
+- `POST /v1/stores/{storeId}/session-memory/events`
+- `POST /v1/stores/{storeId}/long-term-memory`
+- `POST /v1/stores/{storeId}/long-term-memory/search`
+
+It writes one short-term memory session event, writes one long-term memory
+record with a unique keyword, searches for that record through the search
+endpoint, and then best-effort deletes the records it created. This validates
+the API server, content store Redis, RediSearch / Query Engine indexing, and the
+configured embedding provider used by long-term memory creation and search.
+
+Tune the smoke test image and retry behavior under `tests.smoke.*` if the
+cluster uses an internal registry or needs longer indexing/search visibility
+windows.
 
 ## Air-Gapped Deployments
 

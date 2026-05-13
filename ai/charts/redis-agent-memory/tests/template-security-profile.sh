@@ -79,6 +79,9 @@ OUT=$(render)
 if printf '%s' "$OUT" | grep -qE 'name:[[:space:]]+"?[^"]*-test-security-profile"?'; then
   fail "security-profile test Pod rendered with tests.enabled=false"
 fi
+if printf '%s' "$OUT" | grep -qE 'name:[[:space:]]+"?[^"]*-test-api-smoke"?'; then
+  fail "api-smoke test Pod rendered with tests.enabled=false"
+fi
 if printf '%s' "$OUT" | grep -qE 'name:[[:space:]]+"?[^"]*-test-reader"?'; then
   fail "test Role/RoleBinding rendered with tests.enabled=false"
 fi
@@ -87,10 +90,13 @@ if printf '%s' "$OUT" | grep -qE '^kind:[[:space:]]+(Role|RoleBinding)$'; then
 fi
 echo "OK: no test hooks or test RBAC rendered by default"
 
-echo "=== Case 5: tests.enabled=true → all three test resources must render ==="
+echo "=== Case 5: tests.enabled=true → security-profile test resources must render ==="
 OUT=$(render --set tests.enabled=true)
 printf '%s' "$OUT" | grep -qE 'name:[[:space:]]+"?[^"]*-test-security-profile"?' \
   || fail "security-profile test Pod did not render with tests.enabled=true"
+if printf '%s' "$OUT" | grep -qE 'name:[[:space:]]+"?[^"]*-test-api-smoke"?'; then
+  fail "api-smoke test Pod rendered even though tests.smoke.enabled=false"
+fi
 ROLE_COUNT=$(printf '%s\n' "$OUT" | awk '/^kind:[[:space:]]+Role$/ {c++} END {print c+0}')
 BINDING_COUNT=$(printf '%s\n' "$OUT" | awk '/^kind:[[:space:]]+RoleBinding$/ {c++} END {print c+0}')
 [ "$ROLE_COUNT" = "1" ] \
@@ -99,7 +105,17 @@ BINDING_COUNT=$(printf '%s\n' "$OUT" | awk '/^kind:[[:space:]]+RoleBinding$/ {c+
   || fail "expected exactly 1 RoleBinding when tests.enabled=true, got $BINDING_COUNT"
 printf '%s' "$OUT" | grep -qE 'name:[[:space:]]+"?[^"]*-test-reader"?' \
   || fail "expected Role/RoleBinding named *-test-reader when tests.enabled=true"
-echo "OK: test Pod, Role, and RoleBinding all render when opted in"
+echo "OK: security-profile test Pod, Role, and RoleBinding all render when opted in"
+
+echo "=== Case 6: tests.enabled=true and tests.smoke.enabled=true → API smoke test must render ==="
+OUT=$(render --set tests.enabled=true --set tests.smoke.enabled=true)
+printf '%s' "$OUT" | grep -qE 'name:[[:space:]]+"?[^"]*-test-api-smoke"?' \
+  || fail "api-smoke test Pod did not render with tests.smoke.enabled=true"
+printf '%s' "$OUT" | grep -q 'name: RAM_STORE_ID' \
+  || fail "api-smoke test Pod did not render RAM_STORE_ID env var"
+printf '%s' "$OUT" | grep -q 'value: "00000000000000000000000000000001"' \
+  || fail "api-smoke test Pod did not render the default smoke store ID"
+echo "OK: API smoke test renders only when explicitly enabled"
 
 echo ""
-echo "All chart security-profile checks passed."
+echo "All chart template checks passed."
