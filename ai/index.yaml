@@ -2,6 +2,16 @@ apiVersion: v1
 entries:
   redis-agent-memory:
   - apiVersion: v2
+    appVersion: 0.1.1
+    created: "2026-05-13T10:06:08.268359274Z"
+    description: Helm chart to deploy Redis Agent Memory for on-premises deployment.
+    digest: 8fd1381e67c89d1872b1dba055087b6942215457ee086806f70f046c931f5e3d
+    name: redis-agent-memory
+    type: application
+    urls:
+    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-memory-0.1.1/redis-agent-memory-0.1.1.tgz
+    version: 0.1.1
+  - apiVersion: v2
     appVersion: 0.1.0
     created: "2026-04-30T14:00:13.280232918Z"
     description: Helm chart to deploy Redis Agent Memory for on-premises deployment.
@@ -11,4 +21,4 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-memory-0.1.0/redis-agent-memory-0.1.0.tgz
     version: 0.1.0
-generated: "2026-04-30T14:00:13.280238788Z"
+generated: "2026-05-13T10:06:08.268374627Z"
