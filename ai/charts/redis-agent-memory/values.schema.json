@@ -35,11 +35,64 @@
     },
     "tests": {
       "type": "object",
-      "description": "Gate for the `helm test` hooks shipped with this chart. When enabled, the chart renders a test Pod plus a minimal Role + RoleBinding scoped to `get` on the release Deployments. Defaults to false so clusters that never run `helm test` get no extra RBAC.",
+      "description": "Gate for the `helm test` hooks shipped with this chart. When enabled, the chart renders test Pods plus a minimal Role + RoleBinding scoped to `get` on the release Deployments. Defaults to false so clusters that never run `helm test` get no extra RBAC.",
       "properties": {
         "enabled": {
           "type": "boolean",
-          "description": "When true, render the `helm test` hooks (templates/tests/security-profile.yaml and templates/tests/rbac.yaml). Defaults to false."
+          "description": "When true, render the `helm test` hooks. Defaults to false."
+        },
+        "smoke": {
+          "type": "object",
+          "description": "Optional public API smoke test run by `helm test` when both tests.enabled and tests.smoke.enabled are true.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "When true with tests.enabled=true, render the public RAM API smoke test Pod."
+            },
+            "storeId": {
+              "type": "string",
+              "description": "Store ID configured in the mounted memory-dataplane config and used by the smoke test API paths.",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-zA-Z0-9-]+$"
+            },
+            "image": {
+              "type": "object",
+              "description": "Container image used to run the API smoke script.",
+              "properties": {
+                "repository": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "tag": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "pullPolicy": {
+                  "type": "string",
+                  "enum": ["Always", "IfNotPresent", "Never"]
+                }
+              },
+              "additionalProperties": false
+            },
+            "timeoutSeconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "activeDeadlineSeconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "searchRetries": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "searchRetryIntervalSeconds": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
