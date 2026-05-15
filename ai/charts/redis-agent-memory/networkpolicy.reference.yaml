@@ -1,0 +1,74 @@
+# Reference NetworkPolicy manifests for the redis-agent-memory Helm chart.
+#
+# WARNING: Do NOT apply this file verbatim. It will fail or behave incorrectly
+# until all <placeholder> tokens are replaced with real values.
+#
+# Apply this only after replacing:
+#   - <namespace> with the release namespace.
+#   - <release-name> with the Helm release name unless fullnameOverride/nameOverride
+#     changed the rendered selector labels.
+#   - caller namespace/pod labels with the workloads that are allowed to call
+#     the Redis Agent Memory API.
+#
+# This policy assumes the chart defaults:
+#   app.kubernetes.io/name=redis-agent-memory
+#   service.port=9000
+#
+# If you set nameOverride, also replace every occurrence of
+# `app.kubernetes.io/name: redis-agent-memory` below with your override value
+# — otherwise these policies will select zero RAM pods and silently leave
+# ingress unrestricted.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: <release-name>-deny-ingress
+  namespace: <namespace>
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis-agent-memory
+      app.kubernetes.io/instance: <release-name>
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: <release-name>-server-ingress
+  namespace: <namespace>
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis-agent-memory
+      app.kubernetes.io/instance: <release-name>
+      app.kubernetes.io/component: server
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow the worker Deployment to call the server callback/API endpoint.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis-agent-memory
+              app.kubernetes.io/instance: <release-name>
+              app.kubernetes.io/component: worker
+      ports:
+        - protocol: TCP
+          port: 9000
+
+    # Allow approved in-cluster API clients. Replace these labels with the
+    # ingress controller, service mesh gateway, or application namespace/pods
+    # that should be able to reach the RAM API.
+    # NOTE: namespaceSelector and podSelector as siblings in the same list item
+    # are ANDed (pod must be in the namespace AND have the label). Two separate
+    # list items would be ORed — a common footgun in NetworkPolicy.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: <caller-namespace>
+          podSelector:
+            matchLabels:
+              <caller-label-key>: <caller-label-value>
+      ports:
+        - protocol: TCP
+          port: 9000

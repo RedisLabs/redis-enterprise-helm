@@ -63,7 +63,7 @@ in your Helm values.
 
 The server and worker both consume the same file from the config Secret.
 
-Use this as a starting point:
+Use this as a starting point for your `memory-dataplane.config.yaml`:
 
 ```yaml
 # HTTP server timeouts for the API process.
@@ -176,7 +176,8 @@ dataplane_client:
 # Long-term memory promotion model settings.
 promote_working_memory:
   # Optional per-strategy windows used to batch rapid session writes into one
-  # promotion job. Each strategy defaults to 5m when omitted. Override with
+  # promotion job. Each strategy defaults to 5m when omitted; set to 0s to
+  # schedule promotion immediately. Override with
   # MEM_PROMOTE_WORKING_MEMORY_STRATEGIES_INSTRUCT_PROMOTION_DEDUPLICATION_WINDOW
   # or MEM_PROMOTE_WORKING_MEMORY_STRATEGIES_SUMMARY_PROMOTION_DEDUPLICATION_WINDOW.
   strategies:
@@ -219,7 +220,7 @@ Most important config fields:
 - `metadata.stores[].long_term_memory.*`: embedding provider, model, and vector size
 - `embedders_connection_details`: embedding endpoint and credentials
 - `promote_working_memory.llm.*`: promotion LLM endpoint, auth, and model
-- `promote_working_memory.strategies.*.promotion_deduplication_window`: optional per-strategy window for batching rapid session writes into one promotion job; defaults to `5m`
+- `promote_working_memory.strategies.*.promotion_deduplication_window`: optional per-strategy window for batching rapid session writes into one promotion job; defaults to `5m`; set to `0s` for immediate promotion
 - `client_pool.max_size`: connection pool size for higher concurrency
 - `dataplane_client.base_url`: worker to server callback URL
 
@@ -233,7 +234,7 @@ LICENSE_CHECKSUM="$(shasum ./license | awk '{print $1}')"
 CONFIG_CHECKSUM="$(shasum ./memory-dataplane.config.yaml | awk '{print $1}')"
 ```
 
-Create a values file:
+Create a values file, e.g., `ram-values.yaml`:
 
 ```yaml
 license:
@@ -425,6 +426,26 @@ The binary logs a one-time banner on startup (at `WARN` level) reminding
 operators of this when `security.profile=fips` is set. The banner is a
 prompt to verify your network isolation; it is **not** evidence that the
 isolation exists.
+
+### NetworkPolicy reference
+
+This chart ships `networkpolicy.reference.yaml` as a reference manifest rather
+than a Helm template because allowed callers are environment-specific. Customize
+the placeholders before applying it:
+
+- `<namespace>`: the namespace where the chart is installed
+- `<release-name>`: the Helm release name (`.Release.Name`). Note that
+  `nameOverride` and `fullnameOverride` change rendered resource names but do
+  **not** change the `app.kubernetes.io/instance` selector label, which always
+  equals `.Release.Name`. Policy names are also release-scoped so that multiple
+  RAM releases can coexist in the same namespace without collision.
+- `<caller-namespace>` and caller pod labels: the ingress controller, service
+  mesh gateway, or application pods that are allowed to call the RAM API
+
+The reference policy first default-denies ingress to the chart pods, then allows
+TCP traffic to the server pods on port `9000` from the worker Deployment and
+from the approved caller selector. Review it against your CNI implementation and
+cluster ingress path before using it in production.
 
 ### Two control planes caveat (advanced)
 
