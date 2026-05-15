@@ -56,6 +56,25 @@ count_profile_value() {
       '
 }
 
+has_rbac_test_hook_annotation() {
+  local manifest="$1"
+  printf '%s\n' "$manifest" \
+    | awk '
+        /^---$/ {
+          in_rbac=0
+          next
+        }
+        /^kind:[[:space:]]+(Role|RoleBinding)$/ {
+          in_rbac=1
+          next
+        }
+        in_rbac && /helm.sh\/hook/ && /test/ {
+          found=1
+        }
+        END { exit found ? 0 : 1 }
+      '
+}
+
 echo "=== Case 1: default profile (unset) → should render as empty string ==="
 OUT=$(render)
 N=$(count_profile_value "$OUT" "")
@@ -105,6 +124,12 @@ BINDING_COUNT=$(printf '%s\n' "$OUT" | awk '/^kind:[[:space:]]+RoleBinding$/ {c+
   || fail "expected exactly 1 RoleBinding when tests.enabled=true, got $BINDING_COUNT"
 printf '%s' "$OUT" | grep -qE 'name:[[:space:]]+"?[^"]*-test-reader"?' \
   || fail "expected Role/RoleBinding named *-test-reader when tests.enabled=true"
+if has_rbac_test_hook_annotation "$OUT"; then
+  fail "test Role/RoleBinding must not be Helm test hooks; helm test --logs should only collect pod logs"
+fi
+if printf '%s' "$OUT" | grep -q 'hook-succeeded'; then
+  fail "test Pods must stay available after success so helm test --logs can collect logs"
+fi
 echo "OK: security-profile test Pod, Role, and RoleBinding all render when opted in"
 
 echo "=== Case 6: tests.enabled=true and tests.smoke.enabled=true → API smoke test must render ==="

@@ -503,10 +503,13 @@ helm test redis-agent-memory --namespace <namespace-name>
 ```
 
 The RBAC is narrowly scoped: it grants only `get` on the two release
-Deployments, lives only in the release namespace, and is cleaned up by
-Helm's `hook-succeeded,before-hook-creation` hook lifecycle so nothing
-lingers after `helm test` finishes. The offline template test covers both
-the `tests.enabled=false` default (no test resources rendered) and the
+Deployments and lives only in the release namespace. The Role and RoleBinding
+are regular release-managed resources gated by `tests.enabled` so
+`helm test --logs` only collects logs from test Pods. They are removed when
+you disable `tests.enabled` on a later upgrade or uninstall the release. Test
+Pods are kept after a run so Helm can collect logs and are replaced before the
+next test run. The offline template test covers both the
+`tests.enabled=false` default (no test resources rendered) and the
 `tests.enabled=true` opt-in (test Pod, Role, and RoleBinding all render).
 
 ## API Smoke Test
