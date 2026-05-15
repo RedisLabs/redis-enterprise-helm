@@ -5,7 +5,7 @@ image:
   pullPolicy: IfNotPresent
   # Defaults to the chart appVersion stamped at release time.
   # Override at install/upgrade to pin a different RAM image version.
-  tag: "0.1.1"
+  tag: "0.2.0"
 
 imagePullSecrets: []
 # Keep the short chart name stable in labels and notes.
