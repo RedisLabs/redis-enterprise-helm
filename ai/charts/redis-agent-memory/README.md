@@ -174,42 +174,67 @@ dataplane_client:
     max_retry_attempts: 3
 
 # Long-term memory promotion model settings.
-promote_working_memory:
+promote_session_memory:
   # Optional per-strategy windows used to batch rapid session writes into one
   # promotion job. Each strategy defaults to 5m when omitted; set to 0s to
   # schedule promotion immediately. Override with
-  # MEM_PROMOTE_WORKING_MEMORY_STRATEGIES_INSTRUCT_PROMOTION_DEDUPLICATION_WINDOW
-  # or MEM_PROMOTE_WORKING_MEMORY_STRATEGIES_SUMMARY_PROMOTION_DEDUPLICATION_WINDOW.
+  # MEM_PROMOTE_SESSION_MEMORY_STRATEGIES_INSTRUCT_PROMOTION_DEDUPLICATION_WINDOW
+  # or MEM_PROMOTE_SESSION_MEMORY_STRATEGIES_SUMMARY_PROMOTION_DEDUPLICATION_WINDOW.
   strategies:
     summary:
       promotion_deduplication_window: 5m
+      llm:
+        # LLM provider used for summary promotion.
+        provider: openai
+        endpoint:
+          # Base URL for the promotion LLM API.
+          base_url: https://api.openai.com/v1
+          # Request timeout for promotion calls.
+          timeout: 30s
+          # Header style used to send credentials.
+          auth_format: bearer
+        credentials:
+          # Use static API key authentication for the promotion LLM.
+          type: static
+          # API key used for promotion requests.
+          api_key: "<promotion-llm-api-key>"
+        models:
+          # Chat model used to extract long-term memory from conversations.
+          default_chat_model: gpt-4o
+        http_client:
+          # Keep TLS verification enabled unless you deliberately use self-signed certs.
+          skip_verify: false
+          # Per-request timeout for promotion calls.
+          timeout: 30s
+          # Retry count for transient promotion LLM failures.
+          max_retry_attempts: 3
     instruct:
       promotion_deduplication_window: 5m
-  llm:
-    # LLM provider used for promotion.
-    provider: openai
-    endpoint:
-      # Base URL for the promotion LLM API.
-      base_url: https://api.openai.com/v1
-      # Request timeout for promotion calls.
-      timeout: 30s
-      # Header style used to send credentials.
-      auth_format: bearer
-    credentials:
-      # Use static API key authentication for the promotion LLM.
-      type: static
-      # API key used for promotion requests.
-      api_key: "<promotion-llm-api-key>"
-    models:
-      # Chat model used to extract long-term memory from conversations.
-      default_chat_model: gpt-4o
-    http_client:
-      # Keep TLS verification enabled unless you deliberately use self-signed certs.
-      skip_verify: false
-      # Per-request timeout for promotion calls.
-      timeout: 30s
-      # Retry count for transient promotion LLM failures.
-      max_retry_attempts: 3
+      llm:
+        # LLM provider used for instruct promotion.
+        provider: openai
+        endpoint:
+          # Base URL for the promotion LLM API.
+          base_url: https://api.openai.com/v1
+          # Request timeout for promotion calls.
+          timeout: 30s
+          # Header style used to send credentials.
+          auth_format: bearer
+        credentials:
+          # Use static API key authentication for the promotion LLM.
+          type: static
+          # API key used for promotion requests.
+          api_key: "<promotion-llm-api-key>"
+        models:
+          # Chat model used to extract long-term memory from conversations.
+          default_chat_model: gpt-4o
+        http_client:
+          # Keep TLS verification enabled unless you deliberately use self-signed certs.
+          skip_verify: false
+          # Per-request timeout for promotion calls.
+          timeout: 30s
+          # Retry count for transient promotion LLM failures.
+          max_retry_attempts: 3
 ```
 
 Most important config fields:
@@ -219,8 +244,8 @@ Most important config fields:
 - `metadata.stores[].short_memory.ttl_seconds`: short-term memory retention
 - `metadata.stores[].long_term_memory.*`: embedding provider, model, and vector size
 - `embedders_connection_details`: embedding endpoint and credentials
-- `promote_working_memory.llm.*`: promotion LLM endpoint, auth, and model
-- `promote_working_memory.strategies.*.promotion_deduplication_window`: optional per-strategy window for batching rapid session writes into one promotion job; defaults to `5m`; set to `0s` for immediate promotion
+- `promote_session_memory.strategies.<summary|instruct>.llm.*`: promotion LLM endpoint, auth, and model
+- `promote_session_memory.strategies.*.promotion_deduplication_window`: optional per-strategy window for batching rapid session writes into one promotion job; defaults to `5m`; set to `0s` for immediate promotion
 - `client_pool.max_size`: connection pool size for higher concurrency
 - `dataplane_client.base_url`: worker to server callback URL
 
@@ -393,7 +418,9 @@ When the posture is active the binary additionally refuses to start if the
 mounted config:
 
 - enables `skip_verify` on any outbound HTTP client (`dataplane_client.http_client`,
-  `promote_working_memory.llm.http_client`, or `embedding.http_client`); or
+  `promote_session_memory.strategies.summary.llm.http_client`,
+  `promote_session_memory.strategies.instruct.llm.http_client`, or
+  `embedding.http_client`); or
 - uses a non-`rediss://` URL for any Redis connection
   (`background_jobs.redis_streams.urls`, `metadata.stores[].urls`).
 
