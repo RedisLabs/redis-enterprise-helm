@@ -84,6 +84,18 @@ license:
 # Default extraction behavior for stores that do not set extraction_strategy.
 default_extraction_strategy: instruct
 
+# Optional configuration for stores that do not set
+# metadata.stores[].summarization.
+default_summarisation_config:
+  enabled: false
+  # Trigger summarisation by active session event count when enabled.
+  trigger_strategy: event_count
+  event_count:
+    # Number of most recent session events to keep unsummarised.
+    retain_count: 10
+    # Active session event count that triggers summarisation when enabled.
+    threshold: 20
+
 # Redis client pool settings shared by the service.
 client_pool:
   # Enable pooled Redis clients.
@@ -143,6 +155,16 @@ metadata:
         embedding_model: text-embedding-3-large
         # Embedding vector size produced by the model.
         embedding_dimensions: 3072
+      # Store-specific summarisation configuration
+      summarization:
+        enabled: false
+        # Trigger summarisation by active session event count.
+        trigger_strategy: event_count
+        event_count:
+          # Number of most recent session events to keep unsummarised.
+          retain_count: 10
+          # Active session event count that triggers summarisation when enabled.
+          threshold: 20
 
 # Embedding provider connection settings.
 embedders_connection_details:
@@ -155,6 +177,21 @@ embedders_connection_details:
       type: static
       # API key presented to the embedding provider.
       api_key: "<embedder-api-key>"
+    # Dynamic micro-batching for single-text embedding requests. Concurrent
+    # single-text embeds sharing this provider are coalesced into fewer provider
+    # calls, reducing request overhead under load. Enabled by default.
+    batching:
+      embeddings:
+        # Coalesce concurrent single-text embeds into shared provider calls.
+        enabled: true
+        # Maximum number of inputs sent in one provider call.
+        max_batch_size: 10
+        # Maximum time a request waits to coalesce with others before sending.
+        max_wait_time: 20ms
+        # Number of background workers draining the batch queue.
+        num_workers: 10
+        # Maximum number of pending requests buffered before backpressure.
+        queue_size: 1000
 
 # Worker-to-server callback settings.
 dataplane_client:
@@ -172,6 +209,37 @@ dataplane_client:
     timeout: 30s
     # Retry count for transient callback failures.
     max_retry_attempts: 3
+
+# Automatic session summarisation settings.
+session_summarisation:
+  # Service-level kill switch for summarisation. Override per-store configs.
+  enabled: false
+  # LLM configuration for the summarisation
+  llm:
+    # LLM provider used to summarise long sessions.
+    provider: openai
+    endpoint:
+      # Base URL for summarisation LLM requests.
+      base_url: https://api.openai.com/v1
+      # Request timeout for summarisation calls.
+      timeout: 30s
+      # Header style used to send credentials.
+      auth_format: bearer
+    credentials:
+      # Use static API key authentication for the summarisation LLM.
+      type: static
+      # API key used for summarisation requests.
+      api_key: "<summarisation-llm-api-key>"
+    models:
+      # Chat model used to generate session summaries.
+      default_chat_model: gpt-4o
+    http_client:
+      # Keep TLS verification enabled unless you deliberately use self-signed certs.
+      skip_verify: false
+      # Per-request timeout for summarisation calls.
+      timeout: 30s
+      # Retry count for transient summarisation LLM failures.
+      max_retry_attempts: 3
 
 # Long-term memory promotion model settings.
 promote_session_memory:
@@ -243,7 +311,11 @@ Most important config fields:
 - `metadata.stores[].urls`: Redis databases that hold short-term and long-term memory
 - `metadata.stores[].short_memory.ttl_seconds`: short-term memory retention
 - `metadata.stores[].long_term_memory.*`: embedding provider, model, and vector size
+- `default_summarisation_config.*`: optional fallback summarisation configuration for stores that do not set it explicitly
+- `metadata.stores[].summarization.*`: per-store summarisation configuration
 - `embedders_connection_details`: embedding endpoint and credentials
+- `session_summarisation.enabled`: service-level summarisation kill switch; Has precedence over store-level configuration.
+- `session_summarisation.llm.*`: LLM endpoint, credentials, model, and HTTP client used by the summarisation worker
 - `promote_session_memory.strategies.<summary|instruct>.llm.*`: promotion LLM endpoint, auth, and model
 - `promote_session_memory.strategies.*.promotion_deduplication_window`: optional per-strategy window for batching rapid session writes into one promotion job; defaults to `5m`; set to `0s` for immediate promotion
 - `client_pool.max_size`: connection pool size for higher concurrency
@@ -419,8 +491,8 @@ mounted config:
 
 - enables `skip_verify` on any outbound HTTP client (`dataplane_client.http_client`,
   `promote_session_memory.strategies.summary.llm.http_client`,
-  `promote_session_memory.strategies.instruct.llm.http_client`, or
-  `embedding.http_client`); or
+  `promote_session_memory.strategies.instruct.llm.http_client`,
+  `session_summarisation.llm.http_client`, or `embedding.http_client`); or
 - uses a non-`rediss://` URL for any Redis connection
   (`background_jobs.redis_streams.urls`, `metadata.stores[].urls`).
 
