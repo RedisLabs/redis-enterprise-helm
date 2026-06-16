@@ -5,7 +5,7 @@ image:
   pullPolicy: IfNotPresent
   # Defaults to the chart appVersion stamped at release time.
   # Override at install/upgrade to pin a different RAM image version.
-  tag: "0.1.1"
+  tag: "0.4.0"
 
 imagePullSecrets: []
 # Keep the short chart name stable in labels and notes.
@@ -50,9 +50,9 @@ security:
 #   - templates/tests/api-smoke.yaml - an optional Pod that calls the public
 #     RAM API to verify short-term memory writes, long-term memory writes, and
 #     long-term memory search against the configured store.
-#   - templates/tests/rbac.yaml - a minimal Role + RoleBinding granting the
-#     chart ServiceAccount `get` on the two release Deployments, scoped to
-#     the release namespace and only for the duration of `helm test`.
+#   - templates/tests/rbac.yaml - minimal release-managed Role + RoleBinding
+#     resources granting the chart ServiceAccount `get` on the two release
+#     Deployments, scoped to the release namespace while tests.enabled=true.
 #
 # Defaults to false so clusters that never run `helm test` get no extra
 # RBAC. Enable when you plan to run `helm test <release>` in a validation

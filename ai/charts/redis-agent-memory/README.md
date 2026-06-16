@@ -63,7 +63,7 @@ in your Helm values.
 
 The server and worker both consume the same file from the config Secret.
 
-Use this as a starting point:
+Use this as a starting point for your `memory-dataplane.config.yaml`:
 
 ```yaml
 # HTTP server timeouts for the API process.
@@ -83,6 +83,18 @@ license:
 
 # Default extraction behavior for stores that do not set extraction_strategy.
 default_extraction_strategy: instruct
+
+# Optional configuration for stores that do not set
+# metadata.stores[].summarization.
+default_summarisation_config:
+  enabled: false
+  # Trigger summarisation by active session event count when enabled.
+  trigger_strategy: event_count
+  event_count:
+    # Number of most recent session events to keep unsummarised.
+    retain_count: 10
+    # Active session event count that triggers summarisation when enabled.
+    threshold: 20
 
 # Redis client pool settings shared by the service.
 client_pool:
@@ -143,6 +155,16 @@ metadata:
         embedding_model: text-embedding-3-large
         # Embedding vector size produced by the model.
         embedding_dimensions: 3072
+      # Store-specific summarisation configuration
+      summarization:
+        enabled: false
+        # Trigger summarisation by active session event count.
+        trigger_strategy: event_count
+        event_count:
+          # Number of most recent session events to keep unsummarised.
+          retain_count: 10
+          # Active session event count that triggers summarisation when enabled.
+          threshold: 20
 
 # Embedding provider connection settings.
 embedders_connection_details:
@@ -155,6 +177,21 @@ embedders_connection_details:
       type: static
       # API key presented to the embedding provider.
       api_key: "<embedder-api-key>"
+    # Dynamic micro-batching for single-text embedding requests. Concurrent
+    # single-text embeds sharing this provider are coalesced into fewer provider
+    # calls, reducing request overhead under load. Enabled by default.
+    batching:
+      embeddings:
+        # Coalesce concurrent single-text embeds into shared provider calls.
+        enabled: true
+        # Maximum number of inputs sent in one provider call.
+        max_batch_size: 10
+        # Maximum time a request waits to coalesce with others before sending.
+        max_wait_time: 20ms
+        # Number of background workers draining the batch queue.
+        num_workers: 10
+        # Maximum number of pending requests buffered before backpressure.
+        queue_size: 1000
 
 # Worker-to-server callback settings.
 dataplane_client:
@@ -173,42 +210,99 @@ dataplane_client:
     # Retry count for transient callback failures.
     max_retry_attempts: 3
 
-# Long-term memory promotion model settings.
-promote_working_memory:
-  # Optional per-strategy windows used to batch rapid session writes into one
-  # promotion job. Each strategy defaults to 5m when omitted. Override with
-  # MEM_PROMOTE_WORKING_MEMORY_STRATEGIES_INSTRUCT_PROMOTION_DEDUPLICATION_WINDOW
-  # or MEM_PROMOTE_WORKING_MEMORY_STRATEGIES_SUMMARY_PROMOTION_DEDUPLICATION_WINDOW.
-  strategies:
-    summary:
-      promotion_deduplication_window: 5m
-    instruct:
-      promotion_deduplication_window: 5m
+# Automatic session summarisation settings.
+session_summarisation:
+  # Service-level kill switch for summarisation. Override per-store configs.
+  enabled: false
+  # LLM configuration for the summarisation
   llm:
-    # LLM provider used for promotion.
+    # LLM provider used to summarise long sessions.
     provider: openai
     endpoint:
-      # Base URL for the promotion LLM API.
+      # Base URL for summarisation LLM requests.
       base_url: https://api.openai.com/v1
-      # Request timeout for promotion calls.
+      # Request timeout for summarisation calls.
       timeout: 30s
       # Header style used to send credentials.
       auth_format: bearer
     credentials:
-      # Use static API key authentication for the promotion LLM.
+      # Use static API key authentication for the summarisation LLM.
       type: static
-      # API key used for promotion requests.
-      api_key: "<promotion-llm-api-key>"
+      # API key used for summarisation requests.
+      api_key: "<summarisation-llm-api-key>"
     models:
-      # Chat model used to extract long-term memory from conversations.
+      # Chat model used to generate session summaries.
       default_chat_model: gpt-4o
     http_client:
       # Keep TLS verification enabled unless you deliberately use self-signed certs.
       skip_verify: false
-      # Per-request timeout for promotion calls.
+      # Per-request timeout for summarisation calls.
       timeout: 30s
-      # Retry count for transient promotion LLM failures.
+      # Retry count for transient summarisation LLM failures.
       max_retry_attempts: 3
+
+# Long-term memory promotion model settings.
+promote_session_memory:
+  # Optional per-strategy windows used to batch rapid session writes into one
+  # promotion job. Each strategy defaults to 5m when omitted; set to 0s to
+  # schedule promotion immediately. Override with
+  # MEM_PROMOTE_SESSION_MEMORY_STRATEGIES_INSTRUCT_PROMOTION_DEDUPLICATION_WINDOW
+  # or MEM_PROMOTE_SESSION_MEMORY_STRATEGIES_SUMMARY_PROMOTION_DEDUPLICATION_WINDOW.
+  strategies:
+    summary:
+      promotion_deduplication_window: 5m
+      llm:
+        # LLM provider used for summary promotion.
+        provider: openai
+        endpoint:
+          # Base URL for the promotion LLM API.
+          base_url: https://api.openai.com/v1
+          # Request timeout for promotion calls.
+          timeout: 30s
+          # Header style used to send credentials.
+          auth_format: bearer
+        credentials:
+          # Use static API key authentication for the promotion LLM.
+          type: static
+          # API key used for promotion requests.
+          api_key: "<promotion-llm-api-key>"
+        models:
+          # Chat model used to extract long-term memory from conversations.
+          default_chat_model: gpt-4o
+        http_client:
+          # Keep TLS verification enabled unless you deliberately use self-signed certs.
+          skip_verify: false
+          # Per-request timeout for promotion calls.
+          timeout: 30s
+          # Retry count for transient promotion LLM failures.
+          max_retry_attempts: 3
+    instruct:
+      promotion_deduplication_window: 5m
+      llm:
+        # LLM provider used for instruct promotion.
+        provider: openai
+        endpoint:
+          # Base URL for the promotion LLM API.
+          base_url: https://api.openai.com/v1
+          # Request timeout for promotion calls.
+          timeout: 30s
+          # Header style used to send credentials.
+          auth_format: bearer
+        credentials:
+          # Use static API key authentication for the promotion LLM.
+          type: static
+          # API key used for promotion requests.
+          api_key: "<promotion-llm-api-key>"
+        models:
+          # Chat model used to extract long-term memory from conversations.
+          default_chat_model: gpt-4o
+        http_client:
+          # Keep TLS verification enabled unless you deliberately use self-signed certs.
+          skip_verify: false
+          # Per-request timeout for promotion calls.
+          timeout: 30s
+          # Retry count for transient promotion LLM failures.
+          max_retry_attempts: 3
 ```
 
 Most important config fields:
@@ -217,9 +311,13 @@ Most important config fields:
 - `metadata.stores[].urls`: Redis databases that hold short-term and long-term memory
 - `metadata.stores[].short_memory.ttl_seconds`: short-term memory retention
 - `metadata.stores[].long_term_memory.*`: embedding provider, model, and vector size
+- `default_summarisation_config.*`: optional fallback summarisation configuration for stores that do not set it explicitly
+- `metadata.stores[].summarization.*`: per-store summarisation configuration
 - `embedders_connection_details`: embedding endpoint and credentials
-- `promote_working_memory.llm.*`: promotion LLM endpoint, auth, and model
-- `promote_working_memory.strategies.*.promotion_deduplication_window`: optional per-strategy window for batching rapid session writes into one promotion job; defaults to `5m`
+- `session_summarisation.enabled`: service-level summarisation kill switch; Has precedence over store-level configuration.
+- `session_summarisation.llm.*`: LLM endpoint, credentials, model, and HTTP client used by the summarisation worker
+- `promote_session_memory.strategies.<summary|instruct>.llm.*`: promotion LLM endpoint, auth, and model
+- `promote_session_memory.strategies.*.promotion_deduplication_window`: optional per-strategy window for batching rapid session writes into one promotion job; defaults to `5m`; set to `0s` for immediate promotion
 - `client_pool.max_size`: connection pool size for higher concurrency
 - `dataplane_client.base_url`: worker to server callback URL
 
@@ -233,7 +331,7 @@ LICENSE_CHECKSUM="$(shasum ./license | awk '{print $1}')"
 CONFIG_CHECKSUM="$(shasum ./memory-dataplane.config.yaml | awk '{print $1}')"
 ```
 
-Create a values file:
+Create a values file, e.g., `ram-values.yaml`:
 
 ```yaml
 license:
@@ -392,7 +490,9 @@ When the posture is active the binary additionally refuses to start if the
 mounted config:
 
 - enables `skip_verify` on any outbound HTTP client (`dataplane_client.http_client`,
-  `promote_working_memory.llm.http_client`, or `embedding.http_client`); or
+  `promote_session_memory.strategies.summary.llm.http_client`,
+  `promote_session_memory.strategies.instruct.llm.http_client`,
+  `session_summarisation.llm.http_client`, or `embedding.http_client`); or
 - uses a non-`rediss://` URL for any Redis connection
   (`background_jobs.redis_streams.urls`, `metadata.stores[].urls`).
 
@@ -425,6 +525,26 @@ The binary logs a one-time banner on startup (at `WARN` level) reminding
 operators of this when `security.profile=fips` is set. The banner is a
 prompt to verify your network isolation; it is **not** evidence that the
 isolation exists.
+
+### NetworkPolicy reference
+
+This chart ships `networkpolicy.reference.yaml` as a reference manifest rather
+than a Helm template because allowed callers are environment-specific. Customize
+the placeholders before applying it:
+
+- `<namespace>`: the namespace where the chart is installed
+- `<release-name>`: the Helm release name (`.Release.Name`). Note that
+  `nameOverride` and `fullnameOverride` change rendered resource names but do
+  **not** change the `app.kubernetes.io/instance` selector label, which always
+  equals `.Release.Name`. Policy names are also release-scoped so that multiple
+  RAM releases can coexist in the same namespace without collision.
+- `<caller-namespace>` and caller pod labels: the ingress controller, service
+  mesh gateway, or application pods that are allowed to call the RAM API
+
+The reference policy first default-denies ingress to the chart pods, then allows
+TCP traffic to the server pods on port `9000` from the worker Deployment and
+from the approved caller selector. Review it against your CNI implementation and
+cluster ingress path before using it in production.
 
 ### Two control planes caveat (advanced)
 
@@ -482,10 +602,13 @@ helm test redis-agent-memory --namespace <namespace-name>
 ```
 
 The RBAC is narrowly scoped: it grants only `get` on the two release
-Deployments, lives only in the release namespace, and is cleaned up by
-Helm's `hook-succeeded,before-hook-creation` hook lifecycle so nothing
-lingers after `helm test` finishes. The offline template test covers both
-the `tests.enabled=false` default (no test resources rendered) and the
+Deployments and lives only in the release namespace. The Role and RoleBinding
+are regular release-managed resources gated by `tests.enabled` so
+`helm test --logs` only collects logs from test Pods. They are removed when
+you disable `tests.enabled` on a later upgrade or uninstall the release. Test
+Pods are kept after a run so Helm can collect logs and are replaced before the
+next test run. The offline template test covers both the
+`tests.enabled=false` default (no test resources rendered) and the
 `tests.enabled=true` opt-in (test Pod, Role, and RoleBinding all render).
 
 ## API Smoke Test

@@ -5,11 +5,10 @@ security-profile.yaml can verify its env vars.
 
 Scoped to `get` on `deployments` in the release namespace only — deliberately
 narrow so clusters that never run `helm test` get no extra RBAC, and even
-opted-in clusters cannot list or modify any other resource type. Both
-resources are created/deleted by Helm alongside the test pod using the same
-hook lifecycle annotations so they live only for the duration of `helm test`
-and are cleaned up afterward (see plan "FIPS posture for on-prem Agent Memory",
-section: resolving PR #735 comments — helm test RBAC).
+opted-in clusters cannot list or modify any other resource type. These
+resources are regular release-managed resources gated by tests.enabled instead
+of test hooks so `helm test --logs` only collects logs from test Pods. Disable
+tests.enabled on a later upgrade, or uninstall the release, to remove them.
 */ -}}
 {{- if .Values.tests.enabled -}}
 apiVersion: rbac.authorization.k8s.io/v1
@@ -19,9 +18,6 @@ metadata:
   labels:
     {{- include "redis-agent-memory.labels" . | nindent 4 }}
     app.kubernetes.io/component: test
-  annotations:
-    "helm.sh/hook": test
-    "helm.sh/hook-delete-policy": hook-succeeded,before-hook-creation
 rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
@@ -37,9 +33,6 @@ metadata:
   labels:
     {{- include "redis-agent-memory.labels" . | nindent 4 }}
     app.kubernetes.io/component: test
-  annotations:
-    "helm.sh/hook": test
-    "helm.sh/hook-delete-policy": hook-succeeded,before-hook-creation
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
