@@ -7,8 +7,12 @@ One release creates:
 
 - `redis-agent-memory` API server
 - `redis-agent-memory-worker` background worker
+- `redis-agent-memory-controlplane` admin store API — **optional, disabled by default**
+  (see [Control Plane (optional)](#control-plane-optional))
 
-Both workloads use the same license Secret and the same shared application config Secret.
+The server and worker use the same license Secret and the same shared application
+config Secret. The optional control plane adds its own config Secret and an
+admin-token Secret, and reuses the same license Secret.
 
 ## Before you install
 
@@ -362,6 +366,236 @@ helm install <release-name> redis-ai/redis-agent-memory \
   --wait
 ```
 
+## Control Plane (optional)
+
+The chart can optionally deploy the on-prem **Control Plane (CP)** — an admin API
+(`/v1/stores`, admin-token authenticated) that creates and manages memory stores
+at runtime, so you can provision stores without editing the data plane's config
+and rolling its pods. It is **disabled by default** (`controlplane.enabled=false`);
+a deployment that only serves memory from a static config never needs it.
+
+When enabled, the chart adds a third workload, `redis-agent-memory-controlplane`
+(Service on port `9100`), alongside the server and worker. The CP writes store
+metadata to a **metadata Redis** and provisions each store's RediSearch indexes
+in the **store database** at create time. It is paired with the data plane running
+in **live store-resolution mode** (`metadata.source: live`), so the data plane
+serves the stores the CP creates.
+
+### Control plane Secrets
+
+The CP needs two Secrets in addition to the license Secret it shares with the
+server and worker:
+
+- a **config Secret** with key `controlplane-onprem.config.yaml` (the CP config file)
+- an **admin-token Secret** — either bring your own (`controlplane.adminToken.existingSecret`),
+  or let the chart lookup-or-generate one on first install
+  (`controlplane.adminToken.autoGenerate`, the default). A generated token is kept
+  stable across upgrades and is never clobbered by a manual edit.
+
+```sh
+kubectl -n <namespace-name> create secret generic ram-controlplane-config \
+  --from-file=controlplane-onprem.config.yaml=./controlplane-onprem.config.yaml
+```
+
+If you want to **bring your own admin token** (instead of letting the chart
+generate one), create its Secret too and disable auto-generation in your values:
+
+```sh
+kubectl -n <namespace-name> create secret generic ram-controlplane-admin-token \
+  --from-literal=token='<your-admin-token>'
+```
+
+```yaml
+controlplane:
+  adminToken:
+    existingSecret: ram-controlplane-admin-token
+    secretKey: token          # must match the --from-literal key above
+    autoGenerate: false
+```
+
+The Secret key must equal `controlplane.adminToken.secretKey` (default `token`),
+and it is always mounted at `/etc/controlplane-onprem/admin/token` — so the CP
+config's `auth.admin_token.token_file` must point there. Rotate the token by
+editing this Secret; the control plane reads it on use, so no redeploy is needed.
+
+#### Sourcing these Secrets from the Secrets Store CSI Driver
+
+If you provision the config / admin-token / license Secrets through the Secrets
+Store CSI Driver, use its **sync-to-Kubernetes-Secret** feature
+(`SecretProviderClass.secretObjects`) and point `controlplane.config.existingSecret`,
+`controlplane.adminToken.existingSecret`, and `license.existingSecret` at the
+synced Secret names — the chart consumes them like any other `existingSecret`.
+
+One caveat: a CSI-synced Secret only exists while a pod that **mounts the CSI
+volume** is running. So the control-plane pod must also mount the
+`SecretProviderClass` volume. Use `controlplane.volumes` / `controlplane.volumeMounts`
+for that:
+
+```yaml
+controlplane:
+  volumes:
+    - name: secrets-store
+      csi:
+        driver: secrets-store.csi.k8s.io
+        readOnly: true
+        volumeAttributes:
+          secretProviderClass: ram-controlplane-spc
+  volumeMounts:
+    - name: secrets-store
+      mountPath: /mnt/secrets-store
+      readOnly: true
+```
+
+(Direct CSI file mounts that bypass a Kubernetes Secret are not supported for the
+config/admin-token/license paths — those are mounted from `existingSecret`.)
+
+### Control plane config file
+
+Use this as a starting point for `controlplane-onprem.config.yaml`:
+
+```yaml
+server:
+  host: 0.0.0.0
+  # The admin API listens on 9100.
+  port: 9100
+  read_timeout: 30s
+  write_timeout: 35s
+  timeout: 30s
+
+# profile: prod (the default) requires the admin token to come from a mounted
+# Secret file and rejects an inline token.
+profile: prod
+
+# Admin API authentication. The chart mounts the admin-token Secret at
+# /etc/controlplane-onprem/admin/token; point token_file at it. The token is
+# read on use, so rotating the Secret takes effect with no redeploy.
+auth:
+  type: admin-token
+  admin_token:
+    token_file: /etc/controlplane-onprem/admin/token
+
+# Enterprise license — the chart mounts the same license Secret as the
+# server/worker at {license.mountDir}/{license.fileName}.
+license:
+  license_path: /etc/redis-agent-memory/license
+
+# Store-metadata Redis: where store records are persisted, under this key
+# namespace. Must match the data plane's metadata.live.namespace.
+metadata:
+  urls:
+    - redis://redis-meta:6379
+  namespace: iris:memory
+
+# Shared store database: the CP provisions a store's search indexes here at
+# create time; the data plane serves from the same store.
+store_db:
+  urls:
+    - redis://redis-store:6379
+
+# Embedding vector size used to size the long-term-memory index at create time.
+# Must match the data plane's embedding.models.dimensions.
+embedding:
+  dimensions: 3072
+```
+
+### Enable it
+
+Add to your `ram-values.yaml`:
+
+```yaml
+controlplane:
+  enabled: true
+  image:
+    repository: redislabs/agent-memory-controlplane
+    tag: "<ram-version>"
+  config:
+    existingSecret: ram-controlplane-config
+    existingSecretChecksum: "<controlplane-config-checksum>"
+  # Auto-generate the admin token on first install (default). To bring your own,
+  # set adminToken.existingSecret and adminToken.autoGenerate: false.
+  adminToken:
+    autoGenerate: true
+```
+
+Retrieve the auto-generated admin token (the exact command is also printed in the
+`helm status` / `NOTES.txt` output):
+
+```sh
+kubectl -n <namespace-name> get secret \
+  redis-agent-memory-controlplane-admin-token \
+  -o jsonpath='{.data.token}' | base64 -d
+```
+
+Rotate it by editing that Secret — the CP reads the token on use, so no redeploy
+is needed.
+
+### Pair the data plane with the control plane
+
+For the data plane to serve CP-created stores, switch its shared config file from
+the static `metadata.stores` list to live mode:
+
+```yaml
+metadata:
+  source: live
+  live:
+    urls:
+      - redis://redis-meta:6379    # the same metadata Redis the CP writes to
+    namespace: iris:memory          # must match the CP's metadata.namespace
+    store_db:
+      urls:
+        - redis://redis-store:6379  # the shared store database
+```
+
+In live mode the store records the control plane writes are **metadata-only**
+(TTLs / strategy / summarization) — they carry no embedding. The data plane
+**completes** each resolved store from its own config, and the long-term-memory
+embedding comes from **two separate blocks** that play different roles:
+
+- **`embedding:`** — the embedding **selection**. Despite being typed as a general
+  `llm.Config`, in live mode the data plane reads only three fields from it and
+  stamps them onto every store: `provider`, `models.default_embedding_model`, and
+  `models.dimensions`. **It is required in live mode — the data plane refuses to
+  start without `default_embedding_model` and a non-zero `dimensions`.**
+- **`embedders_connection_details:`** — the actual embedder **endpoint +
+  credentials**, looked up by the `provider` name from the `embedding:` block.
+
+```yaml
+metadata:
+  source: live
+  live:
+    urls:
+      - redis://redis-meta:6379    # the same metadata Redis the CP writes to
+    namespace: iris:memory          # must match the CP's metadata.namespace
+    store_db:
+      urls:
+        - redis://redis-store:6379  # the shared store database
+
+# embedding SELECTION (provider + model + dimensions); endpoint/creds are NOT read here
+embedding:
+  provider: openai                  # must match an embedders_connection_details key below
+  models:
+    default_embedding_model: nomic-embed-text
+    dimensions: 768                 # see the dimensions rule below
+
+# embedder ENDPOINT + credentials, keyed by the provider above
+embedders_connection_details:
+  openai:
+    protocol: openai
+    base_url: http://your-embedder:11434
+    credentials:
+      type: none
+```
+
+**Dimensions must agree in three places:** the control plane's
+`embedding.dimensions` (it sized the RediSearch vector index at store creation),
+the data plane's `embedding.models.dimensions` (stamped onto the store), and the
+embedding model's real output width. A mismatch produces a wrongly-sized index or
+runtime vector errors.
+
+Default (`metadata.source` unset or `static`) behavior is unchanged — each store
+carries its own `metadata.stores[].long_term_memory` and the top-level `embedding:`
+block is unused — so existing DP-only installs are unaffected.
+
 ## Rotate the License
 
 The chart mounts the license Secret into both the server and worker pods, but
@@ -439,6 +673,7 @@ Use these values to tune the deployment:
 | Naming | `fullnameOverride` | multiple RAM releases in one namespace |
 | Service account | `serviceAccount.*` | custom namespace security policy |
 | Secret rollouts | `license.existingSecretChecksum`, `config.existingSecretChecksum` | force restart after external Secret updates |
+| Control plane | `controlplane.enabled`, `controlplane.image.*`, `controlplane.config.existingSecret`, `controlplane.adminToken.*` | enable the optional admin store API (see [Control Plane (optional)](#control-plane-optional)) |
 
 Do not use floating image tags in production.
 
@@ -482,7 +717,8 @@ falling back to the default posture.
 
 When `security.profile=fips` the chart:
 
-- sets `MEM_SECURITY_PROFILE=fips` on both the server and worker containers;
+- sets `MEM_SECURITY_PROFILE=fips` on the server and worker containers — and on
+  the control-plane container when `controlplane.enabled=true`;
 - surfaces the active profile in `helm status` / `NOTES.txt` output;
 - triggers the image's entrypoint to set `GODEBUG=fips140=on` at process start.
 
@@ -498,6 +734,11 @@ mounted config:
 
 All violations are reported together at startup, so you never have to fix
 them one restart at a time.
+
+The control plane runs under the same posture (same entrypoint and
+`GODEBUG=fips140` contract) and, when enabled, refuses to start if its own Redis
+URLs (`metadata.urls`, `store_db.urls`) are not `rediss://`. The CP has no
+outbound HTTP clients, so the `skip_verify` checks do not apply to it.
 
 ### TLS ownership
 
@@ -543,8 +784,10 @@ the placeholders before applying it:
 
 The reference policy first default-denies ingress to the chart pods, then allows
 TCP traffic to the server pods on port `9000` from the worker Deployment and
-from the approved caller selector. Review it against your CNI implementation and
-cluster ingress path before using it in production.
+from the approved caller selector. It also includes a control-plane stanza that
+allows traffic to the CP pods on port `9100` from approved admin clients only
+(used when `controlplane.enabled=true`). Review it against your CNI implementation
+and cluster ingress path before using it in production.
 
 ### Two control planes caveat (advanced)
 
@@ -578,10 +821,16 @@ kubectl -n <ns> get deploy redis-agent-memory \
 kubectl -n <ns> logs deploy/redis-agent-memory | grep -i 'FIPS security profile'
 ```
 
-The chart also ships a Helm test (`helm test <release>`) and an offline
-template test (`deployment/redis-agent-memory/tests/template-security-profile.sh`)
-that exercise this contract; run the offline test in CI to catch
-regressions before they reach a cluster.
+The chart also ships a Helm test (`helm test <release>`) and offline template
+tests that exercise these contracts without a cluster; run them in CI to catch
+regressions before they reach a cluster:
+
+- `deployment/redis-agent-memory/tests/template-security-profile.sh` — the
+  `security.profile` wiring and the `helm test` RBAC/hook gating.
+- `deployment/redis-agent-memory/tests/template-controlplane.sh` — the optional
+  control plane: off by default, and when enabled it renders the Deployment +
+  Service on `9100` + admin-token Secret, honors bring-your-own-token, fails
+  closed on missing inputs, and carries the FIPS profile.
 
 ### Running the chart test
 
@@ -698,6 +947,15 @@ kubectl port-forward -n <namespace-name> svc/redis-agent-memory 9000:9000
 curl http://localhost:9000/health/liveness
 ```
 
+If the control plane is enabled, verify it on port `9100`:
+
+```sh
+kubectl port-forward -n <namespace-name> svc/redis-agent-memory-controlplane 9100:9100
+curl http://localhost:9100/v1/health/ready
+# Admin endpoints require the token (HTTP 401 without it):
+curl -H "Authorization: Bearer <admin-token>" http://localhost:9100/v1/stores
+```
+
 ## Update
 
 For every update:
@@ -720,9 +978,11 @@ helm upgrade <release-name> redis-ai/redis-agent-memory \
 
 Typical update cases:
 
-- new RAM version: change `image.tag`
+- new RAM version: change `image.tag` (and `controlplane.image.tag` if the control plane is enabled)
 - chart-only update: change `--version`
 - license rotation: update the Secret and `license.existingSecretChecksum`
-- config change: update the Secret and `config.existingSecretChecksum`
+- config change: update the Secret and `config.existingSecretChecksum` (or
+  `controlplane.config.existingSecretChecksum` for the control-plane config)
+- control-plane admin-token rotation: edit the admin-token Secret — read-on-use, no redeploy needed
 
 <!-- markdownlint-enable MD013 MD060 -->

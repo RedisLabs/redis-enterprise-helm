@@ -5,7 +5,7 @@ image:
   pullPolicy: IfNotPresent
   # Defaults to the chart appVersion stamped at release time.
   # Override at install/upgrade to pin a different RAM image version.
-  tag: "0.4.0"
+  tag: "0.5.0"
 
 imagePullSecrets: []
 # Keep the short chart name stable in labels and notes.
@@ -203,3 +203,83 @@ worker:
   nodeSelector: {}
   affinity: {}
   tolerations: []
+
+# ---------------------------------------------------------------------------
+# On-prem Control Plane (CP) — the admin store API (/v1/stores, admin-token
+# auth) used to create/list/get/update/delete memory stores at runtime.
+#
+# DISABLED BY DEFAULT. A deployment that only serves memory (server + worker,
+# static store config) does not need the CP — leave controlplane.enabled=false
+# and no CP resources are rendered. Enable it to provision/manage stores at
+# runtime; pair with the data plane's `metadata.source: live` config so the DP
+# serves CP-created stores.
+#
+# The CP runs as its own Deployment + Service (port 9100), reuses the chart's
+# license / TLS / serviceAccount / security settings, and mounts its own config
+# Secret + a single admin-token Secret.
+# ---------------------------------------------------------------------------
+controlplane:
+  enabled: false
+
+  image:
+    # Separate image from the data plane (control-plane binary).
+    repository: 'redislabs/agent-memory-controlplane'
+    pullPolicy: IfNotPresent
+    # Must be set explicitly at install/upgrade time when controlplane.enabled=true.
+    tag: ""
+
+  replicaCount: 1
+
+  # The CP config file (admin-token source, metadata Redis, store_db, embedding)
+  # provided as a pre-created Secret, mounted at /etc/ai. The config's
+  # auth.admin_token.token_file must point at the mounted admin-token path
+  # (/etc/controlplane-onprem/admin/token) and metadata.namespace is set to
+  # iris:memory for on-prem.
+  config:
+    existingSecret: ""
+    secretKey: "controlplane-onprem.config.yaml"
+    existingSecretChecksum: ""
+
+  # Admin API token (single value; rotation = edit the Secret, read-on-use picks
+  # it up with no redeploy). Precedence: existingSecret (BYO) wins; else
+  # autoGenerate lookup-or-generates a Helm-managed Secret on first install
+  # (stable across upgrades; never clobbers an operator edit).
+  adminToken:
+    existingSecret: ""
+    secretKey: "token"
+    autoGenerate: true
+    existingSecretChecksum: ""
+
+  service:
+    type: ClusterIP
+    port: 9100
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+
+  # Additional volumes / volumeMounts for the control-plane Deployment. Use these
+  # to mount a Secrets Store CSI (SecretProviderClass) volume so the CP pod keeps
+  # a CSI-synced Secret (config / admin token / license) alive — the synced K8s
+  # Secret only exists while a pod mounting the CSI volume runs.
+  volumes: []
+  # - name: secrets-store
+  #   csi:
+  #     driver: secrets-store.csi.k8s.io
+  #     readOnly: true
+  #     volumeAttributes:
+  #       secretProviderClass: ram-controlplane-spc
+  volumeMounts: []
+  # - name: secrets-store
+  #   mountPath: /mnt/secrets-store
+  #   readOnly: true

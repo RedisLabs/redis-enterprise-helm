@@ -72,3 +72,37 @@ spec:
       ports:
         - protocol: TCP
           port: 9000
+---
+# Control-plane ingress (only rendered/needed when controlplane.enabled=true).
+# The admin store API listens on 9100. Restrict it to approved admin clients
+# only — it provisions and deletes stores. The control plane itself reaches OUT
+# to the metadata Redis and the shared store database; egress is not restricted
+# by this reference policy (add an egress policy if your environment requires
+# it, allowing the control-plane pods to reach those Redis endpoints).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: <release-name>-controlplane-ingress
+  namespace: <namespace>
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis-agent-memory
+      app.kubernetes.io/instance: <release-name>
+      app.kubernetes.io/component: controlplane
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow approved admin clients only (e.g. an operator bastion, a GitOps
+    # runner, or the ingress/gateway fronting the admin API). Replace these
+    # labels with the workloads permitted to manage stores.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: <admin-caller-namespace>
+          podSelector:
+            matchLabels:
+              <admin-caller-label-key>: <admin-caller-label-value>
+      ports:
+        - protocol: TCP
+          port: 9100
