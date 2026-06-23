@@ -5,7 +5,7 @@ image:
   pullPolicy: IfNotPresent
   # Defaults to the chart appVersion stamped at release time.
   # Override at install/upgrade to pin a different RAM image version.
-  tag: "0.5.0"
+  tag: "0.5.1"
 
 imagePullSecrets: []
 # Keep the short chart name stable in labels and notes.
@@ -223,10 +223,10 @@ controlplane:
 
   image:
     # Separate image from the data plane (control-plane binary).
-    repository: 'redislabs/agent-memory-controlplane'
+    repository: 'redislabs/agent-memory-control-plane'
     pullPolicy: IfNotPresent
     # Must be set explicitly at install/upgrade time when controlplane.enabled=true.
-    tag: ""
+    tag: "0.5.1"
 
   replicaCount: 1
 
