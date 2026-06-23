@@ -506,7 +506,7 @@ Add to your `ram-values.yaml`:
 controlplane:
   enabled: true
   image:
-    repository: redislabs/agent-memory-controlplane
+    repository: redislabs/agent-memory-control-plane
     tag: "<ram-version>"
   config:
     existingSecret: ram-controlplane-config
