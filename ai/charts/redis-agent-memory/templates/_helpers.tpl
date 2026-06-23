@@ -162,7 +162,7 @@ Validate required enterprise inputs.
 {{- if and (not .Values.controlplane.adminToken.existingSecret) (not .Values.controlplane.adminToken.autoGenerate) -}}
 {{- fail "controlplane.adminToken: set adminToken.existingSecret (BYO) or adminToken.autoGenerate=true" -}}
 {{- end -}}
-{{- if and .Values.airgap.enabled (eq .Values.controlplane.image.repository "redislabs/agent-memory-controlplane") -}}
+{{- if and .Values.airgap.enabled (eq .Values.controlplane.image.repository "redislabs/agent-memory-control-plane") -}}
 {{- fail "airgap.enabled=true requires controlplane.image.repository to point to a mirrored registry reachable from the cluster" -}}
 {{- end -}}
 {{- end -}}
