@@ -5,7 +5,7 @@ image:
   pullPolicy: IfNotPresent
   # Defaults to the chart appVersion stamped at release time.
   # Override at install/upgrade to pin a different RAM image version.
-  tag: "0.5.2"
+  tag: "0.5.3"
 
 imagePullSecrets: []
 # Keep the short chart name stable in labels and notes.
@@ -188,6 +188,19 @@ server:
 
 worker:
   replicaCount: 2
+  serviceAccount:
+    # Leave disabled to keep using the chart-level serviceAccount. Enable to
+    # give worker pods a distinct Kubernetes identity for worker-to-RAM auth.
+    create: false
+    automount: false
+    annotations: {}
+    name: ''
+    token:
+      enabled: false
+      audience: redis-agent-memory
+      expirationSeconds: 3600
+      mountPath: /var/run/secrets/redis-agent-memory-worker
+      fileName: token
   resources:
     limits:
       cpu: 1000m
@@ -203,6 +216,18 @@ worker:
   nodeSelector: {}
   affinity: {}
   tolerations: []
+
+# Worker-to-RAM authentication preset. When enabled, the chart gives worker pods
+# a Kubernetes projected service-account token suitable for
+# dataplane_client.auth.type=service_account_token. By default this also creates
+# a dedicated worker ServiceAccount unless worker.serviceAccount.name is set.
+#
+# Customize the rendered Kubernetes identity and token mount through
+# worker.serviceAccount.* above. The shared memory-dataplane config Secret must
+# still enable dataplane_client.auth and auth.worker_identity with matching
+# issuer/JWKS/audience/subject settings.
+workerAuth:
+  enabled: false
 
 # ---------------------------------------------------------------------------
 # On-prem Control Plane (CP) — the admin store API (/v1/stores, admin-token
@@ -226,7 +251,7 @@ controlplane:
     repository: 'redislabs/agent-memory-control-plane'
     pullPolicy: IfNotPresent
     # Must be set explicitly at install/upgrade time when controlplane.enabled=true.
-    tag: "0.5.2"
+    tag: "0.5.3"
 
   replicaCount: 1
 

@@ -98,6 +98,33 @@ Create the name of the service account to use
 {{- end }}
 
 {{/*
+Create the name of the worker service account to use.
+*/}}
+{{- define "redis-agent-memory.workerServiceAccountName" -}}
+{{- if .Values.worker.serviceAccount.name }}
+{{- .Values.worker.serviceAccount.name }}
+{{- else if or .Values.worker.serviceAccount.create .Values.workerAuth.enabled }}
+{{- include "redis-agent-memory.workerFullname" . }}
+{{- else }}
+{{- include "redis-agent-memory.serviceAccountName" . }}
+{{- end }}
+{{- end }}
+
+{{/*
+Whether to render a projected service-account token for the worker.
+*/}}
+{{- define "redis-agent-memory.workerServiceAccountTokenEnabled" -}}
+{{- if or .Values.worker.serviceAccount.token.enabled .Values.workerAuth.enabled -}}true{{- end }}
+{{- end }}
+
+{{/*
+Default Kubernetes service-account subject to trust in auth.worker_identity.
+*/}}
+{{- define "redis-agent-memory.workerAuthSubject" -}}
+{{- printf "system:serviceaccount:%s:%s" .Release.Namespace (include "redis-agent-memory.workerServiceAccountName" .) }}
+{{- end }}
+
+{{/*
 Create the name of the shared config Secret to use.
 */}}
 {{- define "redis-agent-memory.configSecretName" -}}

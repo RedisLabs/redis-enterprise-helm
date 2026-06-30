@@ -20,7 +20,7 @@ admin-token Secret, and reuses the same license Secret.
 - Helm 3+
 - Redis endpoints reachable from the cluster
 - A license is required to use the on-prem version. Please reach out to your Redis account representative. If you don’t have one, you can contact our sales team here: <https://redis.io/meeting/>
-- a RAM image accessible from the cluster
+- RAM image access from the cluster; see [Image access](#image-access)
 
 Prerequisite matrix:
 
@@ -42,6 +42,52 @@ The chart requires:
 - `license.existingSecret`
 - `config.existingSecret`
 - `image.tag`
+
+For end-to-end Control Plane, agent-key, gateway, and store-authorization
+guidance, see the
+[Redis Agent Memory on-premises guide](../../docs/redis-agent-memory-onprem-guide.md).
+
+## Image Access
+
+The published Helm chart is `redis-ai/redis-agent-memory` from
+`https://helm.redis.io/ai`. Standard customer installs use the public Docker Hub
+images published by the RAM on-prem release:
+
+```yaml
+image:
+  repository: redislabs/agent-memory
+  tag: "<ram-version>"
+
+controlplane:
+  image:
+    repository: redislabs/agent-memory-control-plane
+    tag: "<ram-version>"
+
+imagePullSecrets: []
+```
+
+`imagePullSecrets` is normally not needed for the standard public Docker Hub
+path. Configure it only when the cluster uses explicit registry credentials, or
+when the images are mirrored to a private/authenticated registry.
+
+For authenticated registries, create an image pull Secret in the target
+namespace and reference it with `imagePullSecrets`:
+
+```sh
+kubectl -n <namespace-name> create secret docker-registry ram-registry \
+  --docker-server=<registry-host> \
+  --docker-username=<username> \
+  --docker-password=<password>
+```
+
+```yaml
+imagePullSecrets:
+  - name: ram-registry
+```
+
+For mirrored images, override `image.repository` and, when the Control Plane is
+enabled, `controlplane.image.repository`. Use the image tag supplied for the RAM
+release; do not use the source Git tag format as the Docker image tag.
 
 ## Required Secrets
 
@@ -87,6 +133,10 @@ license:
 
 # Default extraction behavior for stores that do not set extraction_strategy.
 default_extraction_strategy: instruct
+
+# This static-mode example disables RAM-layer DP auth.
+auth:
+  method: none
 
 # Optional configuration for stores that do not set
 # metadata.stores[].summarization.
@@ -137,6 +187,22 @@ background_jobs:
     operation_timeout: 30s
     # Maximum time allowed for one job handler run.
     handler_timeout: 5m
+  # Execution idempotency prevents a redelivered successful job from running again.
+  idempotency:
+    # Enable for production async workers.
+    enabled: true
+    # Redis endpoint(s) used for done markers and ownership locks.
+    urls:
+      # This can share the job Redis or use a dedicated Redis with the same regional ownership model.
+      - redis://redis-jobs:6379
+    # Retention window for successful job done markers.
+    done_ttl: 24h
+    # Ownership lock TTL for in-flight job execution.
+    lock_ttl: 5m
+    # How often workers extend owned locks while executing a job.
+    lease_extension_interval: 1m
+    # Timeout for idempotency Redis operations.
+    operation_timeout: 5s
 
 # Memory store definitions exposed by the API.
 metadata:
@@ -204,8 +270,12 @@ dataplane_client:
   auth:
     # Disable worker-to-server auth for typical on-prem deployments.
     disabled: true
-    # Shared passphrase to use only if auth is enabled.
-    passphrase: ""
+    # To authenticate worker callbacks with a Kubernetes projected service
+    # account token, set workerAuth.enabled=true in Helm values, then set
+    # disabled: false, type: service_account_token, and token_file to the
+    # projected token path mounted by the chart.
+    # type: service_account_token
+    # token_file: /var/run/secrets/redis-agent-memory-worker/token
   http_client:
     # Keep TLS verification enabled unless you deliberately use self-signed certs.
     skip_verify: false
@@ -532,7 +602,12 @@ is needed.
 ### Pair the data plane with the control plane
 
 For the data plane to serve CP-created stores, switch its shared config file from
-the static `metadata.stores` list to live mode:
+the static `metadata.stores` list to live mode and use the matching auth mode.
+The data plane config is supplied as an external Secret, so it does not know
+whether the Helm release has `controlplane.enabled=true`. CP-managed live
+deployments use `auth.method: agent_key`, or rely on the live-mode default when
+`auth.method` is omitted unless the shared config explicitly keeps worker
+callback auth disabled:
 
 ```yaml
 metadata:
@@ -668,6 +743,7 @@ Use these values to tune the deployment:
 | Air-gapped installs | `airgap.enabled` | require a non-public image repository |
 | API server capacity | `server.resources`, `server.autoscaling.*` | higher request volume or larger memory footprint |
 | Worker capacity | `worker.resources`, `worker.autoscaling.*` | higher background job volume |
+| Worker service identity | `workerAuth.enabled`, `worker.serviceAccount.*` | projected service-account token auth for worker callbacks |
 | Scheduling | `server.nodeSelector`, `worker.nodeSelector`, `server.affinity`, `worker.affinity`, `server.tolerations`, `worker.tolerations` | placement control in larger clusters |
 | Networking | `service.type`, `ingress.*` | expose the API outside the cluster |
 | Naming | `fullnameOverride` | multiple RAM releases in one namespace |
@@ -750,17 +826,52 @@ to the promotion LLM, and to the worker-to-server callback URL if you
 expose it externally) is configured through the shared config file and is
 what the FIPS posture enforces.
 
+### Worker service-account authentication
+
+The worker can authenticate its callback requests to the RAM API with a
+Kubernetes projected service-account token. Set `workerAuth.enabled=true` in
+Helm values; by default the chart creates a dedicated
+`redis-agent-memory-worker` ServiceAccount, mounts a projected token at
+`/var/run/secrets/redis-agent-memory-worker/token`, uses the
+`redis-agent-memory` audience, and gives the worker the subject
+`system:serviceaccount:<namespace>:redis-agent-memory-worker`. Customize those
+defaults with `worker.serviceAccount.name`, `worker.serviceAccount.create`,
+`worker.serviceAccount.annotations`, and
+`worker.serviceAccount.token.{audience,expirationSeconds,mountPath,fileName}`.
+In `memory-dataplane.config.yaml`, set
+`dataplane_client.auth.disabled=false`,
+`dataplane_client.auth.type=service_account_token`, and
+`dataplane_client.auth.token_file` to the mounted token path; also enable
+`auth.worker_identity` with the Kubernetes service-account `issuer`,
+`jwks_uri`, matching `audience`, and a `subjects` entry for the worker subject
+with the required store grants. For the initial single-account MVP, grant the
+worker `write` on `mem-store:*`; for stricter isolation, replace that wildcard
+with narrower store resources or use separate worker ServiceAccounts. The
+worker token proves the pod identity, and RAM still authorizes every request
+through the normal Principal role and store-grant checks.
+
 ### Hosting access requirement
 
-On-prem Agent Memory does not implement in-process authentication for the
-API. This is a deliberate product decision, and the FIPS posture does not
-change it. Access control for the API **must** be enforced by your hosting
-environment — typically some combination of:
+On-prem Agent Memory can enforce Data Plane access with RAM agent keys when
+live metadata and `auth.method: agent_key` are configured. If Data Plane
+authentication is disabled, access control for the API **must** be enforced by
+your hosting environment. Do not expose an auth-disabled Data Plane to untrusted
+callers; any caller that can reach it can use the configured stores. Typical
+hosting controls include:
 
 - a Kubernetes `NetworkPolicy` that restricts ingress to the pod,
 - an ingress controller or service mesh that authenticates callers, and
 - network boundaries (VPC, private subnets, VPN / zero-trust agent) that
   prevent arbitrary workloads from reaching the service.
+
+For worker-enabled deployments with Data Plane auth enabled, configure worker
+identity. Set `workerAuth.enabled=true` to mount a projected Kubernetes
+service-account token into the worker pod, then configure
+`dataplane_client.auth.type=service_account_token` and `auth.worker_identity` in
+`memory-dataplane.config.yaml`. The Helm ServiceAccount settings only provide
+the Kubernetes credential; RAM access is granted by
+`auth.worker_identity.subjects` with store resources such as
+`mem-store:<store-id>` or, for the initial single-account MVP, `mem-store:*`.
 
 The binary logs a one-time banner on startup (at `WARN` level) reminding
 operators of this when `security.profile=fips` is set. The banner is a
