@@ -1,4 +1,5 @@
 {{- include "redis-agent-memory.validate" . }}
+{{- $workerServiceAccountTokenEnabled := include "redis-agent-memory.workerServiceAccountTokenEnabled" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -37,7 +38,10 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "redis-agent-memory.serviceAccountName" . }}
+      serviceAccountName: {{ include "redis-agent-memory.workerServiceAccountName" . }}
+      {{- if $workerServiceAccountTokenEnabled }}
+      automountServiceAccountToken: false
+      {{- end }}
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -87,6 +91,11 @@ spec:
             - name: license-volume
               mountPath: {{ .Values.license.mountDir }}
               readOnly: true
+            {{- if $workerServiceAccountTokenEnabled }}
+            - name: worker-service-account-token
+              mountPath: {{ .Values.worker.serviceAccount.token.mountPath }}
+              readOnly: true
+            {{- end }}
           {{- include "redis-agent-memory.tlsVolumeMount" . | nindent 12 }}
           {{- with .Values.volumeMounts }}
             {{- toYaml . | nindent 12 }}
@@ -105,6 +114,15 @@ spec:
             items:
               - key: {{ .Values.license.secretKey }}
                 path: {{ .Values.license.fileName }}
+        {{- if $workerServiceAccountTokenEnabled }}
+        - name: worker-service-account-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: {{ .Values.worker.serviceAccount.token.fileName }}
+                  audience: {{ .Values.worker.serviceAccount.token.audience | quote }}
+                  expirationSeconds: {{ .Values.worker.serviceAccount.token.expirationSeconds }}
+        {{- end }}
       {{- include "redis-agent-memory.tlsVolume" . | nindent 8 }}
       {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}
