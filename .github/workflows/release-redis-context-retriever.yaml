@@ -1,0 +1,13 @@
+name: Release Redis Context Retriever Chart
+
+on:
+  workflow_dispatch:
+
+jobs:
+  call-release-workflow:
+    uses: ./.github/workflows/release-chart-reusable.yaml
+    with:
+      chart_name: redis-context-retriever
+      chart_path: ai/charts/redis-context-retriever
+      tag_prefix: redis-context-retriever
+    secrets: inherit
