@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cs.fullname" . }}-admin
+  labels:
+    {{- include "cs.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin
+spec:
+  replicas: {{ .Values.admin.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cs.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: admin
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "cs.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: admin
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "cs.serviceAccountName" . }}
+      containers:
+        - name: admin
+          image: "{{ .Values.admin.image.repository }}:{{ .Values.admin.image.tag }}"
+          imagePullPolicy: {{ .Values.admin.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "cs.fullname" . }}-config
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cs.configSecretName" . }}
+                  key: REDIS_PASSWORD
+            - name: SECRET_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cs.configSecretName" . }}
+                  key: SECRET_ENCRYPTION_KEY
+            {{- if or .Values.license.existingSecret .Values.license.key }}
+            - name: LICENSE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cs.licenseSecretName" . }}
+                  key: LICENSE_KEY
+            {{- end }}
+            # Enable admin bootstrap only for the admin server (not MCP)
+            - name: ENABLE_ADMIN_BOOTSTRAP
+              value: "true"
+          livenessProbe:
+            {{- toYaml .Values.admin.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.admin.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.admin.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+

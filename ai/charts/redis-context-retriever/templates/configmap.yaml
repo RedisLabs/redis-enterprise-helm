@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cs.fullname" . }}-config
+  labels:
+    {{- include "cs.labels" . | nindent 4 }}
+data:
+  AUTH_MODE: {{ .Values.authMode | quote }}
+  STORAGE_BACKEND: {{ .Values.storageBackend | default "redis" | quote }}
+  REDIS_ADDR: {{ required "redis.addr is required: set it to your Redis database endpoint (host:port). Bring your own module-enabled Redis database (Search + JSON)." .Values.redis.addr | quote }}
+  REDIS_DB: {{ .Values.redis.db | quote }}
+  REDIS_TLS_ENABLED: {{ .Values.redis.tlsEnabled | default false | quote }}
+  REQUIRE_TLS: {{ .Values.requireTLS | default false | quote }}
+  ENVIRONMENT: {{ .Values.environment | quote }}
+  LOG_LEVEL: {{ .Values.logLevel | quote }}
+  {{- with .Values.mcp.publicURL }}
+  MCP_PUBLIC_URL: {{ . | quote }}
+  {{- end }}
+
