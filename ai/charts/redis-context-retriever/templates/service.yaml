@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cs.fullname" . }}-admin
+  labels:
+    {{- include "cs.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin
+spec:
+  type: {{ .Values.admin.service.type }}
+  ports:
+    - port: {{ .Values.admin.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+      {{- if and (eq .Values.admin.service.type "NodePort") .Values.admin.service.nodePort }}
+      nodePort: {{ .Values.admin.service.nodePort }}
+      {{- end }}
+  selector:
+    {{- include "cs.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: admin
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cs.fullname" . }}-mcp
+  labels:
+    {{- include "cs.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp
+spec:
+  type: {{ .Values.mcp.service.type }}
+  ports:
+    - port: {{ .Values.mcp.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+      {{- if and (eq .Values.mcp.service.type "NodePort") .Values.mcp.service.nodePort }}
+      nodePort: {{ .Values.mcp.service.nodePort }}
+      {{- end }}
+  selector:
+    {{- include "cs.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp
+
