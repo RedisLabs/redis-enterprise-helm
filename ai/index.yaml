@@ -93,6 +93,32 @@ entries:
     version: 0.1.0
   redis-context-retriever:
   - apiVersion: v2
+    appVersion: 0.4.0
+    created: "2026-07-16T12:03:56.021781088Z"
+    description: Context Retriever on-premises deployment chart. Requires a reachable
+      Redis database with the Search and JSON modules (RediSearch + RedisJSON) enabled
+      — the query engine issues FT.CREATE ... ON JSON / FT.SEARCH, so a plain Redis
+      endpoint will not work.
+    digest: 6414d93324b940b7c2d91d05f15255ae9948ef80ef9bdb60cb9be7e7f7ec86cb
+    home: https://github.com/redislabsdev/cloud-context-engine
+    keywords:
+    - context-retriever
+    - ai
+    - mcp
+    - redis
+    - redisearch
+    - on-prem
+    maintainers:
+    - email: support@redis.com
+      name: Redis Labs
+    name: redis-context-retriever
+    sources:
+    - https://github.com/redislabsdev/cloud-context-engine
+    type: application
+    urls:
+    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-context-retriever-0.4.0/redis-context-retriever-0.4.0.tgz
+    version: 0.4.0
+  - apiVersion: v2
     appVersion: 0.3.0
     created: "2026-07-09T07:01:09.911263589Z"
     description: Context Retriever on-premises deployment chart. Requires a reachable
@@ -118,4 +144,4 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-context-retriever-0.3.0/redis-context-retriever-0.3.0.tgz
     version: 0.3.0
-generated: "2026-07-09T07:01:09.911287454Z"
+generated: "2026-07-16T12:03:56.02180272Z"
