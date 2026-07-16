@@ -3,8 +3,8 @@ name: redis-context-retriever
 description: >-
   Context Retriever on-premises deployment chart. Requires a reachable Redis database with the Search and JSON modules (RediSearch + RedisJSON) enabled — the query engine issues FT.CREATE ... ON JSON / FT.SEARCH, so a plain Redis endpoint will not work.
 type: application
-version: 0.3.0
-appVersion: "0.3.0"
+version: 0.4.0
+appVersion: "0.4.0"
 keywords:
   - context-retriever
   - ai

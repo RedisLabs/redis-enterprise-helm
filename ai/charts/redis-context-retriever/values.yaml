@@ -12,7 +12,7 @@ admin:
   # -- Container image
   image:
     repository: redislabs/context-retriever-admin
-    tag: "0.3.0"
+    tag: "0.4.0"
     pullPolicy: IfNotPresent
   # -- Service configuration
   service:
@@ -54,7 +54,7 @@ mcp:
   # -- Container image
   image:
     repository: redislabs/context-retriever
-    tag: "0.3.0"
+    tag: "0.4.0"
     pullPolicy: IfNotPresent
   # -- Service configuration
   service:
@@ -75,10 +75,31 @@ redis:
   # (most often Redis Enterprise) with the Search + JSON modules (RediSearch + RedisJSON)
   # enabled. There is no default; the chart fails to render if this is not set.
   addr: ""
+  # -- Redis ACL username (Redis 6+). Leave empty to authenticate as the server's
+  # default user. The password is supplied separately via secrets.redisPassword /
+  # secrets.existingSecret (REDIS_PASSWORD).
+  username: ""
   # -- Redis database number
   db: 0
   # -- Enable TLS for Redis connection (default: false for on-prem, true for cloud)
   tlsEnabled: false
+  # -- Extra CA certificates to trust when connecting to Redis over TLS.
+  # Use this when your Redis (e.g. Redis Enterprise) presents a certificate signed by a
+  # private/self-signed CA that is not in the public trust store. Each referenced secret's
+  # certificate is mounted into the container's system trust path (/etc/ssl/certs) so that
+  # go-redis (via Go's default system cert pool) trusts it — no application config needed.
+  # The public CA bundle in the image remains trusted; these CAs are added on top.
+  #
+  # Pass one entry per pre-created secret. The certs are mounted as separate files
+  # (/etc/ssl/certs/redis-ca_0.crt, redis-ca_1.crt, ...); the on-disk filename is
+  # irrelevant to trust, so it is auto-indexed and you do not choose it. Leave the list
+  # empty (the default) to mount nothing — fully backward compatible.
+  tlsCA:
+    existingSecrets: []
+    # - secretName: my-redis-ca         # required: name of a pre-created secret holding the CA cert
+    #   key: ca.crt                      # optional: key within that secret (default: ca.crt)
+    # - secretName: another-redis-ca     # a second CA, e.g. for a different Redis endpoint
+    #   key: tls.crt
 # Secrets configuration
 secrets:
   # -- Existing secret holding the Context Retriever config. Left empty by default — the

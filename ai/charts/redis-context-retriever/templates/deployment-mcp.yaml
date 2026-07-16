@@ -69,6 +69,14 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.mcp.resources | nindent 12 }}
+          {{- if .Values.redis.tlsCA.existingSecrets }}
+          volumeMounts:
+            {{- include "cs.redisTLSCAVolumeMounts" . | trim | nindent 12 }}
+          {{- end }}
+      {{- if .Values.redis.tlsCA.existingSecrets }}
+      volumes:
+        {{- include "cs.redisTLSCAVolumes" . | trim | nindent 8 }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
