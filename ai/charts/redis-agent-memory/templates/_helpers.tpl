@@ -31,6 +31,35 @@ Fully qualified name for the worker Deployment and its resources.
 {{- end }}
 
 {{/*
+Fully qualified name for the control-plane Deployment and its resources.
+*/}}
+{{- define "redis-agent-memory.controlplaneFullname" -}}
+{{- printf "%s-controlplane" (include "redis-agent-memory.fullname" . | trunc 48 | trimSuffix "-") }}
+{{- end }}
+
+{{/*
+Create the name of the control-plane config Secret to use.
+*/}}
+{{- define "redis-agent-memory.controlplaneConfigSecretName" -}}
+{{- if .Values.controlplane.config.existingSecret }}
+{{- .Values.controlplane.config.existingSecret }}
+{{- else }}
+{{- printf "%s-config" (include "redis-agent-memory.controlplaneFullname" .) }}
+{{- end }}
+{{- end }}
+
+{{/*
+Create the name of the control-plane admin-token Secret to use.
+*/}}
+{{- define "redis-agent-memory.controlplaneAdminTokenSecretName" -}}
+{{- if .Values.controlplane.adminToken.existingSecret }}
+{{- .Values.controlplane.adminToken.existingSecret }}
+{{- else }}
+{{- printf "%s-admin-token" (include "redis-agent-memory.controlplaneFullname" .) }}
+{{- end }}
+{{- end }}
+
+{{/*
 Create chart name and version as used by the chart label.
 */}}
 {{- define "redis-agent-memory.chart" -}}
@@ -66,6 +95,33 @@ Create the name of the service account to use
 {{- else }}
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
+{{- end }}
+
+{{/*
+Create the name of the worker service account to use.
+*/}}
+{{- define "redis-agent-memory.workerServiceAccountName" -}}
+{{- if .Values.worker.serviceAccount.name }}
+{{- .Values.worker.serviceAccount.name }}
+{{- else if or .Values.worker.serviceAccount.create .Values.workerAuth.enabled }}
+{{- include "redis-agent-memory.workerFullname" . }}
+{{- else }}
+{{- include "redis-agent-memory.serviceAccountName" . }}
+{{- end }}
+{{- end }}
+
+{{/*
+Whether to render a projected service-account token for the worker.
+*/}}
+{{- define "redis-agent-memory.workerServiceAccountTokenEnabled" -}}
+{{- if or .Values.worker.serviceAccount.token.enabled .Values.workerAuth.enabled -}}true{{- end }}
+{{- end }}
+
+{{/*
+Default Kubernetes service-account subject to trust in auth.worker_identity.
+*/}}
+{{- define "redis-agent-memory.workerAuthSubject" -}}
+{{- printf "system:serviceaccount:%s:%s" .Release.Namespace (include "redis-agent-memory.workerServiceAccountName" .) }}
 {{- end }}
 
 {{/*
@@ -118,6 +174,23 @@ Validate required enterprise inputs.
 {{- $profile := default "" .Values.security.profile -}}
 {{- if and (ne $profile "") (ne $profile "fips") -}}
 {{- fail (printf "security.profile=%q is not supported (valid values: \"\", \"fips\"). See the chart README section \"FIPS-oriented posture\"." $profile) -}}
+{{- end -}}
+{{- end -}}
+{{- if .Values.controlplane.enabled -}}
+{{- if not .Values.controlplane.image.tag -}}
+{{- fail "controlplane.image.tag is required when controlplane.enabled=true" -}}
+{{- end -}}
+{{- if not .Values.controlplane.config.existingSecret -}}
+{{- fail "controlplane.config.existingSecret is required when controlplane.enabled=true" -}}
+{{- end -}}
+{{- if not .Values.controlplane.config.secretKey -}}
+{{- fail "controlplane.config.secretKey is required when controlplane.enabled=true" -}}
+{{- end -}}
+{{- if and (not .Values.controlplane.adminToken.existingSecret) (not .Values.controlplane.adminToken.autoGenerate) -}}
+{{- fail "controlplane.adminToken: set adminToken.existingSecret (BYO) or adminToken.autoGenerate=true" -}}
+{{- end -}}
+{{- if and .Values.airgap.enabled (eq .Values.controlplane.image.repository "redislabs/agent-memory-control-plane") -}}
+{{- fail "airgap.enabled=true requires controlplane.image.repository to point to a mirrored registry reachable from the cluster" -}}
 {{- end -}}
 {{- end -}}
 {{- end }}

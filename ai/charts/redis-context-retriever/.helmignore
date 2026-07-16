@@ -1,0 +1,9 @@
+# Patterns to ignore when packaging the chart (helm package).
+.DS_Store
+.git/
+.gitignore
+*.tmproj
+*.bak
+*.orig
+# Test/example-only files — not shipped in the released chart.
+tests/

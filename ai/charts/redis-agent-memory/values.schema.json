@@ -96,6 +96,73 @@
         }
       },
       "additionalProperties": false
+    },
+    "workerAuth": {
+      "type": "object",
+      "description": "Worker-to-RAM authentication preset. When enabled, the chart creates or uses a worker service account and mounts a projected Kubernetes service-account token for dataplane_client.auth.type=service_account_token. The shared config Secret must still configure auth.worker_identity.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "When true, render worker projected service-account token wiring with the defaults from worker.serviceAccount.token.*."
+        }
+      },
+      "additionalProperties": false
+    },
+    "controlplane": {
+      "type": "object",
+      "description": "On-prem Control Plane (admin store API). Disabled by default. When enabled, controlplane.image.tag, controlplane.config.existingSecret/secretKey, and an admin-token source (existingSecret or autoGenerate) are required — enforced at install/upgrade time by the chart's validate helper.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "When true, render the control-plane Deployment + Service (+ auto-generated admin-token Secret). Defaults to false."
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+          },
+          "additionalProperties": false
+        },
+        "replicaCount": { "type": "integer", "minimum": 0 },
+        "config": {
+          "type": "object",
+          "properties": {
+            "existingSecret": { "type": "string" },
+            "secretKey": { "type": "string" },
+            "existingSecretChecksum": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "adminToken": {
+          "type": "object",
+          "properties": {
+            "existingSecret": { "type": "string" },
+            "secretKey": { "type": "string", "minLength": 1 },
+            "autoGenerate": { "type": "boolean" },
+            "existingSecretChecksum": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string" },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+          },
+          "additionalProperties": false
+        },
+        "resources": { "type": "object" },
+        "podAnnotations": { "type": "object" },
+        "podLabels": { "type": "object" },
+        "nodeSelector": { "type": "object" },
+        "affinity": { "type": "object" },
+        "tolerations": { "type": "array" },
+        "volumes": { "type": "array" },
+        "volumeMounts": { "type": "array" }
+      },
+      "additionalProperties": false
     }
   }
 }

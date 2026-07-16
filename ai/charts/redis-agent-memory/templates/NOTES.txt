@@ -2,6 +2,13 @@ Server Deployment : {{ include "redis-agent-memory.fullname" . }}
 Worker Deployment : {{ include "redis-agent-memory.workerFullname" . }}
 Service           : {{ include "redis-agent-memory.fullname" . }}:{{ .Values.service.port }}
 TLS CA bundle     : {{ if and .Values.tls .Values.tls.caCertSecret }}{{ .Values.tls.caCertSecret }} (key: {{ .Values.tls.caCertKey }}){{ else }}system default{{ end }}
+{{- if .Values.workerAuth.enabled }}
+Worker auth       : enabled (Kubernetes projected service-account token)
+  Worker SA       : {{ include "redis-agent-memory.workerServiceAccountName" . }}
+  Token file      : {{ .Values.worker.serviceAccount.token.mountPath }}/{{ .Values.worker.serviceAccount.token.fileName }}
+  Audience        : {{ .Values.worker.serviceAccount.token.audience }}
+  Subject         : {{ include "redis-agent-memory.workerAuthSubject" . }}
+{{- end }}
 {{- $profile := "" }}{{ if .Values.security }}{{ $profile = default "" .Values.security.profile }}{{ end }}
 Security profile  : {{ if eq $profile "" }}default (no app-level FIPS guardrails){{ else }}{{ $profile }}{{ end }}
 {{- if eq $profile "fips" }}
@@ -20,6 +27,21 @@ FIPS-oriented posture is ACTIVE for this release:
 
 The worker connects to the server automatically at:
   http://{{ include "redis-agent-memory.fullname" . }}:{{ .Values.service.port }}
+{{- if .Values.controlplane.enabled }}
+
+Control Plane    : {{ include "redis-agent-memory.controlplaneFullname" . }}:{{ .Values.controlplane.service.port }} (admin store API, /v1/stores)
+  The control plane is ENABLED. Provision/manage stores via the admin API
+  (admin-token auth). Point the data plane at the same metadata Redis with
+  `metadata.source: live` in its config to serve CP-created stores.
+{{- if and (not .Values.controlplane.adminToken.existingSecret) .Values.controlplane.adminToken.autoGenerate }}
+
+  The admin token was auto-generated into Secret
+  "{{ include "redis-agent-memory.controlplaneAdminTokenSecretName" . }}". Retrieve it with:
+    kubectl get secret --namespace {{ .Release.Namespace }} {{ include "redis-agent-memory.controlplaneAdminTokenSecretName" . }} -o jsonpath="{.data.{{ .Values.controlplane.adminToken.secretKey }}}" | base64 -d
+  Rotate by editing that Secret — the control plane reads the token on use, so
+  no redeploy is needed.
+{{- end }}
+{{- end }}
 
 Get the application URL by running these commands:
 {{- if .Values.ingress.enabled }}
