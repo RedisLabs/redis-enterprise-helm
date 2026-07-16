@@ -81,3 +81,30 @@ License secret name
 {{- end }}
 {{- end }}
 
+{{/*
+Redis TLS CA volumes — one secret volume per entry in redis.tlsCA.existingSecrets.
+Emits the list items only (no `volumes:` key); the caller supplies the key and indent.
+*/}}
+{{- define "cs.redisTLSCAVolumes" -}}
+{{- range $i, $ca := .Values.redis.tlsCA.existingSecrets }}
+- name: redis-tls-ca-{{ $i }}
+  secret:
+    secretName: {{ required "redis.tlsCA.existingSecrets[].secretName is required" $ca.secretName }}
+{{- end }}
+{{- end }}
+
+{{/*
+Redis TLS CA volume mounts — mounts each CA as a separate file under the system trust
+path so Go's default cert pool picks it up alongside the public CA bundle. The on-disk
+filename is auto-indexed (irrelevant to trust); subPath selects the cert key within the
+secret (default: ca.crt). Emits the list items only (no `volumeMounts:` key).
+*/}}
+{{- define "cs.redisTLSCAVolumeMounts" -}}
+{{- range $i, $ca := .Values.redis.tlsCA.existingSecrets }}
+- name: redis-tls-ca-{{ $i }}
+  mountPath: /etc/ssl/certs/redis-ca_{{ $i }}.crt
+  subPath: {{ $ca.key | default "ca.crt" }}
+  readOnly: true
+{{- end }}
+{{- end }}
+

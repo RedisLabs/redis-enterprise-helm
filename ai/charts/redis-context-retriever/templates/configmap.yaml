@@ -8,6 +8,9 @@ data:
   AUTH_MODE: {{ .Values.authMode | quote }}
   STORAGE_BACKEND: {{ .Values.storageBackend | default "redis" | quote }}
   REDIS_ADDR: {{ required "redis.addr is required: set it to your Redis database endpoint (host:port). Bring your own module-enabled Redis database (Search + JSON)." .Values.redis.addr | quote }}
+  {{- with .Values.redis.username }}
+  REDIS_USERNAME: {{ . | quote }}
+  {{- end }}
   REDIS_DB: {{ .Values.redis.db | quote }}
   REDIS_TLS_ENABLED: {{ .Values.redis.tlsEnabled | default false | quote }}
   REQUIRE_TLS: {{ .Values.requireTLS | default false | quote }}
