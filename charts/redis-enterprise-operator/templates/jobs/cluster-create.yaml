@@ -44,7 +44,7 @@ spec:
       restartPolicy: OnFailure
       containers:
       - name: create-cluster
-        image: {{ include "redis-enterprise-operator.operator.image" . }}
+        image: {{ include "redis-enterprise-operator.operator.image" . | printf "%s" | trim }}
         imagePullPolicy: IfNotPresent
         command:
         - install-helper
@@ -53,6 +53,7 @@ spec:
         - -recPath=/cluster-spec/cluster.yaml
         - -namespace={{ .Release.Namespace }}
         - -recName={{ .Values.cluster.name }}
+        - -operatorTimeout={{ .Values.cluster.operatorTimeout }}
         {{- if .Values.cluster.waitForReady }}
         - -timeout={{ .Values.cluster.timeout }}
         {{- else }}
