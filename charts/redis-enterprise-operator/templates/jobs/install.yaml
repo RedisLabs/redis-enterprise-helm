@@ -84,7 +84,7 @@ spec:
         - install-helper
         args:
         - -action=applyCRD
-        - -crdPaths=/crds/rec_crd.yaml,/crds/redb_crd.yaml,/crds/reaadb_crd.yaml,/crds/rerc_crd.yaml
+        - -crdPaths=/crds
         - -operatorVersion={{ .Chart.AppVersion }}
         - -helmChartVersion={{ .Chart.Version }}
       {{- if .Values.admission.limitToNamespace }}
