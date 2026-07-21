@@ -20,7 +20,7 @@ operator:
 
     # Image tag for the operator image.
     # This typically represents the operator version.
-    tag: 8.0.20-25
+    tag: 8.2.0-12
 
   # Node selector for scheduling the operator pod.
   # Uses the same schema as the PodSpec's nodeSelector field.
@@ -86,8 +86,11 @@ cluster:
   # WARNING: Deleting PVCs will permanently delete all data stored in the cluster.
   deletePVCsOnUninstall: false
 
-  # Timeout in seconds for waiting operations (waiting for operator and cluster readiness)
+  # Timeout in seconds for waiting for cluster readiness
   timeout: 600
+
+  # Timeout in seconds for waiting for operator readiness (before applying cluster spec)
+  operatorTimeout: 120
 
   # Redis Enterprise Cluster spec - all fields from the REC CRD can be specified here.
   # For available fields, see: https://redis.io/docs/latest/operate/kubernetes/reference/cluster-options/
