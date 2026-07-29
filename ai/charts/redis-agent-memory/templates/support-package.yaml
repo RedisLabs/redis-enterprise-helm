@@ -1,0 +1,510 @@
+{{- $supportPackage := default (dict) .Values.supportPackage -}}
+{{- $supportPackageEnabled := true -}}
+{{- if hasKey $supportPackage "enabled" -}}
+{{- $supportPackageEnabled = $supportPackage.enabled -}}
+{{- end -}}
+{{- if $supportPackageEnabled }}
+{{- $logLimits := default (dict) $supportPackage.logLimits -}}
+{{- $logMaxLines := default 10000 $logLimits.maxLines -}}
+{{- $logMaxBytes := default 5000000 $logLimits.maxBytes -}}
+{{- $healthChecks := default (dict) $supportPackage.healthChecks -}}
+{{- $healthChecksEnabled := true -}}
+{{- if hasKey $healthChecks "enabled" -}}
+{{- $healthChecksEnabled = $healthChecks.enabled -}}
+{{- end -}}
+{{- $registryImagesConfig := default (dict) $supportPackage.registryImages -}}
+{{- $registryImagesEnabled := true -}}
+{{- if hasKey $registryImagesConfig "enabled" -}}
+{{- $registryImagesEnabled = $registryImagesConfig.enabled -}}
+{{- end -}}
+{{- $registryImagePullSecretType := default "kubernetes.io/dockerconfigjson" $registryImagesConfig.imagePullSecretType -}}
+{{- $healthCheckImage := default (dict) $supportPackage.healthCheckImage -}}
+{{- $healthCheckImageRepository := default "replicated/troubleshoot" $healthCheckImage.repository -}}
+{{- $healthCheckImageTag := default "0.131.0" $healthCheckImage.tag -}}
+{{- $healthCheckImagePullPolicy := default "IfNotPresent" $healthCheckImage.pullPolicy -}}
+{{- $healthCheckImagePullSecretName := default "" $supportPackage.healthCheckImagePullSecretName -}}
+{{- $healthCheckPodTimeout := default "30s" $supportPackage.healthCheckPodTimeout -}}
+{{- $queueMonitor := .Values.controlplane.queueMonitor -}}
+{{- $secretChecks := list -}}
+{{- $configMapChecks := list -}}
+{{- $httpChecks := list -}}
+{{- $registryImages := list (printf "%s:%s" .Values.image.repository .Values.image.tag) -}}
+{{- $configValuesCollected := false -}}
+{{- if .Values.config.existingSecret -}}
+{{- $secretChecks = append $secretChecks (dict "name" .Values.config.existingSecret "key" .Values.config.secretKey "label" "RAM data-plane config" "includeValue" true "severity" "fail") -}}
+{{- $configValuesCollected = true -}}
+{{- else if .Values.config.render -}}
+{{- $configMapChecks = append $configMapChecks (dict "name" (include "redis-agent-memory.configName" .) "key" .Values.config.secretKey "label" "RAM data-plane config") -}}
+{{- $configValuesCollected = true -}}
+{{- end -}}
+{{- $overlayKey := "overlay.yaml" -}}
+{{- if .Values.secrets -}}
+{{- $overlayKey = default "overlay.yaml" .Values.secrets.overlayKey -}}
+{{- end -}}
+{{- $overlaySecretNames := include "redis-agent-memory.overlaySecretNames" . | fromJsonArray -}}
+{{- range $i, $name := $overlaySecretNames -}}
+{{- $secretChecks = append $secretChecks (dict "name" $name "key" $overlayKey "label" (printf "RAM config overlay %d" $i) "includeValue" true "severity" "fail") -}}
+{{- $configValuesCollected = true -}}
+{{- end -}}
+{{- if and .Values.tls .Values.tls.caCertSecret -}}
+{{- $secretChecks = append $secretChecks (dict "name" .Values.tls.caCertSecret "key" .Values.tls.caCertKey "label" "RAM TLS CA certificate" "includeValue" false "severity" "fail") -}}
+{{- end -}}
+{{- if .Values.license.existingSecret -}}
+{{- $secretChecks = append $secretChecks (dict "name" (include "redis-agent-memory.licenseSecretName" .) "key" .Values.license.secretKey "label" "RAM license" "includeValue" false "severity" "fail") -}}
+{{- end -}}
+{{- if .Values.controlplane.enabled -}}
+{{- $registryImages = append $registryImages (printf "%s:%s" .Values.controlplane.image.repository .Values.controlplane.image.tag) -}}
+{{- if .Values.controlplane.config.existingSecret -}}
+{{- $secretChecks = append $secretChecks (dict "name" .Values.controlplane.config.existingSecret "key" .Values.controlplane.config.secretKey "label" "RAM control plane config" "includeValue" true "severity" "fail") -}}
+{{- $configValuesCollected = true -}}
+{{- else if .Values.controlplane.config.render -}}
+{{- $configMapChecks = append $configMapChecks (dict "name" (include "redis-agent-memory.controlplaneConfigName" .) "key" .Values.controlplane.config.secretKey "label" "RAM control plane config") -}}
+{{- $configValuesCollected = true -}}
+{{- end -}}
+{{- if or .Values.controlplane.adminToken.existingSecret .Values.controlplane.adminToken.autoGenerate -}}
+{{- $secretChecks = append $secretChecks (dict "name" (include "redis-agent-memory.controlplaneAdminTokenSecretName" .) "key" .Values.controlplane.adminToken.secretKey "label" "RAM control plane admin token" "includeValue" false "severity" "fail") -}}
+{{- end -}}
+{{- if and $queueMonitor $queueMonitor.enabled -}}
+{{- $registryImages = append $registryImages (printf "%s:%s" $queueMonitor.image.repository $queueMonitor.image.tag) -}}
+{{- if $queueMonitor.redis.existingSecret -}}
+{{- $secretChecks = append $secretChecks (dict "name" $queueMonitor.redis.existingSecret "key" $queueMonitor.redis.urlKey "label" "RAM queue monitor Redis URL" "includeValue" false "severity" "fail") -}}
+{{- if $queueMonitor.redis.tlsServerNameKey -}}
+{{- $secretChecks = append $secretChecks (dict "name" $queueMonitor.redis.existingSecret "key" $queueMonitor.redis.tlsServerNameKey "label" "RAM queue monitor optional Redis TLS server name" "includeValue" false "severity" "warn") -}}
+{{- end -}}
+{{- if $queueMonitor.redis.insecureTLSKey -}}
+{{- $secretChecks = append $secretChecks (dict "name" $queueMonitor.redis.existingSecret "key" $queueMonitor.redis.insecureTLSKey "label" "RAM queue monitor optional Redis insecure TLS flag" "includeValue" false "severity" "warn") -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if and .Values.tests.enabled .Values.tests.smoke.enabled -}}
+{{- $registryImages = append $registryImages (printf "%s:%s" .Values.tests.smoke.image.repository .Values.tests.smoke.image.tag) -}}
+{{- end -}}
+{{- if $healthChecksEnabled -}}
+{{- $registryImages = append $registryImages (printf "%s:%s" $healthCheckImageRepository $healthCheckImageTag) -}}
+{{- end -}}
+{{- if $healthChecksEnabled -}}
+{{- $timeout := default "5s" $healthChecks.timeout -}}
+{{- $serverBaseURL := printf "http://%s.%s.svc.cluster.local:%v" (include "redis-agent-memory.fullname" .) .Release.Namespace .Values.service.port -}}
+{{- $workerBaseURL := printf "http://%s.%s.svc.cluster.local:%v" (include "redis-agent-memory.workerSupportServiceName" .) .Release.Namespace .Values.service.port -}}
+{{- $httpChecks = append $httpChecks (dict "collectorName" "ram-server-liveness" "checkName" "RAM server liveness" "url" (printf "%s/health/liveness" $serverBaseURL) "timeout" $timeout "severity" "fail") -}}
+{{- $httpChecks = append $httpChecks (dict "collectorName" "ram-server-readiness" "checkName" "RAM server readiness" "url" (printf "%s/health/readiness" $serverBaseURL) "timeout" $timeout "severity" "fail") -}}
+{{- $httpChecks = append $httpChecks (dict "collectorName" "ram-worker-liveness" "checkName" "RAM worker liveness" "url" (printf "%s/health/liveness" $workerBaseURL) "timeout" $timeout "severity" "fail") -}}
+{{- $httpChecks = append $httpChecks (dict "collectorName" "ram-worker-readiness" "checkName" "RAM worker readiness" "url" (printf "%s/health/readiness" $workerBaseURL) "timeout" $timeout "severity" "fail") -}}
+{{- if .Values.controlplane.enabled -}}
+{{- $controlplaneBaseURL := printf "http://%s.%s.svc.cluster.local:%v" (include "redis-agent-memory.controlplaneFullname" .) .Release.Namespace .Values.controlplane.service.port -}}
+{{- $httpChecks = append $httpChecks (dict "collectorName" "ram-controlplane-live" "checkName" "RAM control plane live" "url" (printf "%s/v1/health/live" $controlplaneBaseURL) "timeout" $timeout "severity" "fail") -}}
+{{- $httpChecks = append $httpChecks (dict "collectorName" "ram-controlplane-ready" "checkName" "RAM control plane ready" "url" (printf "%s/v1/health/ready" $controlplaneBaseURL) "timeout" $timeout "severity" "fail") -}}
+{{- if and $queueMonitor $queueMonitor.enabled -}}
+{{- $queueMonitorBaseURL := printf "http://%s.%s.svc.cluster.local:%v" (include "redis-agent-memory.queueMonitorFullname" .) .Release.Namespace $queueMonitor.service.port -}}
+{{- $httpChecks = append $httpChecks (dict "collectorName" "ram-queue-monitor-root" "checkName" "RAM queue monitor" "url" (printf "%s%s" $queueMonitorBaseURL (default "/" $healthChecks.queueMonitorPath)) "timeout" $timeout "severity" "warn") -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "redis-agent-memory.fullname" . }}-support-bundle
+  labels:
+    {{- include "redis-agent-memory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: support-package
+    troubleshoot.sh/kind: support-bundle
+data:
+  support-bundle-spec: |-
+    apiVersion: troubleshoot.sh/v1beta2
+    kind: SupportBundle
+    metadata:
+      name: {{ include "redis-agent-memory.fullname" . }}-support-bundle
+    spec:
+      collectors:
+        - clusterInfo: {}
+        - clusterResources:
+            namespaces:
+              - {{ .Release.Namespace | quote }}
+        - helm:
+            collectorName: ram-helm-release
+            namespace: {{ .Release.Namespace | quote }}
+            releaseName: {{ .Release.Name | quote }}
+            collectValues: false
+        {{- range $secretChecks }}
+        - secret:
+            namespace: {{ $.Release.Namespace | quote }}
+            name: {{ .name | quote }}
+            key: {{ .key | quote }}
+            includeValue: {{ .includeValue }}
+        {{- end }}
+        {{- range $configMapChecks }}
+        - configMap:
+            namespace: {{ $.Release.Namespace | quote }}
+            name: {{ .name | quote }}
+            key: {{ .key | quote }}
+            includeValue: true
+        {{- end }}
+        {{- range $httpChecks }}
+        - runPod:
+            name: {{ .collectorName | quote }}
+            namespace: {{ $.Release.Namespace | quote }}
+            timeout: {{ $healthCheckPodTimeout | quote }}
+            podSpec:
+              restartPolicy: Never
+              automountServiceAccountToken: false
+              {{- if $healthCheckImagePullSecretName }}
+              imagePullSecrets:
+                - name: {{ $healthCheckImagePullSecretName | quote }}
+              {{- end }}
+              containers:
+                - name: check
+                  image: {{ printf "%s:%s" $healthCheckImageRepository $healthCheckImageTag | quote }}
+                  imagePullPolicy: {{ $healthCheckImagePullPolicy }}
+                  command: ["collect", "http"]
+                  args:
+                    - "--url"
+                    - {{ .url | quote }}
+                    - "--timeout"
+                    - {{ .timeout | quote }}
+        {{- end }}
+        {{- if $registryImagesEnabled }}
+        - registryImages:
+            collectorName: ram-registry-images
+            namespace: {{ .Release.Namespace | quote }}
+            {{- if $registryImagesConfig.imagePullSecretName }}
+            imagePullSecret:
+              type: {{ $registryImagePullSecretType | quote }}
+              name: {{ $registryImagesConfig.imagePullSecretName | quote }}
+            {{- end }}
+            images:
+              {{- range $image := ($registryImages | uniq) }}
+              - {{ $image | quote }}
+              {{- end }}
+        {{- end }}
+        - nodeMetrics: {}
+        - data:
+            name: README.md
+            data: |-
+              Redis Agent Memory support package.
+
+              This archive is generated by the customer from a namespace-scoped
+              Troubleshoot spec shipped with the RAM Helm chart. Review the
+              archive before sharing it with Redis Support. It must not contain
+              raw Kubernetes Secret data, RAM memory contents, Redis keys or
+              values, provider payloads, tokens, credentials, private keys, or
+              license file contents.
+        - data:
+            name: ram/manifest.json
+            data: |-
+              {
+                "package": "redis-agent-memory-support-package",
+                "packageVersion": "v1",
+                "chartName": {{ .Chart.Name | quote }},
+                "chartVersion": {{ .Chart.Version | quote }},
+                "appVersion": {{ .Chart.AppVersion | quote }},
+                "releaseName": {{ .Release.Name | quote }},
+                "namespace": {{ .Release.Namespace | quote }},
+                "serverDeployment": {{ include "redis-agent-memory.fullname" . | quote }},
+                "workerDeployment": {{ include "redis-agent-memory.workerFullname" . | quote }},
+                "controlPlaneEnabled": {{ .Values.controlplane.enabled }},
+                "controlPlaneDeployment": {{ include "redis-agent-memory.controlplaneFullname" . | quote }},
+                "securityProfile": {{ default "" .Values.security.profile | quote }},
+                "airgapEnabled": {{ .Values.airgap.enabled }},
+                "imageRepository": {{ .Values.image.repository | quote }},
+                "imageTag": {{ .Values.image.tag | quote }},
+                "controlPlaneImageRepository": {{ .Values.controlplane.image.repository | quote }},
+                "controlPlaneImageTag": {{ .Values.controlplane.image.tag | quote }},
+                "helmValuesCollected": false,
+                "configValuesCollected": {{ $configValuesCollected }},
+                "httpHealthCollected": {{ $healthChecksEnabled }},
+                "registryImagesCollected": {{ $registryImagesEnabled }},
+                "nodeMetricsCollected": true,
+                "nodeResourcesAnalyzed": true
+              }
+        - logs:
+            selector:
+              - app.kubernetes.io/name={{ include "redis-agent-memory.name" . }}
+              - app.kubernetes.io/instance={{ .Release.Name }}
+              - app.kubernetes.io/component=server
+            namespace: {{ .Release.Namespace | quote }}
+            name: logs/server
+            containerNames:
+              - {{ include "redis-agent-memory.name" . }}
+            limits:
+              maxLines: {{ int $logMaxLines }}
+              maxBytes: {{ int $logMaxBytes }}
+            timestamps: true
+        - logs:
+            selector:
+              - app.kubernetes.io/name={{ include "redis-agent-memory.name" . }}
+              - app.kubernetes.io/instance={{ .Release.Name }}
+              - app.kubernetes.io/component=worker
+            namespace: {{ .Release.Namespace | quote }}
+            name: logs/worker
+            containerNames:
+              - {{ include "redis-agent-memory.name" . }}
+            limits:
+              maxLines: {{ int $logMaxLines }}
+              maxBytes: {{ int $logMaxBytes }}
+            timestamps: true
+        {{- if .Values.controlplane.enabled }}
+        - logs:
+            selector:
+              - app.kubernetes.io/name={{ include "redis-agent-memory.name" . }}
+              - app.kubernetes.io/instance={{ .Release.Name }}
+              - app.kubernetes.io/component=controlplane
+            namespace: {{ .Release.Namespace | quote }}
+            name: logs/controlplane
+            containerNames:
+              - controlplane
+            limits:
+              maxLines: {{ int $logMaxLines }}
+              maxBytes: {{ int $logMaxBytes }}
+            timestamps: true
+        {{- end }}
+      analyzers:
+        {{- range $secretChecks }}
+        - secret:
+            checkName: {{ printf "%s Secret key" .label | quote }}
+            secretName: {{ .name | quote }}
+            namespace: {{ $.Release.Namespace | quote }}
+            key: {{ .key | quote }}
+            outcomes:
+              - {{ .severity }}:
+                  message: {{ printf "%s Secret %q is missing key %q." .label .name .key | quote }}
+              - pass:
+                  message: {{ printf "%s Secret key exists." .label | quote }}
+        {{- end }}
+        {{- range $configMapChecks }}
+        - configMap:
+            checkName: {{ printf "%s ConfigMap key" .label | quote }}
+            configMapName: {{ .name | quote }}
+            namespace: {{ $.Release.Namespace | quote }}
+            key: {{ .key | quote }}
+            outcomes:
+              - fail:
+                  message: {{ printf "%s ConfigMap %q is missing key %q." .label .name .key | quote }}
+              - pass:
+                  message: {{ printf "%s ConfigMap key exists." .label | quote }}
+        {{- end }}
+        {{- range $httpChecks }}
+        - textAnalyze:
+            checkName: {{ .checkName | quote }}
+            collectorName: {{ .collectorName | quote }}
+            fileName: "*.log"
+            regex: '"status": *200|status: *200'
+            outcomes:
+              - pass:
+                  when: "true"
+                  message: {{ printf "%s endpoint returned HTTP 200." .checkName | quote }}
+              - {{ .severity }}:
+                  when: "false"
+                  message: {{ printf "%s endpoint returned a non-200 status code." .checkName | quote }}
+        {{- end }}
+        {{- if $registryImagesEnabled }}
+        - registryImages:
+            checkName: RAM image registry availability
+            collectorName: ram-registry-images
+            outcomes:
+              - fail:
+                  when: "missing > 0"
+                  message: One or more RAM images are missing from the registry.
+              - warn:
+                  when: "errors > 0"
+                  message: One or more RAM images could not be checked in the registry.
+              - pass:
+                  message: All RAM images were found in the registry.
+        {{- end }}
+        - textAnalyze:
+            checkName: RAM node metrics collection
+            fileName: "node-metrics/*.json"
+            regex: "."
+            outcomes:
+              - pass:
+                  when: "true"
+                  message: RAM node metrics were collected.
+              - fail:
+                  when: "false"
+                  message: RAM node metrics files were collected but empty.
+        - nodeMetrics:
+            checkName: RAM PVC usage
+            outcomes:
+              - fail:
+                  when: "pvcUsedPercentage >= 80"
+                  message: "One or more PVCs are using at least 80% storage: {{ "{{ .PVC.ConcatenatedNames }}" }}"
+              - pass:
+                  message: No PVCs are using at least 80% storage.
+        - nodeResources:
+            checkName: RAM default minimum cluster CPU
+            outcomes:
+              - fail:
+                  when: "sum(cpuAllocatable) < 2000m"
+                  message: The cluster has less than 2 CPU allocatable for the default minimum RAM footprint of two server pods and two worker pods.
+              - pass:
+                  message: Cluster allocatable CPU can fit the default minimum RAM footprint.
+        - nodeResources:
+            checkName: RAM default minimum cluster memory
+            outcomes:
+              - fail:
+                  when: "sum(memoryAllocatable) < 2048Mi"
+                  message: The cluster has less than 2Gi allocatable memory for the default minimum RAM footprint of two server pods and two worker pods.
+              - pass:
+                  message: Cluster allocatable memory can fit the default minimum RAM footprint.
+        - nodeResources:
+            checkName: RAM single-pod schedulable node floor
+            filters:
+              memoryAllocatable: 512Mi
+              cpuAllocatable: 500m
+            outcomes:
+              - fail:
+                  when: "count() < 1"
+                  message: No schedulable node has at least 500m CPU and 512Mi allocatable memory for a RAM pod.
+              - pass:
+                  message: At least one node can schedule a RAM pod with the default request.
+        - nodeResources:
+            checkName: RAM recommended node spread
+            outcomes:
+              - warn:
+                  when: "count() < 2"
+                  message: A single-node cluster can run RAM, but production deployments should provide node redundancy for server and worker replicas.
+              - pass:
+                  message: Cluster has more than one node for RAM replica spread.
+        - deploymentStatus:
+            name: {{ include "redis-agent-memory.fullname" . | quote }}
+            namespace: {{ .Release.Namespace | quote }}
+            outcomes:
+              - fail:
+                  when: absent
+                  message: RAM server Deployment is missing.
+              - fail:
+                  when: "< 1"
+                  message: RAM server has no ready replicas.
+              - pass:
+                  message: RAM server has at least one ready replica.
+        - deploymentStatus:
+            name: {{ include "redis-agent-memory.workerFullname" . | quote }}
+            namespace: {{ .Release.Namespace | quote }}
+            outcomes:
+              - fail:
+                  when: absent
+                  message: RAM worker Deployment is missing.
+              - fail:
+                  when: "< 1"
+                  message: RAM worker has no ready replicas.
+              - pass:
+                  message: RAM worker has at least one ready replica.
+        {{- if .Values.controlplane.enabled }}
+        - deploymentStatus:
+            name: {{ include "redis-agent-memory.controlplaneFullname" . | quote }}
+            namespace: {{ .Release.Namespace | quote }}
+            outcomes:
+              - fail:
+                  when: absent
+                  message: RAM control plane Deployment is missing.
+              - fail:
+                  when: "< 1"
+                  message: RAM control plane has no ready replicas.
+              - pass:
+                  message: RAM control plane has at least one ready replica.
+        {{- end }}
+        - clusterPodStatuses:
+            namespaces:
+              - {{ .Release.Namespace | quote }}
+            outcomes:
+              - fail:
+                  when: "== CrashLoopBackOff"
+                  message: A RAM namespace pod is in CrashLoopBackOff.
+              - fail:
+                  when: "== ImagePullBackOff"
+                  message: A RAM namespace pod cannot pull its image.
+              - fail:
+                  when: "== Pending"
+                  message: A RAM namespace pod is pending.
+              - fail:
+                  when: "!= Healthy"
+                  message: A RAM namespace pod is unhealthy.
+              - pass:
+                  message: RAM namespace pods are healthy.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "redis-agent-memory.fullname" . }}-support-redactors
+  labels:
+    {{- include "redis-agent-memory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: support-package
+    troubleshoot.sh/kind: support-bundle
+data:
+  redactor-spec: |-
+    apiVersion: troubleshoot.sh/v1beta2
+    kind: Redactor
+    metadata:
+      name: {{ include "redis-agent-memory.fullname" . }}-support-redactors
+    spec:
+      redactors:
+        - name: ram-redis-url-query-parameters
+          removals:
+            regex:
+              - redactor: '(?i)(redis(?:s)?://[^\s"''<>?#]+\?)(?P<mask>[^"''\s,}\]\\]+)'
+        - name: ram-redis-url-credentials
+          removals:
+            regex:
+              - redactor: '(?i)(redis(?:s)?://)(?P<mask>[^@\s/?#]+)(@)'
+        - name: ram-api-keys-and-tokens
+          removals:
+            regex:
+              - redactor: '(?i)(["'']?api[_-]?key["'']?\s*[:=]\s*["'']?)(?P<mask>[^"'',}\s\\]+)'
+              - redactor: '(?i)(["'']?authorization["'']?\s*[:=]\s*["'']?(?:bearer|basic)\s+)(?P<mask>[A-Za-z0-9._~+/\-=]+)'
+              - redactor: '(?i)(["'']?(?:admin[_-]?token|access[_-]?token|refresh[_-]?token|shared[_-]?secret|password|credential)["'']?\s*[:=]\s*["'']?)(?P<mask>[^"'',}\s\\]+)'
+        - name: ram-sensitive-field-values
+          removals:
+            regex:
+              - redactor: '(?i)(["'']?[A-Za-z0-9_.-]*(?:api[_-]?key|access[_-]?key|secret[_-]?access[_-]?key|shared[_-]?secret|secret|token|password|credential|private[_-]?key)[A-Za-z0-9_.-]*["'']?[ \t]*[:=][ \t]*")(?P<mask>[^"]*)(")'
+              - redactor: '(?i)(["'']?[A-Za-z0-9_.-]*(?:api[_-]?key|access[_-]?key|secret[_-]?access[_-]?key|shared[_-]?secret|secret|token|password|credential|private[_-]?key)[A-Za-z0-9_.-]*["'']?[ \t]*[:=][ \t]*'')(?P<mask>[^'']*)('')'
+              - redactor: '(?im)^([ \t]*[A-Za-z0-9_.-]*(?:api[_-]?key|access[_-]?key|secret[_-]?access[_-]?key|shared[_-]?secret|secret|token|password|credential|private[_-]?key)[A-Za-z0-9_.-]*[ \t]*:[ \t]*)(?P<mask>[A-Za-z0-9._~+/%=:@-]+)'
+              - redactor: '(?i)(["'']?[A-Za-z0-9_.-]*(?:api[_-]?key|access[_-]?key|secret[_-]?access[_-]?key|shared[_-]?secret|secret|token|password|credential|private[_-]?key)[A-Za-z0-9_.-]*["'']?[ \t]*=[ \t]*)(?P<mask>[A-Za-z0-9._~+/%=:@-]+)'
+        - name: ram-customer-content-fields
+          removals:
+            regex:
+              - redactor: '(?i)(["'']?(?:prompt|messages|content|text|payload|request|body|response_body)["'']?[ \t]*[:=][ \t]*")(?P<mask>(?:\\.|[^"\\])*)(")'
+              - redactor: '(?i)(["'']?(?:prompt|messages|content|text|payload|request|body|response_body)["'']?[ \t]*[:=][ \t]*'')(?P<mask>(?:\\.|[^''\\])*)('')'
+              - redactor: '(?i)(["'']?(?:prompt|messages|content|text|payload|request|body|response_body)["'']?[ \t]*=[ \t]*)(?P<mask>[A-Za-z0-9._~+/%=:@-]+)'
+        - name: ram-private-keys-and-cert-material
+          removals:
+            regex:
+              - redactor: '(-----BEGIN [^-]*PRIVATE KEY-----)(?P<mask>[\s\S]*?)(-----END [^-]*PRIVATE KEY-----)'
+        - name: ram-sensitive-yaml-paths
+          removals:
+            yamlPath:
+              - embedders_connection_details.*.credentials
+              - session_summarisation.llm.credentials
+              - session_summary_view.llm.credentials
+              - promote_session_memory.strategies.*.llm.credentials
+              - auth.admin_token
+              - auth.session_shared_secret
+              - auth.shared_secret
+              - auth.worker_identity.jwks_uri
+              - auth.worker_identity.shared_secret
+              - headers
+              - "*.headers"
+              - license
+              - license.*
+              - "*.license"
+              - "*.api_key"
+              - prompt
+              - messages
+              - content
+              - text
+              - payload
+              - request
+              - body
+              - response_body
+              - "*.prompt"
+              - "*.messages"
+              - "*.content"
+              - "*.text"
+              - "*.payload"
+              - "*.request"
+              - "*.body"
+              - "*.response_body"
+              - "*.token"
+              - "*.password"
+              - "*.secret"
+              - "*.private_key"
+{{- end }}

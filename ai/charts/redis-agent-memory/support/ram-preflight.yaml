@@ -1,0 +1,71 @@
+apiVersion: troubleshoot.sh/v1beta2
+kind: Preflight
+metadata:
+  name: redis-agent-memory-preflight
+spec:
+  collectors: []
+  analyzers:
+    - clusterVersion:
+        outcomes:
+          - fail:
+              when: "< 1.23.0"
+              message: Redis Agent Memory on-prem requires Kubernetes 1.23 or newer because the Helm chart renders autoscaling/v2 HPAs by default.
+          - pass:
+              message: Kubernetes version is supported for Redis Agent Memory on-prem.
+    - textAnalyze:
+        checkName: RAM autoscaling/v2 API
+        fileName: cluster-resources/groups.json
+        regex: '"groupVersion": "autoscaling/v2"'
+        outcomes:
+          - fail:
+              when: "false"
+              message: Redis Agent Memory defaults render autoscaling/v2 HPAs, but autoscaling/v2 was not discovered in the cluster API.
+          - pass:
+              when: "true"
+              message: autoscaling/v2 is available for RAM HorizontalPodAutoscalers.
+    - textAnalyze:
+        checkName: RAM metrics API for autoscaling
+        fileName: cluster-resources/groups.json
+        regex: '"groupVersion": "metrics.k8s.io/v1beta1"'
+        outcomes:
+          - warn:
+              when: "false"
+              message: metrics.k8s.io/v1beta1 was not discovered. RAM can install, but CPU-based HorizontalPodAutoscalers need Kubernetes metrics to scale.
+          - pass:
+              when: "true"
+              message: metrics.k8s.io/v1beta1 is available for RAM CPU-based autoscaling.
+    - nodeResources:
+        checkName: RAM default minimum cluster CPU
+        outcomes:
+          - fail:
+              when: "sum(cpuAllocatable) < 2000m"
+              message: The cluster has less than 2 CPU allocatable for the default minimum RAM footprint of two server pods and two worker pods.
+          - pass:
+              message: Cluster allocatable CPU can fit the default minimum RAM footprint.
+    - nodeResources:
+        checkName: RAM default minimum cluster memory
+        outcomes:
+          - fail:
+              when: "sum(memoryAllocatable) < 2048Mi"
+              message: The cluster has less than 2Gi allocatable memory for the default minimum RAM footprint of two server pods and two worker pods.
+          - pass:
+              message: Cluster allocatable memory can fit the default minimum RAM footprint.
+    - nodeResources:
+        checkName: RAM single-pod schedulable node floor
+        filters:
+          memoryAllocatable: 512Mi
+          cpuAllocatable: 500m
+        outcomes:
+          - fail:
+              when: "count() < 1"
+              message: No schedulable node has at least 500m CPU and 512Mi allocatable memory for a RAM pod.
+          - pass:
+              message: At least one node can schedule a RAM pod with the default request.
+    - nodeResources:
+        checkName: RAM recommended node spread
+        outcomes:
+          - warn:
+              when: "count() < 2"
+              message: A single-node cluster can run RAM, but production deployments should provide node redundancy for server and worker replicas.
+          - pass:
+              message: Cluster has more than one node for RAM replica spread.

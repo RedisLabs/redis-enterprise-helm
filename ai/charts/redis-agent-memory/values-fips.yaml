@@ -23,7 +23,7 @@
 #      you mount through config.existingSecret must also:
 #        - remove skip_verify=true from every outbound HTTP client;
 #        - use rediss:// (TLS) URLs for every Redis connection, including
-#          background_jobs.redis_streams.urls and metadata.stores[].urls.
+#          background_jobs.redis.urls and metadata.stores[].urls.
 #      The binary fails startup with a joined error list if either of those
 #      rules is violated while security.profile=fips, so catching this at
 #      install time rather than config-bake time is the intended workflow.

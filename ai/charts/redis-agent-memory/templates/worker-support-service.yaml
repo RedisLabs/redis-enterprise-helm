@@ -1,0 +1,29 @@
+{{- $supportPackage := default (dict) .Values.supportPackage -}}
+{{- $supportPackageEnabled := true -}}
+{{- if hasKey $supportPackage "enabled" -}}
+{{- $supportPackageEnabled = $supportPackage.enabled -}}
+{{- end -}}
+{{- $healthChecks := default (dict) $supportPackage.healthChecks -}}
+{{- $healthChecksEnabled := true -}}
+{{- if hasKey $healthChecks "enabled" -}}
+{{- $healthChecksEnabled = $healthChecks.enabled -}}
+{{- end -}}
+{{- if and $supportPackageEnabled $healthChecksEnabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "redis-agent-memory.workerSupportServiceName" . }}
+  labels:
+    {{- include "redis-agent-memory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker-support
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "redis-agent-memory.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+{{- end }}

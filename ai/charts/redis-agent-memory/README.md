@@ -10,47 +10,54 @@ One release creates:
 - `redis-agent-memory-controlplane` admin store API — **optional, disabled by default**
   (see [Control Plane (optional)](#control-plane-optional))
 
-The server and worker use the same license Secret and the same shared application
-config Secret. The optional control plane adds its own config Secret and an
-admin-token Secret, and reuses the same license Secret.
+The server and worker use the same license Secret and the same application config
+carrier (a chart-rendered ConfigMap, or a BYO Secret). The optional control plane
+adds its own config carrier and an admin-token Secret, and reuses the same license
+Secret.
+
+A deployment is a server and worker serving a static set of stores. Start with
+[Install](#install). Credentials (Redis connection URLs, embedder/LLM API keys)
+never live in your values or the rendered ConfigMap — you supply them either
+embedded in a BYO config Secret, or through one credentials Secret mounted as an
+overlay (see [Supplying credentials](#supplying-credentials)). To serve more than
+one region, see [Multi-Region Deployment](#multi-region-deployment).
 
 ## Before you install
 
-- Kubernetes 1.19+
+- Kubernetes 1.23+
 - Helm 3+
 - Redis endpoints reachable from the cluster
-- A license is required to use the on-prem version. Please reach out to your Redis account representative. If you don’t have one, you can contact our sales team here: <https://redis.io/meeting/>
+- A license is required to use the on-prem version. Contact your Redis account representative. If you do not have one, contact Redis sales: <https://redis.io/meeting/>
 - RAM image access from the cluster; see [Image access](#image-access)
 
 Prerequisite matrix:
 
 | Area | Requirement | Notes |
 | --- | --- | --- |
-| Kubernetes | Kubernetes 1.19+ and Helm 3+ | The chart installs standard `apps/v1` Deployments, Services, optional HPAs, optional Ingress, and pre-created Secrets. |
-| Content store Redis | Redis 7.2.0 through 8.4.x with RedisJSON and RediSearch / Query Engine, reachable from the RAM server and worker pods | Configure content store endpoints in `metadata.stores[].urls`. The content store holds session memory JSON documents and long-term memory hashes, so it must support JSON commands, hashes, TTLs, `FT.CREATE`, `FT.SEARCH`, JSON indexing, and vector `HNSW` fields. The long-term-memory index uses a `VECTOR` field named `text_vector` with `FLOAT64`, `HNSW`, and `COSINE`. When Redis Cloud databases are selected through the controlplane, the code also requires an active Pro or Essentials database, a public endpoint, default user credentials, a non-Active-Active deployment, and a RediSearch module reported as `search` or `searchlight`. |
-| Job Redis | Redis 6.2+ with Redis Streams, reachable from the RAM server and worker pods | Configure the job Redis endpoint in `background_jobs.redis_streams.urls`. On-prem async work requires `background_jobs.redis_streams.enabled=true`; other async backends are rejected. The job Redis must support Streams and consumer groups (`XADD`, `XGROUP`, `XREADGROUP`, `XACK`, `XDEL`, `XAUTOCLAIM`), strings with TTL for deduplication (`SET NX`, `GET`, `DEL`), and sorted sets for delayed jobs (`ZADD`, range/removal operations). It does not need RediSearch or RedisJSON unless the same Redis also serves as the content store. |
-| Architecture support | Released RAM on-prem images should be treated as `linux/amd64` unless the release artifact explicitly declares a multi-arch manifest | The release pipeline currently builds and pushes a single runner-native Linux image. For ARM64 nodes, use a compatible locally built image or schedule RAM pods onto AMD64 nodes. |
+| Kubernetes | Kubernetes 1.23+ and Helm 3+ | The chart installs standard `apps/v1` Deployments, Services, optional `autoscaling/v2` HPAs, optional Ingress, and pre-created Secrets. |
+| Content store Redis | Redis 7.2.0 through 8.4.x with RedisJSON and RediSearch / Query Engine, reachable from the RAM server and worker pods | Configure content store endpoints in `metadata.stores.<id>.urls`. The content store holds session memory JSON documents and long-term memory hashes, so it must support JSON commands, hashes, TTLs, `FT.CREATE`, `FT.SEARCH`, JSON indexing, and vector `HNSW` fields. The long-term-memory index uses a `VECTOR` field named `text_vector` with `FLOAT64`, `HNSW`, and `COSINE`. When Redis Cloud databases are selected through the control plane, use an active Pro or Essentials database with a public endpoint, default user credentials, non-Active-Active deployment, and a RediSearch module reported as `search` or `searchlight`. |
+| Job Redis | Redis 6.2+ reachable from RAM server and worker pods | Configure `background_jobs.redis.urls` to the regional job Redis endpoint, use a non-volatile / `noeviction` policy, and keep exactly one async backend enabled per process. The job Redis does not need RediSearch or RedisJSON unless the same Redis also serves as the content store. |
+| Architecture support | Treat RAM on-prem images as `linux/amd64` unless the release notes for your image version explicitly declare a multi-arch manifest | For ARM64 nodes, use a compatible image or schedule RAM pods onto AMD64 nodes. |
 
 Recommended deployment model:
 
 - run one Redis Agent Memory release per namespace
 - keep the default in-cluster server address `http://redis-agent-memory:9000`
-- if you override `fullnameOverride` or run multiple releases in one namespace, update `dataplane_client.base_url` in the shared config file to match
+- if you override `fullnameOverride` or run multiple releases in one namespace, update `dataplane_client.base_url` in the config to match
+- if you run more than one region (advanced), render one config per logical region so the server and worker receive the same
+  `request_region`, `background_jobs.redis.urls`, `queue_prefix`, and queue ownership settings — see [Multi-Region Deployment](#multi-region-deployment)
 
 The chart requires:
 
 - `license.existingSecret`
-- `config.existingSecret`
+- an application config, provided through your Helm values with
+  `config.render: true` (see [Install](#install))
 - `image.tag`
-
-For end-to-end Control Plane, agent-key, gateway, and store-authorization
-guidance, see the
-[Redis Agent Memory on-premises guide](../../docs/redis-agent-memory-onprem-guide.md).
 
 ## Image Access
 
 The published Helm chart is `redis-ai/redis-agent-memory` from
-`https://helm.redis.io/ai`. Standard customer installs use the public Docker Hub
+`https://helm.redis.io/ai`. Standard installs use the public Docker Hub
 images published by the RAM on-prem release:
 
 ```yaml
@@ -91,29 +98,246 @@ release; do not use the source Git tag format as the Docker image tag.
 
 ## Required Secrets
 
-Create two Secrets:
-
-- a license Secret containing key `license`
-- a config Secret containing key `memory-dataplane.config.yaml`
+Create the license Secret:
 
 ```sh
 kubectl create namespace <namespace-name>
 
 kubectl -n <namespace-name> create secret generic ram-license \
   --from-file=license=./license
+```
 
+If your Secret key uses a different name, set `license.secretKey` in your Helm
+values.
+
+Redis and embedding-provider credentials are supplied via mounted secret
+overlays, covered in [Install](#install).
+
+## Install
+
+**Quick start** — the happy path in three steps:
+
+1. Create the license Secret and one credentials Secret (both detailed below).
+2. Copy [`examples/basic/values.yaml`](examples/basic/values.yaml) and set
+   `image.tag`, `license.existingSecret`, and `secrets.secretName`.
+3. `helm install <release> redis-ai/redis-agent-memory -f values.yaml -n <namespace> --create-namespace`
+
+Each step is explained below; the full config field set is in
+[Config Reference](#config-reference).
+
+A deployment is one server and one worker serving a static set of stores. You
+configure Redis Agent Memory through your Helm values, using one of two credential
+paths:
+
+- **(a) Chart-rendered config + one credentials Secret** (recommended) — the chart
+  renders your values into a structure-only **ConfigMap**, and you supply the
+  credentials in one Secret mounted as an overlay. See
+  [Supplying credentials](#supplying-credentials) and
+  [Configuring and installing](#configuring-and-installing) below.
+- **(b) BYO full config Secret** — you bring a pre-created Secret holding the
+  complete on-prem config file with credentials embedded directly in the Redis
+  URLs. No overlay is needed. See
+  [Bring your own config Secret](#bring-your-own-config-secret).
+
+A ready-to-copy values file lives in
+[`examples/basic/values.yaml`](examples/basic/values.yaml). To serve more than one
+region, see [Multi-Region Deployment](#multi-region-deployment).
+
+### Supplying credentials
+
+With the chart-rendered config path (`config.render: true`), the chart renders your
+`memory:` values into a **ConfigMap** the server and worker read, and rolls the
+pods automatically whenever that config changes. The rendered ConfigMap is
+structure only — it holds no Redis connection URLs and no API keys.
+
+Credentials live inside the config's own snake_case paths — API keys under
+`embedders_connection_details.*` and full Redis connection strings
+(`redis://user:pass@host:port`) under `metadata.stores.<id>.urls`,
+`background_jobs.redis.urls`, etc. Rather than putting these in your values, you
+place them in one pre-created Secret holding a small YAML **overlay** that the
+config loader deep-merges over the base config at runtime:
+
+- **`secrets.secretName`** — the primary credentials overlay. This one Secret
+  usually holds everything: the API keys **and** the Redis connection strings.
+- **`secrets.additionalSecrets`** — optional ordered list of extra Secrets layered
+  on top of `secretName` (later wins the merge). Use it to split credentials across
+  Secrets (for example, per region); leave empty otherwise.
+
+The Secret holds one YAML overlay file (default key `overlay.yaml`). Create it from
+a plaintext overlay file (its keys mirror the config's own snake_case paths):
+
+```sh
+# overlay.yaml:
+#   embedders_connection_details:
+#     openai: { credentials: { api_key: sk-... } }
+#   metadata:
+#     stores:
+#       "0000...0001": { urls: [redis://user:pass@redis-store:6379] }
+#   background_jobs:
+#     redis: { urls: [redis://user:pass@redis-jobs:6379] }
+kubectl -n <namespace-name> create secret generic ram-secrets \
+  --from-file=overlay.yaml=./overlay.yaml
+```
+
+Reference the Secret **name** from values:
+
+```yaml
+secrets:
+  secretName: ram-secrets
+```
+
+The chart mounts each overlay read-only at `/etc/ai/overlays/<i>/overlay.yaml`,
+0-based in merge order (`secretName` first, then each `additionalSecrets` entry),
+and appends one repeatable `--config <path>` arg per overlay in that order (after
+the base `--config`) to the container args of the server, worker, and control
+plane. With just `secretName` set, that is a single overlay at
+`/etc/ai/overlays/0/overlay.yaml`. The loader deep-merges the overlays over the
+base config in order (later wins), so the connection string stays whole — you keep
+structure in the ConfigMap and the full credentialed URL in the overlay. Rotating
+an overlay takes effect on pod restart.
+
+### Configuring and installing
+
+Create a checksum for the license Secret so the pod rolls automatically when the
+license file changes:
+
+```sh
+LICENSE_CHECKSUM="$(shasum ./license | awk '{print $1}')"
+```
+
+Create a values file, e.g., `ram-values.yaml`, with `config.render: true`, one
+`secrets.secretName`, and the config fields from
+[Config Reference](#config-reference) under `memory:`:
+
+```yaml
+license:
+  existingSecret: ram-license
+  existingSecretChecksum: "<license-checksum>"
+
+config:
+  render: true
+
+# One credentials Secret holds the API keys and Redis connection URLs.
+secrets:
+  secretName: ram-secrets
+
+# See Config Reference for the full field set. Credentials are omitted here —
+# the API keys and Redis connection URLs arrive via the mounted overlay above.
+# metadata.stores is a MAP keyed by store id; the store's urls come from the
+# overlay, merged into the same id at runtime.
+memory:
+  default_extraction_strategy: instruct
+  auth:
+    method: none
+  background_jobs:
+    redis:
+      enabled: true            # urls arrive via the overlay
+      queue_prefix: ram
+      worker_regions: [default]
+  request_region:
+    default: default
+  metadata:
+    source: static
+    stores:
+      "00000000000000000000000000000001":
+        short_memory: { ttl_seconds: 86400 }
+        long_term_memory:
+          embedding_provider: openai
+          embedding_model: text-embedding-3-large
+          embedding_dimensions: 3072
+  embedders_connection_details:
+    openai:
+      base_url: https://api.openai.com
+      credentials: { type: static }   # api_key arrives via the overlay
+
+image:
+  repository: redislabs/agent-memory
+  tag: "<ram-version>"
+```
+
+Install the chart:
+
+```sh
+helm repo add redis-ai https://helm.redis.io/ai
+helm repo update
+
+helm install <release-name> redis-ai/redis-agent-memory \
+  --version <chart-version> \
+  --namespace <namespace-name> \
+  --create-namespace \
+  -f ram-values.yaml \
+  --atomic \
+  --wait
+```
+
+Running more than one region? [Multi-Region Deployment](#multi-region-deployment)
+uses this same mechanism, split into a shared base file and a small per-region
+file, with each region naming its own credentials Secret via `secrets.secretName`.
+
+### Bring your own config Secret
+
+If you manage the config file outside Helm — for example, it is generated by
+Vault or Terraform — you can supply it as a pre-created Secret rather than
+rendering it from values. This is the simplest path: with
+credentials embedded directly in the Redis URLs inside that file, **no secret
+overlay is needed** and the chart adds no overlay `--config` args. Set
+`config.existingSecret` and leave `config.render` off; the two cannot be combined,
+and the chart fails at install time if both are set.
+
+Build the config file from the [Config Reference](#config-reference) fields and
+create the Secret:
+
+```sh
 kubectl -n <namespace-name> create secret generic ram-config \
   --from-file=memory-dataplane.config.yaml=./memory-dataplane.config.yaml
 ```
 
-If your Secret keys use different names, set `license.secretKey` or `config.secretKey`
-in your Helm values.
+If your Secret key uses a different name, set `config.secretKey`. Compute a
+checksum for both Secrets so pods roll when either file changes:
 
-## Shared Config File
+```sh
+LICENSE_CHECKSUM="$(shasum ./license | awk '{print $1}')"
+CONFIG_CHECKSUM="$(shasum ./memory-dataplane.config.yaml | awk '{print $1}')"
+```
 
-The server and worker both consume the same file from the config Secret.
+```yaml
+license:
+  existingSecret: ram-license
+  existingSecretChecksum: "<license-checksum>"
 
-Use this as a starting point for your `memory-dataplane.config.yaml`:
+config:
+  existingSecret: ram-config
+  existingSecretChecksum: "<config-checksum>"
+
+image:
+  repository: redislabs/agent-memory
+  tag: "<ram-version>"
+```
+
+If you prefer to keep credentials out of the BYO config file, the mounted secret
+overlays (`secrets.secretName` / `secrets.additionalSecrets`) still apply — they
+are merged over the BYO config too. Install the chart the same way as above, with
+this values file.
+
+## Config Reference
+
+This is the application config the server and worker read, in snake_case. You
+provide these fields under `memory:` in your Helm values, and the chart renders
+them into a ConfigMap at install time (see [Install](#install)). Credentials
+(Redis connection URLs, API keys) are NOT part of these fields — they arrive via
+the mounted secret overlays.
+
+The example below uses the Redis-backed async job queue configured under
+`background_jobs.redis`.
+
+Global queue concepts are the fixed job slugs, default retries/timeouts, and
+observability fields. Regional queue concepts are `request_region`,
+`queue_prefix`, and `worker_regions`. In steady state, a deployment writes only
+its own logical region's queues. Failover is a config change that adds the
+failed logical region to another deployment's `worker_regions`; dual live
+ownership of one logical region is unsupported.
+
+Use this as a starting point for the `memory:` block in your Helm values:
 
 ```yaml
 # HTTP server timeouts for the API process.
@@ -139,7 +363,7 @@ auth:
   method: none
 
 # Optional configuration for stores that do not set
-# metadata.stores[].summarization.
+# metadata.stores.<id>.summarization.
 default_summarisation_config:
   enabled: false
   # Trigger summarisation by active session event count when enabled.
@@ -161,32 +385,56 @@ client_pool:
   # Wait time for a pooled client before failing a request.
   client_acquisition_timeout_ms: 2000
 
+# Request-region resolution for regional async queue submission.
+request_region:
+  # Default logical region used when no configured header rule matches.
+  default: eu1
+  # Headers evaluated in order to resolve the request's logical region.
+  headers:
+    - X-RAM-Origin-Region
+    - X-Forwarded-Host
+    - Host
+  # Optional regex rules. First match wins; no match falls back to default.
+  rules:
+    - pattern: '^memory-eu[.-].*'
+      region: eu1
+    - pattern: '^memory-us[.-].*'
+      region: us1
+
 # Background job execution backend.
 background_jobs:
-  # Redis Streams is the supported async backend for on-prem deployments.
-  redis_streams:
-    # Enable Redis Streams processing.
+  # Regional Redis queue backend for on-prem deployments.
+  redis:
     enabled: true
-    # Redis endpoint(s) used for the job queue.
+    # Redis endpoint(s) used for the regional job queues. For Active-Active
+    # deployments, use the region-local endpoint and keep steady-state writes
+    # region-affine.
     urls:
-      # Replace with the Redis endpoint that backs async jobs.
-      - redis://redis-jobs:6379
-    # Stream name used by the server and worker.
-    stream_name: memory-jobs
-    # Interval for scanning delayed jobs that are due.
-    delayed_poll_interval: 1s
-    # How long a worker blocks waiting for new jobs.
-    block_duration: 5s
-    # How long a pending job can be idle before another worker can claim it.
-    claim_idle_time: 30s
-    # Maximum delivery attempts before the job is treated as failed.
-    max_delivery_count: 3
-    # Retention for deduplication state keyed by job ID.
-    deduplication_ttl: 24h
-    # Timeout for Redis operations against the job backend.
-    operation_timeout: 30s
-    # Maximum time allowed for one job handler run.
-    handler_timeout: 5m
+      - redis://redis-jobs-aa:6379
+    # Queue names are <queue_prefix>:<region>:<job_slug>.
+    queue_prefix: ram
+    # Logical regions this worker deployment is allowed to process.
+    # Required by --mode=worker; --mode=server ignores it (and logs an INFO
+    # when it is present), so the same file can feed both processes.
+    worker_regions:
+      - eu1
+    defaults:
+      concurrency: 4
+      max_retry: 3
+      timeout: 10m
+      completed_retention: 1h
+      requeue_without_retry_delay: 5s
+      shutdown_timeout: 30s
+    jobs:
+      promote-instruct:
+        concurrency: 2
+        timeout: 30m
+      summarize-session:
+        concurrency: 4
+        timeout: 10m
+      session-summary-view:
+        concurrency: 4
+        timeout: 10m
   # Execution idempotency prevents a redelivered successful job from running again.
   idempotency:
     # Enable for production async workers.
@@ -194,7 +442,7 @@ background_jobs:
     # Redis endpoint(s) used for done markers and ownership locks.
     urls:
       # This can share the job Redis or use a dedicated Redis with the same regional ownership model.
-      - redis://redis-jobs:6379
+      - redis://redis-jobs-aa:6379
     # Retention window for successful job done markers.
     done_ttl: 24h
     # Ownership lock TTL for in-flight job execution.
@@ -204,15 +452,19 @@ background_jobs:
     # Timeout for idempotency Redis operations.
     operation_timeout: 5s
 
-# Memory store definitions exposed by the API.
+# Memory store definitions exposed by the API. `stores` is a MAP keyed by store
+# id (NOT a list), so Helm and the config loader deep-merge per id.
 metadata:
+  source: static
   stores:
-    # Stable store identifier used in API paths and job payloads.
-    - id: "00000000000000000000000000000001"
-      # Redis endpoint(s) that store short-term and long-term memory.
+    # Stable store identifier used in API paths and job payloads (the map key).
+    "00000000000000000000000000000001":
+      # Redis endpoint(s) that store short-term and long-term memory. In a
+      # chart-rendered deployment the urls (with credentials) come from the
+      # regional secret overlay, merged into this same id at runtime — leave
+      # them out of the ConfigMap body. Shown here for a BYO/all-in-one file.
       urls:
-        # Replace with the Redis endpoint for this memory store.
-        - redis://redis-store:6379
+        - redis://user:pass@redis-store:6379
       # Store-specific extraction strategy. Omit to use default_extraction_strategy.
       extraction_strategy: instruct
       short_memory:
@@ -238,14 +490,15 @@ metadata:
 
 # Embedding provider connection settings.
 embedders_connection_details:
-  # Provider name referenced by metadata.stores[].long_term_memory.embedding_provider.
+  # Provider name referenced by metadata.stores.<id>.long_term_memory.embedding_provider.
   openai:
     # Base URL for embedding requests.
     base_url: https://api.openai.com
     credentials:
       # Use static API key authentication for the embedding provider.
       type: static
-      # API key presented to the embedding provider.
+      # API key presented to the embedding provider. In a chart-rendered
+      # deployment this arrives via the shared secret overlay, not the ConfigMap.
       api_key: "<embedder-api-key>"
     # Dynamic micro-batching for single-text embedding requests. Concurrent
     # single-text embeds sharing this provider are coalesced into fewer provider
@@ -381,12 +634,15 @@ promote_session_memory:
 
 Most important config fields:
 
-- `background_jobs.redis_streams.urls`: Redis Streams backend used for async work
-- `metadata.stores[].urls`: Redis databases that hold short-term and long-term memory
-- `metadata.stores[].short_memory.ttl_seconds`: short-term memory retention
-- `metadata.stores[].long_term_memory.*`: embedding provider, model, and vector size
+- `request_region.*`: request-origin region resolution for regional queue submission
+- `background_jobs.redis.urls`: regional Redis queue backend used for async work
+- `background_jobs.redis.queue_prefix`: queue namespace prefix; queue names are `<queue_prefix>:<region>:<job_slug>`
+- `background_jobs.redis.worker_regions`: logical regions this worker deployment processes; required in `--mode=worker`, ignored (with an INFO log) in `--mode=server`
+- `metadata.stores.<id>.urls`: Redis databases that hold short-term and long-term memory
+- `metadata.stores.<id>.short_memory.ttl_seconds`: short-term memory retention
+- `metadata.stores.<id>.long_term_memory.*`: embedding provider, model, and vector size
 - `default_summarisation_config.*`: optional fallback summarisation configuration for stores that do not set it explicitly
-- `metadata.stores[].summarization.*`: per-store summarisation configuration
+- `metadata.stores.<id>.summarization.*`: per-store summarisation configuration
 - `embedders_connection_details`: embedding endpoint and credentials
 - `session_summarisation.enabled`: service-level summarisation kill switch; Has precedence over store-level configuration.
 - `session_summarisation.llm.*`: LLM endpoint, credentials, model, and HTTP client used by the summarisation worker
@@ -395,46 +651,115 @@ Most important config fields:
 - `client_pool.max_size`: connection pool size for higher concurrency
 - `dataplane_client.base_url`: worker to server callback URL
 
-## Install
+## Multi-Region Deployment
 
-Create checksum values for the external Secrets. Change these values whenever the
-license file or config file changes so the pods roll automatically.
+> **Advanced.** This section builds on the basic [Install](#install). If you run a
+> single region, you do not need anything here.
+
+To serve multiple regions, deploy one release per region and layer two things on
+top of the basic setup:
+
+1. **Split** the values into a shared **base** file (identical across regions) and
+   a tiny **per-region** override file, deep-merged by Helm at install time — so
+   you don't hand-maintain a full config file per region.
+2. Each region names its **own credentials Secret** via `secrets.secretName` (the
+   same field the basic install uses), holding that region's API keys **and** Redis
+   connection strings in one overlay.
+
+The non-secret structure is composed by Helm into a ConfigMap; the credentials
+come from that one per-region secret overlay, merged by the loader at runtime.
+Shared API keys are duplicated into each region's Secret — with so few of them
+that's simpler than a separate shared Secret, but if you'd rather share them,
+`secrets.additionalSecrets` can layer an extra Secret on top of `secretName`. See
+[Supplying credentials](#supplying-credentials) for the overlay mechanics.
+
+Deploy one Helm release per region (each on that region's cluster), pointing at
+its local Active-Active endpoint:
 
 ```sh
-LICENSE_CHECKSUM="$(shasum ./license | awk '{print $1}')"
-CONFIG_CHECKSUM="$(shasum ./memory-dataplane.config.yaml | awk '{print $1}')"
+helm install ram-eu redis-ai/redis-agent-memory \
+  -f base-values.yaml -f region-eu.yaml --set image.tag=<RAM_VERSION>
+
+helm install ram-us redis-ai/redis-agent-memory \
+  -f base-values.yaml -f region-us.yaml --set image.tag=<RAM_VERSION>
 ```
 
-Create a values file, e.g., `ram-values.yaml`:
+The base file carries no secret; each region names its own credentials Secret:
 
 ```yaml
-license:
-  existingSecret: ram-license
-  existingSecretChecksum: "<license-checksum>"
+# base-values.yaml — no secrets block (structure only)
 
-config:
-  existingSecret: ram-config
-  existingSecretChecksum: "<config-checksum>"
+# region-eu.yaml
+secrets:
+  secretName: ram-eu-secrets   # this region's API keys + Redis connection strings
 
-image:
-  repository: redislabs/agent-memory
-  tag: "<ram-version>"
+# region-us.yaml
+secrets:
+  secretName: ram-us-secrets
 ```
 
-Install the chart:
+The chart mounts that one overlay at `/etc/ai/overlays/0/overlay.yaml` and appends
+it as a `--config` arg after the base config, exactly as in the basic install.
 
-```sh
-helm repo add redis-ai https://helm.redis.io/ai
-helm repo update
+Ready-to-copy examples live in [`examples/multi-region/`](examples/multi-region/):
+`base-values.yaml`, `region-eu.yaml` / `region-us.yaml`, and the plaintext
+overlay contents (`region-<x>.secret-overlay.example.yaml`) to load into each
+region's pre-created Secret.
 
-helm install <release-name> redis-ai/redis-agent-memory \
-  --version <chart-version> \
-  --namespace <namespace-name> \
-  --create-namespace \
-  -f ram-values.yaml \
-  --atomic \
-  --wait
+### How the base + region split works
+
+- **Base + region merge** — Helm deep-merges `-f base-values.yaml -f region-<x>.yaml`
+  before rendering, so the region file only carries the non-secret deltas:
+  `request_region.default`, `worker_regions`, `secrets.secretName`, and the
+  ingress host. The Redis endpoints are NOT here — they live in the regional secret
+  overlay.
+- **`shared`** — structural config common to the data plane and control plane
+  (embedder structure, store metadata structure, endpoints) is defined once and
+  deep-merged under both `memory` and `controlplane.configData`.
+- **Secret overlay** — each region's `secrets.secretName` Secret holds that
+  region's API keys **and** Redis connection strings in one overlay, mounted into
+  all of that region's services and merged by the loader over the rendered config.
+  See [Supplying credentials](#supplying-credentials).
+
+> **Queue backend:** multi-region Active-Active deployments use the regional
+> `background_jobs.redis` backend, with each region owning its queues via
+> `worker_regions` and `request_region.default`. The examples use
+> `background_jobs.redis`.
+
+> **`metadata.stores` is a map keyed by store id.** Its structural fields
+> (`short_memory`, `long_term_memory`, ...) live in the base config ConfigMap
+> under the store id; the store's `urls` (with credentials) live in the regional
+> secret overlay under the *same* id. The loader deep-merges maps per id, so the
+> connection string joins the structure at runtime without repeating anything.
+> The `urls` list is provided whole by the overlay, which is correct for a single
+> per-region Active-Active endpoint.
+
+Each region can also supply its own config Secret
+([`config.existingSecret`](#bring-your-own-config-secret)) instead of
+rendering from values.
+
+### Regional failover
+
+Failover is a config-only change in the surviving region's deployment: add the
+failed logical region to `worker_regions` and roll the worker. Request routing
+(`request_region`) stays untouched, so jobs keep landing in their origin
+region's queues; the surviving workers simply drain both regions. Revert the
+list to fail back.
+
+```yaml
+background_jobs:
+  redis:
+    enabled: true
+    urls:
+      - redis://redis-jobs-aa:6379
+    queue_prefix: ram
+    worker_regions:
+      - eu1
+      - us1 # temporary failover coverage for the failed region
 ```
+
+Dual live ownership of one logical region is unsupported: exactly one worker
+deployment may list a given region at a time.
 
 ## Control Plane (optional)
 
@@ -668,8 +993,130 @@ embedding model's real output width. A mismatch produces a wrongly-sized index o
 runtime vector errors.
 
 Default (`metadata.source` unset or `static`) behavior is unchanged — each store
-carries its own `metadata.stores[].long_term_memory` and the top-level `embedding:`
+carries its own `metadata.stores.<id>.long_term_memory` and the top-level `embedding:`
 block is unused — so existing DP-only installs are unaffected.
+
+## Queue Monitor (optional)
+
+The chart can optionally deploy **Asynqmon** for low-frequency inspection of the
+RAM async queues backed by `background_jobs.redis`. It is disabled by default
+(`controlplane.queueMonitor.enabled=false`) and is specific to the supported
+Redis queue backend.
+
+When enabled, the chart adds a separate low-resource Deployment,
+`redis-agent-memory-asynqmon`, plus a ClusterIP Service. If
+`controlplane.queueMonitor.ingress.enabled=true`, it also renders a dedicated
+host Ingress, for example `ram-jobs.example.com`, protected by ingress Basic
+Auth. The chart does not generate or transform Secrets for this monitor.
+
+### Queue monitor Secrets
+
+Create a Redis connection Secret that points at the same Redis endpoint used by
+`background_jobs.redis.urls`:
+
+```sh
+kubectl -n <namespace-name> create secret generic ram-job-redis \
+  --from-literal=REDIS_URL='rediss://:<password>@<job-redis-host>:6379/0' \
+  --from-literal=REDIS_TLS='<job-redis-host>'
+```
+
+Use `redis://` only when your environment does not require TLS. The optional
+`REDIS_TLS` key sets the TLS server name. If your environment intentionally
+skips hostname verification, provide `REDIS_INSECURE_TLS=true` as a third key
+and document that exception in your deployment record.
+
+Do not include a Redis ACL username in `REDIS_URL` when using the default
+`hibiken/asynqmon:0.7.2` image. Upstream Asynqmon accepts password-only Redis
+URLs and does not expose a username flag, so named-user ACL deployments must
+either provide a monitor credential on Redis' default user or set
+`controlplane.queueMonitor.image.repository` to a compatible wrapper image.
+
+Create the Basic Auth Secret separately. Ingress-nginx expects htpasswd content
+under the key `auth`. Use the same password value as the control-plane admin
+token, but store it in this separate htpasswd-formatted Secret consumed by the
+ingress controller:
+
+```sh
+read -rs RAM_ADMIN_PASSWORD
+printf '\n'
+htpasswd -Bbn admin "$RAM_ADMIN_PASSWORD" > asynqmon.htpasswd
+kubectl -n <namespace-name> create secret generic redis-agent-memory-asynqmon-basic-auth \
+  --from-file=auth=./asynqmon.htpasswd
+rm asynqmon.htpasswd
+unset RAM_ADMIN_PASSWORD
+```
+
+Do not point `controlplane.queueMonitor.auth.existingSecret` at the
+control-plane admin-token Secret. Ingress controllers expect htpasswd content,
+not the raw token value, and Helm intentionally does not read the admin-token
+Secret to generate htpasswd data.
+
+### Enable it
+
+Add to your `ram-values.yaml`:
+
+```yaml
+controlplane:
+  queueMonitor:
+    enabled: true
+    readOnly: true
+    image:
+      repository: hibiken/asynqmon
+      tag: 0.7.2
+    redis:
+      existingSecret: ram-job-redis
+      urlKey: REDIS_URL
+      tlsServerNameKey: REDIS_TLS
+      insecureTLSKey: REDIS_INSECURE_TLS
+    auth:
+      type: basic
+      existingSecret: redis-agent-memory-asynqmon-basic-auth
+      secretKey: auth
+    ingress:
+      enabled: true
+      className: nginx
+      host: ram-jobs.example.com
+      tls:
+        secretName: ram-jobs-tls
+```
+
+The rendered ingress uses the ingress-nginx Basic Auth annotations
+`auth-type=basic`, `auth-secret=<existingSecret>`, and
+`auth-secret-type=auth-file`. If your cluster cannot use ingress Basic Auth,
+leave the monitor ingress disabled and put your own auth proxy or service-mesh
+policy in front of the Asynqmon Service.
+
+### Security posture
+
+- The monitor is opt-in and runs as an isolated Deployment, not inside the RAM
+  worker.
+- It is read-only by default (`READ_ONLY=true`), so Asynqmon hides and rejects
+  mutating actions.
+- If you set `readOnly=false`, Asynqmon can mutate queues and tasks; Basic Auth
+  is then the only chart-managed access control.
+- The default Service is ClusterIP. Public access should go through the
+  dedicated admin host ingress or an operator-managed auth proxy.
+- The default image is the latest upstream Asynqmon image tag available during
+  this change (`0.7.2`, corresponding to Git tag `v0.7.2`). Keep the image tag
+  pinned and validate it when changing the repository's Asynq version; use a
+  pinned wrapper image if upstream compatibility diverges.
+- The upstream image publishes amd64 manifests. Use
+  `controlplane.queueMonitor.image.repository` for a mirrored or multi-arch image
+  if your cluster needs another architecture.
+
+### Local Docker Compose
+
+The local RAM on-prem compose stack includes Asynqmon in read-only mode against
+the same Redis queue backend:
+
+```sh
+task memory:run:onprem -- -d
+open http://127.0.0.1:9080
+curl http://127.0.0.1:9080/api/queues
+```
+
+Local development intentionally skips Basic Auth because the port is bound to
+`127.0.0.1` only. Do not expose this compose port on shared hosts.
 
 ## Rotate the License
 
@@ -750,6 +1197,9 @@ Use these values to tune the deployment:
 | Service account | `serviceAccount.*` | custom namespace security policy |
 | Secret rollouts | `license.existingSecretChecksum`, `config.existingSecretChecksum` | force restart after external Secret updates |
 | Control plane | `controlplane.enabled`, `controlplane.image.*`, `controlplane.config.existingSecret`, `controlplane.adminToken.*` | enable the optional admin store API (see [Control Plane (optional)](#control-plane-optional)) |
+| Queue monitor | `controlplane.queueMonitor.*` | enable the optional Asynqmon UI for `background_jobs.redis` |
+| Support package | `supportPackage.enabled`, `supportPackage.logLimits.*`, `supportPackage.healthChecks.*`, `supportPackage.healthCheckImage.*`, `supportPackage.healthCheckImagePullSecretName`, `supportPackage.healthCheckPodTimeout`, `supportPackage.registryImages.*`, `supportPackage.nodeMetrics` | render RAM Troubleshoot support-bundle/redactor specs and default diagnostics |
+| Preflight | `preflight.enabled` | render the static RAM Kubernetes preflight spec as a ConfigMap; the same spec is packaged under `support/` for pre-install checks |
 
 Do not use floating image tags in production.
 
@@ -760,13 +1210,13 @@ environments. It is designed to match the expectations most "FIPS mode"
 deployments have, without overclaiming the formal compliance status of the
 cryptographic module used.
 
-### What we claim, and what we do not
+### Compliance scope
 
-- We use Go's native FIPS cryptographic module (linked at build time with
-  `GOFIPS140=v1.0.0`) when the on-prem image is built. When the posture is
+- The on-prem image uses Go's native FIPS cryptographic module, linked at build
+  time with `GOFIPS140=v1.0.0`. When the posture is
   enabled, the binary runs with `GODEBUG=fips140=on`, which restricts TLS
   negotiation and key generation to the algorithms the FIPS module implements.
-- **We do not claim formal FIPS 140 compliance or validation.** At the time
+- **This chart does not claim formal FIPS 140 compliance or validation.** At the time
   this chart is released, Go's documentation states that cryptographic module
   validations are ongoing. This deployment is designed to be compatible with a
   future validated module and with customer-side FIPS requirements, but the
@@ -806,7 +1256,7 @@ mounted config:
   `promote_session_memory.strategies.instruct.llm.http_client`,
   `session_summarisation.llm.http_client`, or `embedding.http_client`); or
 - uses a non-`rediss://` URL for any Redis connection
-  (`background_jobs.redis_streams.urls`, `metadata.stores[].urls`).
+  (`background_jobs.redis.urls`, `metadata.stores.<id>.urls`).
 
 All violations are reported together at startup, so you never have to fix
 them one restart at a time.
@@ -873,8 +1323,8 @@ the Kubernetes credential; RAM access is granted by
 `auth.worker_identity.subjects` with store resources such as
 `mem-store:<store-id>` or, for the initial single-account MVP, `mem-store:*`.
 
-The binary logs a one-time banner on startup (at `WARN` level) reminding
-operators of this when `security.profile=fips` is set. The banner is a
+The binary logs a one-time banner on startup (at `WARN` level) when
+`security.profile=fips` is set. The banner is a
 prompt to verify your network isolation; it is **not** evidence that the
 isolation exists.
 
@@ -912,9 +1362,9 @@ The FIPS runtime posture has two control surfaces:
    opt-in toggle rather than a silent behavior change for existing
    deployments.
 
-The supported launch path is the image's entrypoint. If an operator
-bypasses the entrypoint (for example by running `/server` directly inside
-the image, or by overriding `command:` in a custom manifest), the runtime
+The supported launch path is the image's entrypoint. If you bypass the
+entrypoint (for example by running `/server` directly inside the image, or by
+overriding `command:` in a custom manifest), the runtime
 falls back to the build-time default, which is `fips140=on`. That is an
 unsupported launch path, not a guaranteed non-FIPS mode. If you need
 a strictly non-FIPS binary for benchmarking or debugging, keep
@@ -932,24 +1382,13 @@ kubectl -n <ns> get deploy redis-agent-memory \
 kubectl -n <ns> logs deploy/redis-agent-memory | grep -i 'FIPS security profile'
 ```
 
-The chart also ships a Helm test (`helm test <release>`) and offline template
-tests that exercise these contracts without a cluster; run them in CI to catch
-regressions before they reach a cluster:
-
-- `deployment/redis-agent-memory/tests/template-security-profile.sh` — the
-  `security.profile` wiring and the `helm test` RBAC/hook gating.
-- `deployment/redis-agent-memory/tests/template-controlplane.sh` — the optional
-  control plane: off by default, and when enabled it renders the Deployment +
-  Service on `9100` + admin-token Secret, honors bring-your-own-token, fails
-  closed on missing inputs, and carries the FIPS profile.
-
 ### Running the chart test
 
 The live `helm test` hooks (the test Pod and the Role / RoleBinding it
 needs to read the Deployment) are gated behind `tests.enabled`, which
 defaults to `false`. Clusters that never run `helm test` get no extra
-RBAC. When you want to run the tests — for example as part of a customer
-acceptance gate — enable them at install / upgrade time:
+RBAC. When you want to run the tests as part of an acceptance gate, enable them
+at install / upgrade time:
 
 ```sh
 helm upgrade --install redis-agent-memory redis-ai/redis-agent-memory \
@@ -967,9 +1406,7 @@ are regular release-managed resources gated by `tests.enabled` so
 `helm test --logs` only collects logs from test Pods. They are removed when
 you disable `tests.enabled` on a later upgrade or uninstall the release. Test
 Pods are kept after a run so Helm can collect logs and are replaced before the
-next test run. The offline template test covers both the
-`tests.enabled=false` default (no test resources rendered) and the
-`tests.enabled=true` opt-in (test Pod, Role, and RoleBinding all render).
+next test run.
 
 ## API Smoke Test
 
@@ -1001,13 +1438,201 @@ The smoke test calls the in-cluster RAM Service through the public on-prem API:
 
 It writes one short-term memory session event, writes one long-term memory
 record with a unique keyword, searches for that record through the search
-endpoint, and then best-effort deletes the records it created. This validates
+endpoint, and then best-effort deletes the records it created plus any promoted
+smoke records already visible by `sessionId` and `ownerId`. This validates
 the API server, content store Redis, RediSearch / Query Engine indexing, and the
 configured embedding provider used by long-term memory creation and search.
+
+To also validate the asynchronous worker promotion path, enable the nested
+async-promotion smoke setting:
+
+```sh
+helm upgrade --install redis-agent-memory redis-ai/redis-agent-memory \
+  --values ram-values.yaml \
+  --set tests.enabled=true \
+  --set tests.smoke.enabled=true \
+  --set tests.smoke.asyncPromotion.enabled=true \
+  --namespace <namespace-name> \
+  --atomic --wait
+
+helm test redis-agent-memory --namespace <namespace-name> --logs
+```
+
+Use `tests.smoke.asyncPromotion.enabled=true` during install, upgrade, or
+rehearsal validation when you need release evidence that the worker, job Redis,
+promotion LLM configuration, and long-term-memory write path are all processing
+session writes. Leave it disabled for a faster API-only smoke check, or when the
+validation environment intentionally lacks worker/job/LLM connectivity.
+
+The async-promotion path writes a session event phrased as durable information,
+polls long-term memory search until an `episodic` memory with the smoke
+`sessionId` and `ownerId` appears, then includes any promoted memory IDs in the
+best-effort cleanup. Tune `tests.smoke.asyncPromotion.promotionRetries` and
+`tests.smoke.asyncPromotion.promotionRetryIntervalSeconds` when worker queues or
+LLM calls need more time. The chart defaults cover RAM's default `5m`
+`promotion_deduplication_window`; if your deployment sets immediate or shorter
+promotion windows, you can lower these retry values and
+`tests.smoke.activeDeadlineSeconds` in validation-specific values.
 
 Tune the smoke test image and retry behavior under `tests.smoke.*` if the
 cluster uses an internal registry or needs longer indexing/search visibility
 windows.
+
+## Preflight Checks and Support Bundles
+
+The Helm chart contains the RAM preflight, support-bundle, and redactor specs.
+You do not need a separate diagnostics package.
+
+Both workflows are customer-admin initiated from Kubernetes tooling. You need
+`helm`, `kubectl`, and the Troubleshoot kubectl plugins.
+If `kubectl krew` is not available, install Krew first:
+<https://krew.sigs.k8s.io/docs/user-guide/setup/install/>.
+
+Install the Replicated Troubleshoot plugins on the machine where you run the
+checks:
+
+```sh
+kubectl krew install preflight
+kubectl krew install support-bundle
+```
+
+Verify that both commands are available:
+
+```sh
+kubectl preflight --help >/dev/null
+kubectl support-bundle --help >/dev/null
+```
+
+For air-gapped environments, install the `preflight` and `support-bundle`
+binaries from your approved internal mirror instead of Krew.
+
+Run the packaged Kubernetes preflight before install or upgrade:
+
+```sh
+helm repo add redis-ai https://helm.redis.io/ai
+helm repo update
+
+helm pull redis-ai/redis-agent-memory \
+  --version <chart-version> \
+  --untar \
+  --untardir ./ram-chart
+
+kubectl preflight ./ram-chart/redis-agent-memory/support/ram-preflight.yaml
+```
+
+The preflight is intentionally not values-aware. It checks Kubernetes readiness:
+version, required API groups, default CPU and memory capacity, and node spread.
+It does not check namespaces, Secrets, image registries, Ingress, Redis
+connectivity, or your selected Helm values.
+
+The chart also renders this static preflight as a ConfigMap when
+`preflight.enabled=true`, but the preflight CLI does not discover in-cluster
+specs. Use the packaged `support/ram-preflight.yaml` file for pre-install and
+upgrade checks.
+
+Generate a support bundle from the release namespace:
+
+```sh
+kubectl support-bundle \
+  --namespace <namespace-name> \
+  --load-cluster-specs \
+  -l troubleshoot.sh/kind=support-bundle \
+  --metadata supportCase=<case-id> \
+  --metadata incident=<incident-id> \
+  --metadata release=<release-name> \
+  --metadata region=<logical-region>
+```
+
+Support bundles are generated locally with your kubeconfig. No archive is
+uploaded unless you share the generated `.tar.gz`. The support-bundle and
+redactor specs are installed by default with the Helm release.
+
+Run support-bundle collection from an admin `kubectl` context that can read the
+RAM release namespace. The chart does not create support-bundle RBAC.
+
+The default spec collects namespace-scoped Kubernetes resources, Helm release
+metadata without Helm values, exact-key config and overlay Secret/ConfigMap
+values, key-existence checks for non-config Secrets, HTTP health checks,
+registry image validation, node metrics, bounded RAM server/worker logs,
+optional control-plane logs when `controlplane.enabled=true`, a static manifest,
+and Troubleshoot analyzer results. Built-in Troubleshoot redactors and
+RAM-specific redactors run against the archive. It intentionally does not
+collect Helm values, license contents, admin tokens, Redis keys or values, raw
+Redis `INFO`, or business API calls.
+
+The default spec also renders exact-key config value collection, in-cluster HTTP
+health checks, registry image validation, Kubernetes node metrics collection,
+Kubernetes node resource analyzers, and native Troubleshoot analyzers:
+
+```yaml
+supportPackage:
+  registryImages:
+    imagePullSecretName: regcred
+```
+
+`supportPackage.healthChecks.enabled=true` is the default and runs temporary
+in-cluster `runPod` probes for server, worker, optional Control Plane, and
+optional queue monitor health endpoints. Each probe executes the Troubleshoot
+HTTP collector against `*.svc.cluster.local` and analyzes the pod log for HTTP
+200. Worker checks use a support-only ClusterIP Service named
+`<release>-worker-support`.
+
+Redis dependency failures are covered by the service health probes and bounded
+RAM logs. The support package does not run separate Redis client probes, and it
+does not collect Redis keys, values, raw `INFO`, memory contents, prompts, or
+provider payloads.
+
+`supportPackage.registryImages.enabled=true` is the default and validates
+chart-rendered images: server/worker, optional Control Plane, optional queue
+monitor, enabled smoke test image, and the Troubleshoot image used by health
+probes. Set `registryImages.imagePullSecretName` when the registry requires
+credentials.
+
+`supportPackage.nodeMetrics: {}` is the default and collects Kubernetes node
+metric JSON. The bundle includes a presence check for `node-metrics/*.json`, one
+native Troubleshoot `nodeMetrics` analyzer for PVC usage coverage, and
+`nodeResources` analyzers for the default RAM footprint. The default minimum is
+2 CPU allocatable and 2Gi memory allocatable across the cluster, with at least
+one schedulable node that has 500m CPU and 512Mi memory allocatable for a single
+RAM pod. A single-node cluster warns because production deployments should
+provide node redundancy for server and worker replicas.
+
+Review the archive before sharing it with Redis Support. The default workflow
+collects exact data-plane/Control Plane config and overlay Secret or ConfigMap
+keys, then redactors run over the bundle. It must not include license contents,
+admin tokens, queue-monitor Redis URLs, TLS Secret values, RAM memory contents,
+prompts, provider payloads, Redis keys or values, credentials, or private keys.
+If you find any of those, do not share the archive until the file is removed or
+redacted.
+
+Render the support-package template when applying the support-bundle specs
+outside a Helm install or upgrade:
+
+```sh
+helm template <release-name> redis-ai/redis-agent-memory \
+  --version <chart-version> \
+  --namespace <namespace-name> \
+  -f ram-values.yaml \
+  --show-only templates/support-package.yaml \
+  > ram-support-package-specs.yaml
+
+kubectl apply --namespace <namespace-name> -f ram-support-package-specs.yaml
+```
+
+OpenShift uses the same workflow from an authenticated `oc`/`kubectl` context.
+For platform-wide OpenShift failures, collect `oc adm must-gather` separately;
+it is not part of the default RAM package.
+
+For multi-region incidents, run the command once per RAM namespace/release and
+use the same `supportCase` and `incident` metadata with each region's
+`region=<logical-region>` value. For FIPS deployments, keep using the same
+command; the package records the chart `security.profile` and image identity.
+For air-gapped deployments, use the Troubleshoot binaries installed from your
+internal mirror in the prerequisite step. Mirror
+`supportPackage.healthCheckImage.repository:supportPackage.healthCheckImage.tag`
+and set `supportPackage.healthCheckImagePullSecretName` when the mirror needs an
+image pull Secret. If registry validation is enabled, set
+`supportPackage.registryImages.imagePullSecretName` for private registries.
 
 ## Air-Gapped Deployments
 
@@ -1067,13 +1692,40 @@ curl http://localhost:9100/v1/health/ready
 curl -H "Authorization: Bearer <admin-token>" http://localhost:9100/v1/stores
 ```
 
+## Observability / Metrics
+
+Both the API server and the worker expose Prometheus metrics at `/metrics` on the
+service container port (`service.port`, default `9000`). The endpoint is
+**unauthenticated** and is intended for **in-cluster scraping only** — do not
+expose it outside the cluster.
+
+The async-queue signals are split across the two processes, so collecting the
+full picture requires scraping **both**:
+
+- **Server** (`redis-agent-memory` Deployment + Service): emits the submission
+  metric `jobqueue_enqueue_total` (with `service_name="dataplane"`) alongside the
+  HTTP/runtime metrics. Reachable through the `redis-agent-memory` Service on port
+  `9000`.
+- **Worker** (`redis-agent-memory-worker` Deployment): emits the job-processing
+  metrics (all with `service_name="worker"`) — `jobqueue_processing_duration_seconds`,
+  `jobqueue_schedule_to_start_seconds`,
+  `jobqueue_size`, `jobqueue_oldest_pending_seconds`,
+  and `jobqueue_worker_up`.
+
+Every `jobqueue_*` series also carries the constant identity labels
+`service_namespace="ram"` and `service_name` (`dataplane` on the server, `worker`
+on the worker), so the emitting process is distinguished by label rather than by
+the metric name.
+
 ## Update
 
 For every update:
 
 - update the chart version and image tag as needed
 - recalculate `LICENSE_CHECKSUM` if the license file changed
-- recalculate `CONFIG_CHECKSUM` if the shared config file changed
+- if you're using `config.existingSecret`, recalculate `CONFIG_CHECKSUM` if the
+  config file changed (`config.render` checksums the rendered config
+  automatically — nothing to recalculate)
 - update `ram-values.yaml`
 
 Then run:
@@ -1094,6 +1746,10 @@ Typical update cases:
 - license rotation: update the Secret and `license.existingSecretChecksum`
 - config change: update the Secret and `config.existingSecretChecksum` (or
   `controlplane.config.existingSecretChecksum` for the control-plane config)
+- credential/overlay rotation: update the pre-created overlay Secret contents,
+  then restart the pods (`kubectl rollout restart`) — credentials are read at
+  client construction, so the mounted overlay takes effect on pod restart. The
+  chart rolls automatically only if the overlay Secret *name* changes.
 - control-plane admin-token rotation: edit the admin-token Secret — read-on-use, no redeploy needed
 
 <!-- markdownlint-enable MD013 MD060 -->

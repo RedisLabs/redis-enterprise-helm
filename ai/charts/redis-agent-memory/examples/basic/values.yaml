@@ -1,0 +1,83 @@
+# Redis Agent Memory — default deployment values.
+#
+# One server + one worker serving a static store. The chart renders the
+# structural config into a ConfigMap; one pre-created Secret supplies the
+# credentials (Redis connection URLs + embedder/LLM API keys) through a mounted
+# overlay, so nothing secret lives in this file.
+#
+# 1. Create the license and credentials Secrets:
+#      kubectl create secret generic ram-license --from-file=license=./license
+#      kubectl create secret generic ram-secrets \
+#        --from-file=overlay.yaml=./secret-overlay.example.yaml
+# 2. Install:
+#      helm install ram ../.. -f values.yaml --set image.tag=<RAM_VERSION>
+#
+# See secret-overlay.example.yaml in this directory for the overlay contents.
+
+image:
+  repository: redislabs/agent-memory
+  # tag is supplied at install time: --set image.tag=<RAM_VERSION>
+
+license:
+  # Pre-created Secret holding the enterprise license.
+  existingSecret: ram-license
+
+# Chart renders the structural config ConfigMap from shared + memory (below).
+config:
+  render: true
+
+# Pre-created Secret with your credentials, mounted as an overlay and merged over
+# the rendered config at runtime. See secret-overlay.example.yaml.
+secrets:
+  secretName: ram-secrets
+
+# Blocks shared by the data plane (and control plane, if enabled). Structure only.
+shared:
+  embedders_connection_details:
+    openai:
+      base_url: https://api.openai.com
+      credentials:
+        # api_key arrives via the overlay — not stored here.
+        type: static
+
+# Data-plane config body (snake_case). Structure only — no URLs, no API keys.
+memory:
+  default_extraction_strategy: instruct
+  auth:
+    method: none
+  background_jobs:
+    redis:
+      enabled: true
+      # urls arrive via the overlay.
+      queue_prefix: ram
+      # Logical region this deployment owns. Any name works for one deployment;
+      # it only matters when you run multiple regions (see ../multi-region).
+      worker_regions:
+        - default
+  request_region:
+    default: default
+  metadata:
+    source: static
+    # stores is a MAP keyed by store id. The store's structure lives here; its
+    # `urls` arrive from the overlay, merged into the same id at runtime.
+    stores:
+      "00000000000000000000000000000001":
+        short_memory:
+          ttl_seconds: 86400
+        long_term_memory:
+          embedding_provider: openai
+          embedding_model: text-embedding-3-large
+          embedding_dimensions: 3072
+
+# Expose the API through an ingress host (optional).
+ingress:
+  enabled: true
+  hosts:
+    - host: memory.example.com
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls:
+    - secretName: ram-tls
+      hosts:
+        - memory.example.com

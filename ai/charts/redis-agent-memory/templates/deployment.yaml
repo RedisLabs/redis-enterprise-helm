@@ -19,6 +19,11 @@ spec:
       annotations:
         {{- if .Values.config.existingSecretChecksum }}
         checksum/config: {{ .Values.config.existingSecretChecksum | quote }}
+        {{- else if .Values.config.render }}
+        checksum/config: {{ include "redis-agent-memory.dataplaneConfig" . | sha256sum | quote }}
+        {{- end }}
+        {{- if include "redis-agent-memory.overlaySecretNames" . | fromJsonArray }}
+        checksum/overlay: {{ include "redis-agent-memory.overlayChecksum" . | quote }}
         {{- end }}
         {{- if .Values.license.existingSecretChecksum }}
         checksum/license: {{ .Values.license.existingSecretChecksum | quote }}
@@ -54,13 +59,14 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
             - "--mode=server"
+          {{- include "redis-agent-memory.overlayConfigArgs" . | nindent 12 }}
           {{- with .Values.securityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          {{- with (include "redis-agent-memory.commonEnv" . | trim) }}
+          {{- with (include "redis-agent-memory.env" . | trim) }}
           env:
             {{ . | nindent 12 }}
           {{- end }}
@@ -87,6 +93,7 @@ spec:
             - name: license-volume
               mountPath: {{ .Values.license.mountDir }}
               readOnly: true
+          {{- include "redis-agent-memory.overlayVolumeMounts" . | nindent 12 }}
           {{- include "redis-agent-memory.tlsVolumeMount" . | nindent 12 }}
           {{- with .Values.volumeMounts }}
             {{- toYaml . | nindent 12 }}
@@ -94,17 +101,26 @@ spec:
 
       volumes:
         - name: config-volume
+          {{- if .Values.config.existingSecret }}
           secret:
-            secretName: {{ include "redis-agent-memory.configSecretName" . }}
+            secretName: {{ include "redis-agent-memory.configName" . }}
             items:
               - key: {{ .Values.config.secretKey }}
                 path: memory-dataplane.config.yaml
+          {{- else }}
+          configMap:
+            name: {{ include "redis-agent-memory.configName" . }}
+            items:
+              - key: {{ .Values.config.secretKey }}
+                path: memory-dataplane.config.yaml
+          {{- end }}
         - name: license-volume
           secret:
             secretName: {{ include "redis-agent-memory.licenseSecretName" . }}
             items:
               - key: {{ .Values.license.secretKey }}
                 path: {{ .Values.license.fileName }}
+      {{- include "redis-agent-memory.overlayVolumes" . | nindent 8 }}
       {{- include "redis-agent-memory.tlsVolume" . | nindent 8 }}
       {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}
