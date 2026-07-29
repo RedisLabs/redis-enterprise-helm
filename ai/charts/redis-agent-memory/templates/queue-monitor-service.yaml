@@ -1,0 +1,20 @@
+{{- $queueMonitor := .Values.controlplane.queueMonitor -}}
+{{- if and $queueMonitor $queueMonitor.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "redis-agent-memory.queueMonitorFullname" . }}
+  labels:
+    {{- include "redis-agent-memory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: queue-monitor
+spec:
+  type: {{ $queueMonitor.service.type }}
+  ports:
+    - port: {{ $queueMonitor.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "redis-agent-memory.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: queue-monitor
+{{- end }}

@@ -1,0 +1,18 @@
+{{- if and .Values.controlplane.enabled .Values.controlplane.config.render (not .Values.controlplane.config.existingSecret) }}
+{{- /*
+  Chart-rendered control-plane config ConfigMap, mirroring the data-plane
+  config.yaml. Body assembled from .Values.shared + .Values.controlplane.configData
+  (see the controlplaneConfig helper); STRUCTURE ONLY — no urls, no API keys.
+  Credentials arrive via the mounted secret overlays and are merged by the loader.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "redis-agent-memory.controlplaneConfigName" . }}
+  labels:
+    {{- include "redis-agent-memory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controlplane
+data:
+  {{ .Values.controlplane.config.secretKey }}: |
+{{ include "redis-agent-memory.controlplaneConfig" . | indent 4 }}
+{{- end }}

@@ -5,8 +5,9 @@ This test intentionally uses the public on-prem RAM API through the in-cluster
 Service instead of reaching into Redis directly. It validates the installed
 configuration end to end by:
   1. creating one short-term memory session event,
-  2. creating one long-term memory record,
-  3. finding that record through the long-term memory search endpoint.
+  2. optionally waiting for worker promotion into long-term memory,
+  3. creating one long-term memory record,
+  4. finding that record through the long-term memory search endpoint.
 
 It is gated separately from tests.enabled because it exercises live data-path
 dependencies, including the configured content store Redis and embedding
@@ -48,6 +49,12 @@ spec:
           value: {{ .Values.tests.smoke.searchRetries | quote }}
         - name: SMOKE_SEARCH_RETRY_INTERVAL_SECONDS
           value: {{ .Values.tests.smoke.searchRetryIntervalSeconds | quote }}
+        - name: SMOKE_ASYNC_PROMOTION_ENABLED
+          value: {{ .Values.tests.smoke.asyncPromotion.enabled | quote }}
+        - name: SMOKE_ASYNC_PROMOTION_RETRIES
+          value: {{ .Values.tests.smoke.asyncPromotion.promotionRetries | quote }}
+        - name: SMOKE_ASYNC_PROMOTION_RETRY_INTERVAL_SECONDS
+          value: {{ .Values.tests.smoke.asyncPromotion.promotionRetryIntervalSeconds | quote }}
       command:
         - python
         - -c
@@ -68,6 +75,13 @@ spec:
           timeout = int(os.environ["SMOKE_TIMEOUT_SECONDS"])
           search_retries = int(os.environ["SMOKE_SEARCH_RETRIES"])
           search_retry_interval = int(os.environ["SMOKE_SEARCH_RETRY_INTERVAL_SECONDS"])
+          async_promotion_enabled = (
+              os.environ["SMOKE_ASYNC_PROMOTION_ENABLED"].strip().lower() == "true"
+          )
+          promotion_retries = int(os.environ["SMOKE_ASYNC_PROMOTION_RETRIES"])
+          promotion_retry_interval = int(
+              os.environ["SMOKE_ASYNC_PROMOTION_RETRY_INTERVAL_SECONDS"]
+          )
 
           run_id = uuid.uuid4().hex
           session_id = "smoke-" + run_id[:24]
@@ -76,6 +90,7 @@ spec:
           owner_id = "helm-smoke"
           keyword = "ram-smoke-" + run_id[:12]
           store_path = urllib.parse.quote(store_id, safe="")
+          promoted_memory_ids = []
 
           def fail(message):
               print("FAIL: " + message, file=sys.stderr)
@@ -126,12 +141,46 @@ spec:
                       fail(message)
                   raise RuntimeError(message)
 
+          def record_promoted_memory_ids(memories):
+              for memory in memories:
+                  promoted_id = memory.get("id")
+                  if promoted_id and promoted_id not in promoted_memory_ids:
+                      promoted_memory_ids.append(promoted_id)
+
+          def promotion_search_body():
+              return {
+                  "filter": {
+                      "sessionId": {
+                          "eq": session_id,
+                      },
+                      "ownerId": {
+                          "eq": owner_id,
+                      },
+                      "memoryType": {
+                          "eq": "episodic",
+                      },
+                  },
+                  "filterOp": "all",
+                  "limit": 10,
+              }
+
           def cleanup():
+              try:
+                  _, memories = search_long_term_memory(promotion_search_body(), fatal=False)
+                  record_promoted_memory_ids(memories)
+              except Exception as err:
+                  print(f"WARN: failed to find promoted smoke long-term memory: {err}", file=sys.stderr)
+
+              memory_ids = []
+              for candidate in [memory_id] + promoted_memory_ids:
+                  if candidate and candidate not in memory_ids:
+                      memory_ids.append(candidate)
+
               try:
                   request(
                       "DELETE",
                       f"/v1/stores/{store_path}/long-term-memory",
-                      {"memoryIds": [memory_id]},
+                      {"memoryIds": memory_ids},
                       expected=(200, 404),
                       fatal=False,
                   )
@@ -149,6 +198,41 @@ spec:
               except Exception as err:
                   print(f"WARN: failed to delete smoke session memory: {err}", file=sys.stderr)
 
+          def search_long_term_memory(body, fatal=True):
+              result = request(
+                  "POST",
+                  f"/v1/stores/{store_path}/long-term-memory/search",
+                  body,
+                  fatal=fatal,
+              )
+              return result, result.get("items", result.get("memories", []))
+
+          def wait_for_promoted_memory():
+              body = promotion_search_body()
+              last_response = {}
+              for attempt in range(1, promotion_retries + 1):
+                  last_response, memories = search_long_term_memory(body)
+                  promoted = [m for m in memories if m.get("id") != memory_id]
+
+                  if promoted:
+                      ids = [m.get("id", "<missing-id>") for m in promoted]
+                      record_promoted_memory_ids(promoted)
+                      print(f"OK: worker promoted session event into long-term memory: {ids}")
+                      return
+
+                  if attempt < promotion_retries:
+                      print(
+                          f"Promotion attempt {attempt}/{promotion_retries} did not find "
+                          f"a memory for session {session_id}; retrying in {promotion_retry_interval}s"
+                      )
+                      time.sleep(promotion_retry_interval)
+
+              fail(
+                  "worker did not create long-term memory for "
+                  f"session {session_id}; check worker, job Redis, and LLM logs. "
+                  f"Last response: {last_response}"
+              )
+
           print(f"Running RAM API smoke test against {base_url} store {store_id}")
 
           try:
@@ -160,7 +244,14 @@ spec:
                   "sessionId": session_id,
                   "actorId": owner_id,
                   "role": "USER",
-                  "content": [{"text": f"Helm smoke test session event for {keyword}"}],
+                  "content": [
+                      {
+                          "text": (
+                              "Please remember that this Helm smoke test uses "
+                              f"the durable verification keyword {keyword}."
+                          )
+                      }
+                  ],
                   "createdAt": datetime.now(timezone.utc).isoformat(
                       timespec="milliseconds"
                   ).replace("+00:00", "Z"),
@@ -180,6 +271,9 @@ spec:
               event = session.get("event", {})
               if event.get("sessionId") != session_id:
                   fail(f"session event response did not contain sessionId {session_id}: {session}")
+
+              if async_promotion_enabled:
+                  wait_for_promoted_memory()
 
               memory_text = (
                   "Helm smoke test long-term memory with unique keyword "
@@ -222,12 +316,7 @@ spec:
 
               last_search = {}
               for attempt in range(1, search_retries + 1):
-                  last_search = request(
-                      "POST",
-                      f"/v1/stores/{store_path}/long-term-memory/search",
-                      search_body,
-                  )
-                  memories = last_search.get("items", last_search.get("memories", []))
+                  last_search, memories = search_long_term_memory(search_body)
                   match = next((m for m in memories if m.get("id") == memory_id), None)
 
                   if match is not None and keyword in match.get("text", ""):

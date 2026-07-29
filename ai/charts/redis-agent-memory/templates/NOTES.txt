@@ -42,6 +42,18 @@ Control Plane    : {{ include "redis-agent-memory.controlplaneFullname" . }}:{{ 
   no redeploy is needed.
 {{- end }}
 {{- end }}
+{{- if and .Values.controlplane.queueMonitor .Values.controlplane.queueMonitor.enabled }}
+
+Queue Monitor    : {{ include "redis-agent-memory.queueMonitorFullname" . }}:{{ .Values.controlplane.queueMonitor.service.port }} (Asynqmon for background_jobs.redis)
+  Read-only       : {{ .Values.controlplane.queueMonitor.readOnly }}
+  Redis Secret    : {{ .Values.controlplane.queueMonitor.redis.existingSecret }} (key: {{ .Values.controlplane.queueMonitor.redis.urlKey }})
+{{- if .Values.controlplane.queueMonitor.ingress.enabled }}
+  Ingress         : http{{ if .Values.controlplane.queueMonitor.ingress.tls.secretName }}s{{ end }}://{{ .Values.controlplane.queueMonitor.ingress.host }}{{ .Values.controlplane.queueMonitor.ingress.path }}
+  Basic Auth      : existing htpasswd Secret {{ .Values.controlplane.queueMonitor.auth.existingSecret }} (key: {{ .Values.controlplane.queueMonitor.auth.secretKey }})
+{{- else }}
+  Ingress         : disabled; use port-forwarding or your own auth proxy.
+{{- end }}
+{{- end }}
 
 Get the application URL by running these commands:
 {{- if .Values.ingress.enabled }}

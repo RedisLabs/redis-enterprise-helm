@@ -4,6 +4,48 @@
   "description": "Schema for the redis-agent-memory Helm chart values. Enforced by `helm install`/`helm upgrade` via Helm's built-in JSON Schema validation (see https://helm.sh/docs/topics/charts/#schema-files). Anything not defined here is accepted — the schema's job is to catch typos and invalid values on the keys we care most about, not to document every field.",
   "type": "object",
   "properties": {
+    "config": {
+      "type": "object",
+      "description": "Data-plane config source. Bring your own Secret (existingSecret) or let the chart render a ConfigMap (render=true) from .Values.shared + .Values.memory.",
+      "properties": {
+        "existingSecret": { "type": "string" },
+        "render": {
+          "type": "boolean",
+          "description": "When true (and no existingSecret), the chart renders the data-plane config into a ConfigMap from .Values.shared + .Values.memory."
+        },
+        "secretKey": { "type": "string" },
+        "existingSecretChecksum": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "secrets": {
+      "type": "object",
+      "description": "Names of pre-created Secrets, each holding a YAML overlay mounted read-only and deep-merged over the base config by the loader at runtime. Holds the Redis connection URLs and API keys, keeping them out of values.yaml and the rendered ConfigMap. secretName alone is usually enough; additionalSecrets layers extra Secrets on top when you need to split credentials (for example, per region).",
+      "properties": {
+        "secretName": {
+          "type": "string",
+          "description": "Name of the pre-created Secret holding your credentials (Redis connection URLs, embedder/LLM API keys) as one YAML overlay document under overlayKey. For most deployments this single Secret is all you need."
+        },
+        "overlayKey": {
+          "type": "string",
+          "description": "Key inside each overlay Secret that holds the overlay YAML. Defaults to overlay.yaml."
+        },
+        "additionalSecrets": {
+          "type": "array",
+          "description": "Optional: names of extra Secrets layered on top of secretName, merged in order (later wins). Leave empty if one Secret is enough.",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "shared": {
+      "type": "object",
+      "description": "Config blocks common to the data plane and control plane (embedders structure, store metadata structure, endpoints), deep-merged under both .Values.memory and .Values.controlplane.configData. Freeform."
+    },
+    "memory": {
+      "type": "object",
+      "description": "Rendered data-plane config file body (snake_case), used when config.render=true. Structure only; Redis URLs and API keys arrive via the mounted secret overlays. metadata.stores is a map keyed by store id. Freeform — matches the on-prem data-plane config file schema."
+    },
     "image": {
       "type": "object",
       "properties": {
@@ -90,9 +132,97 @@
             "searchRetryIntervalSeconds": {
               "type": "integer",
               "minimum": 1
+            },
+            "asyncPromotion": {
+              "type": "object",
+              "description": "Optional worker-path smoke verification. When enabled, the smoke test waits for the session event to be promoted into long-term memory.",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "When true, wait for the worker to promote the smoke session event into long-term memory."
+                },
+                "promotionRetries": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "promotionRetryIntervalSeconds": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "supportPackage": {
+      "type": "object",
+      "description": "Replicated Troubleshoot support-bundle/redactor specs for customer-generated RAM support packages.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "When true, render cluster-discoverable Troubleshoot SupportBundle and Redactor ConfigMaps."
+        },
+        "logLimits": {
+          "type": "object",
+          "description": "Limits for RAM server, worker, and optional control-plane pod log collection.",
+          "properties": {
+            "maxLines": { "type": "integer", "minimum": 1 },
+            "maxBytes": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        },
+        "healthChecks": {
+          "type": "object",
+          "description": "In-cluster Troubleshoot HTTP health probes against RAM Services.",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "timeout": { "type": "string", "minLength": 1 },
+            "queueMonitorPath": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        "healthCheckImage": {
+          "type": "object",
+          "description": "Troubleshoot image used by supportPackage.healthChecks runPod collectors.",
+          "properties": {
+            "repository": { "type": "string", "minLength": 1 },
+            "tag": { "type": "string", "minLength": 1 },
+            "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+          },
+          "additionalProperties": false
+        },
+        "healthCheckImagePullSecretName": { "type": "string" },
+        "healthCheckPodTimeout": { "type": "string", "minLength": 1 },
+        "registryImages": {
+          "type": "object",
+          "description": "Native Troubleshoot registryImages collector/analyzer for chart-rendered images.",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "imagePullSecretName": { "type": "string" },
+            "imagePullSecretType": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        "nodeMetrics": {
+          "type": "object",
+          "description": "Kubernetes nodeMetrics collection plus native PVC usage analyzer.",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "preflight": {
+      "type": "object",
+      "description": "Static Kubernetes-only Replicated Troubleshoot Preflight spec rendered as a ConfigMap. A packaged copy is also shipped under support/ for pre-install checks.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "When true, render a ConfigMap containing data.preflight-spec with Kubernetes version, API, and default resource checks."
         }
       },
       "additionalProperties": false
@@ -130,10 +260,18 @@
           "type": "object",
           "properties": {
             "existingSecret": { "type": "string" },
+            "render": {
+              "type": "boolean",
+              "description": "When true (and no existingSecret), the chart renders the control-plane config into a ConfigMap from .Values.shared + .Values.controlplane.configData."
+            },
             "secretKey": { "type": "string" },
             "existingSecretChecksum": { "type": "string" }
           },
           "additionalProperties": false
+        },
+        "configData": {
+          "type": "object",
+          "description": "Rendered control-plane config file body (snake_case), used when controlplane.config.render=true. Structure only; Redis URLs and API keys arrive via the mounted secret overlays. Freeform — matches the on-prem CP config file schema."
         },
         "adminToken": {
           "type": "object",
@@ -160,7 +298,87 @@
         "affinity": { "type": "object" },
         "tolerations": { "type": "array" },
         "volumes": { "type": "array" },
-        "volumeMounts": { "type": "array" }
+        "volumeMounts": { "type": "array" },
+        "queueMonitor": {
+          "type": "object",
+          "description": "Optional Asynqmon UI for the on-prem regional Redis job queue backend. Disabled by default. When enabled, Redis credentials and Basic Auth htpasswd data must come from existing Secrets.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "When true, render a separate Asynqmon Deployment, Service, and optional dedicated-host Ingress."
+            },
+            "readOnly": {
+              "type": "boolean",
+              "description": "When true, run Asynqmon in read-only mode. Defaults to true."
+            },
+            "image": {
+              "type": "object",
+              "properties": {
+                "repository": { "type": "string", "minLength": 1 },
+                "tag": { "type": "string", "minLength": 1 },
+                "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+              },
+              "additionalProperties": false
+            },
+            "replicaCount": { "type": "integer", "minimum": 0 },
+            "service": {
+              "type": "object",
+              "properties": {
+                "type": { "type": "string" },
+                "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+              },
+              "additionalProperties": false
+            },
+            "redis": {
+              "type": "object",
+              "description": "Existing Secret wiring for the same Redis queue backend configured in background_jobs.redis.",
+              "properties": {
+                "existingSecret": { "type": "string" },
+                "urlKey": { "type": "string", "minLength": 1 },
+                "tlsServerNameKey": { "type": "string" },
+                "insecureTLSKey": { "type": "string" }
+              },
+              "additionalProperties": false
+            },
+            "auth": {
+              "type": "object",
+              "description": "Ingress Basic Auth settings. existingSecret must be an htpasswd-formatted Kubernetes Secret.",
+              "properties": {
+                "type": { "type": "string", "enum": ["basic"] },
+                "existingSecret": { "type": "string" },
+                "secretKey": { "type": "string", "enum": ["auth"] }
+              },
+              "additionalProperties": false
+            },
+            "ingress": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "className": { "type": "string" },
+                "host": { "type": "string" },
+                "path": { "type": "string" },
+                "pathType": { "type": "string", "enum": ["Exact", "Prefix", "ImplementationSpecific"] },
+                "annotations": { "type": "object" },
+                "tls": {
+                  "type": "object",
+                  "properties": {
+                    "secretName": { "type": "string" }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "resources": { "type": "object" },
+            "podAnnotations": { "type": "object" },
+            "podLabels": { "type": "object" },
+            "securityContext": { "type": "object" },
+            "nodeSelector": { "type": "object" },
+            "affinity": { "type": "object" },
+            "tolerations": { "type": "array" }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     }

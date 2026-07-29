@@ -56,6 +56,22 @@ count_profile_value() {
       '
 }
 
+count_env_value() {
+  local manifest="$1" name="$2" value="$3"
+  printf '%s\n' "$manifest" \
+    | awk -v name="$name" -v val="$value" '
+        $0 ~ "name: " name "$" { want=1; next }
+        want && /value:/ {
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+          gsub(/^value:[[:space:]]*/, "", $0)
+          gsub(/"/, "", $0)
+          if ($0 == val) c++
+          want=0
+        }
+        END { print c+0 }
+      '
+}
+
 has_rbac_test_hook_annotation() {
   local manifest="$1"
   printf '%s\n' "$manifest" \
@@ -109,6 +125,12 @@ if printf '%s' "$OUT" | grep -qE '^kind:[[:space:]]+(Role|RoleBinding)$'; then
 fi
 echo "OK: no test hooks or test RBAC rendered by default"
 
+echo "=== Case 4b: supportPackage.rbac is not a supported chart value ==="
+if render --set supportPackage.rbac.create=true >/dev/null 2>&1; then
+  fail "helm accepted supportPackage.rbac even though support-bundle RBAC is not chart-managed"
+fi
+echo "OK: supportPackage.rbac is rejected by schema validation"
+
 echo "=== Case 5: tests.enabled=true → security-profile test resources must render ==="
 OUT=$(render --set tests.enabled=true)
 printf '%s' "$OUT" | grep -qE 'name:[[:space:]]+"?[^"]*-test-security-profile"?' \
@@ -140,7 +162,36 @@ printf '%s' "$OUT" | grep -q 'name: RAM_STORE_ID' \
   || fail "api-smoke test Pod did not render RAM_STORE_ID env var"
 printf '%s' "$OUT" | grep -q 'value: "00000000000000000000000000000001"' \
   || fail "api-smoke test Pod did not render the default smoke store ID"
+printf '%s' "$OUT" | grep -q 'activeDeadlineSeconds: 600' \
+  || fail "api-smoke test Pod did not render the default 600s activeDeadlineSeconds"
+N=$(count_env_value "$OUT" "SMOKE_ASYNC_PROMOTION_ENABLED" "false")
+[ "$N" = "1" ] \
+  || fail "expected async promotion env to default false in the smoke Pod, got $N"
+N=$(count_env_value "$OUT" "SMOKE_ASYNC_PROMOTION_RETRIES" "90")
+[ "$N" = "1" ] \
+  || fail "expected async promotion retries env to default 90, got $N"
+N=$(count_env_value "$OUT" "SMOKE_ASYNC_PROMOTION_RETRY_INTERVAL_SECONDS" "5")
+[ "$N" = "1" ] \
+  || fail "expected async promotion retry interval env to default 5, got $N"
 echo "OK: API smoke test renders only when explicitly enabled"
+
+echo "=== Case 7: async promotion settings render when explicitly enabled ==="
+OUT=$(render \
+  --set tests.enabled=true \
+  --set tests.smoke.enabled=true \
+  --set tests.smoke.asyncPromotion.enabled=true \
+  --set tests.smoke.asyncPromotion.promotionRetries=9 \
+  --set tests.smoke.asyncPromotion.promotionRetryIntervalSeconds=7)
+N=$(count_env_value "$OUT" "SMOKE_ASYNC_PROMOTION_ENABLED" "true")
+[ "$N" = "1" ] \
+  || fail "expected async promotion env to render true in the smoke Pod, got $N"
+N=$(count_env_value "$OUT" "SMOKE_ASYNC_PROMOTION_RETRIES" "9")
+[ "$N" = "1" ] \
+  || fail "expected async promotion retries env to render 9, got $N"
+N=$(count_env_value "$OUT" "SMOKE_ASYNC_PROMOTION_RETRY_INTERVAL_SECONDS" "7")
+[ "$N" = "1" ] \
+  || fail "expected async promotion retry interval env to render 7, got $N"
+echo "OK: async promotion smoke settings render only when explicitly enabled"
 
 echo ""
 echo "All chart template checks passed."
