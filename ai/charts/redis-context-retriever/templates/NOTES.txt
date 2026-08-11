@@ -1,0 +1,55 @@
+Context Surfaces has been deployed!
+
+{{ if eq .Values.authMode "local" }}
+=== ON-PREMISES MODE ===
+
+The initial admin API key will be written to /opt/initialAdminKey.txt on first startup.
+To retrieve it:
+
+  kubectl exec -n {{ .Release.Namespace }} \
+    $(kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/component=admin -o jsonpath='{.items[0].metadata.name}') \
+    -- cat /opt/initialAdminKey.txt
+
+Store this key securely - it will not be shown again!
+{{ end }}
+
+=== ADMIN SERVER ===
+
+{{- if eq .Values.admin.service.type "NodePort" }}
+Access the Admin API at:
+  export NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+  export NODE_PORT={{ .Values.admin.service.nodePort }}
+  echo "Admin API: http://$NODE_IP:$NODE_PORT"
+{{- else if eq .Values.admin.service.type "LoadBalancer" }}
+It may take a few minutes for the LoadBalancer IP to be available.
+  kubectl get svc -n {{ .Release.Namespace }} {{ include "cs.fullname" . }}-admin -w
+{{- else }}
+Access the Admin API via port-forward:
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "cs.fullname" . }}-admin {{ .Values.admin.service.port }}:{{ .Values.admin.service.port }}
+{{- end }}
+
+
+=== MCP SERVER ===
+
+{{- if eq .Values.mcp.service.type "NodePort" }}
+Access the MCP API at:
+  export NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+  export NODE_PORT={{ .Values.mcp.service.nodePort }}
+  echo "MCP API: http://$NODE_IP:$NODE_PORT"
+{{- else if eq .Values.mcp.service.type "LoadBalancer" }}
+  kubectl get svc -n {{ .Release.Namespace }} {{ include "cs.fullname" . }}-mcp -w
+{{- else }}
+Access the MCP API via port-forward:
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "cs.fullname" . }}-mcp {{ .Values.mcp.service.port }}:{{ .Values.mcp.service.port }}
+{{- end }}
+
+=== HEALTH CHECK ===
+
+Check the deployment health:
+  curl -s http://<SERVER_IP>:<PORT>/health | jq
+
+=== DOCUMENTATION ===
+
+For detailed setup and usage instructions, see:
+  docs/guides/on-prem-installation.md
+

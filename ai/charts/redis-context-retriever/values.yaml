@@ -1,0 +1,126 @@
+# Default values for context-retriever.
+# This is a YAML-formatted file.
+
+# -- Authentication mode
+# For on-prem deployments, set to "local" (API key only, no session auth)
+# For cloud deployments, set to "sm" (SM Cloud authentication)
+authMode: local
+# Admin server configuration
+admin:
+  # -- Number of replicas
+  replicaCount: 1
+  # -- Container image
+  image:
+    repository: redislabs/context-retriever-admin
+    tag: "0.3.0"
+    pullPolicy: IfNotPresent
+  # -- Service configuration
+  service:
+    type: NodePort
+    port: 8080
+    nodePort: 30080
+  # -- Resource limits and requests
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  # -- Liveness probe configuration
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 15
+    periodSeconds: 20
+  # -- Readiness probe configuration
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 10
+# MCP server configuration.
+# The MCP server is always deployed — it is the primary Context Retriever runtime
+# (the tool surface agents connect to), so it is not optional.
+mcp:
+  # -- Public-facing MCP URL surfaced in API responses so clients know where to connect.
+  # Set per environment (e.g. https://gcp-us-east4.context-surfaces.redis.io/mcp for prod).
+  # Leave empty in environments where the URL should be omitted from responses.
+  publicURL: ""
+  # -- Number of replicas
+  replicaCount: 1
+  # -- Container image
+  image:
+    repository: redislabs/context-retriever
+    tag: "0.3.0"
+    pullPolicy: IfNotPresent
+  # -- Service configuration
+  service:
+    type: NodePort
+    port: 8081
+    nodePort: 30081
+  # -- Resource limits and requests
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+# Redis configuration
+redis:
+  # -- Redis database address (host:port). REQUIRED — bring your own Redis database
+  # (most often Redis Enterprise) with the Search + JSON modules (RediSearch + RedisJSON)
+  # enabled. There is no default; the chart fails to render if this is not set.
+  addr: ""
+  # -- Redis database number
+  db: 0
+  # -- Enable TLS for Redis connection (default: false for on-prem, true for cloud)
+  tlsEnabled: false
+# Secrets configuration
+secrets:
+  # -- Existing secret holding the Context Retriever config. Left empty by default — the
+  # operator installing the chart decides whether to reference a pre-created secret (set the
+  # name here) or let the chart create one from the inline values below. If set, the secret
+  # must contain: REDIS_PASSWORD, SECRET_ENCRYPTION_KEY
+  existingSecret: ""
+  # -- Redis password (ignored if existingSecret is set)
+  redisPassword: ""
+  # -- Secret encryption key for encrypting Redis credentials
+  # Generate with: openssl rand -base64 32
+  # REQUIRED - must be set if existingSecret is not used
+  secretEncryptionKey: ""
+# License configuration
+license:
+  # -- Existing secret holding the license. Left empty by default — the operator decides
+  # whether to reference a pre-created secret (set the name here) or use the inline key
+  # below. If set, the secret must contain a key named LICENSE_KEY
+  existingSecret: ""
+  # -- License key value (ignored if existingSecret is set)
+  # For production deployments, you should use existingSecret instead
+  key: ""
+# Environment configuration
+environment: production
+logLevel: info
+# Storage backend (redis or memory)
+storageBackend: redis
+# -- Image pull secrets (for a private/mirror registry, e.g. air-gapped installs)
+imagePullSecrets: []
+# -- Pod annotations
+podAnnotations: {}
+# -- Node selector
+nodeSelector: {}
+# -- Tolerations
+tolerations: []
+# -- Affinity rules
+affinity: {}
+# -- Service account configuration
+serviceAccount:
+  # -- Create a service account
+  create: true
+  # -- Service account name (generated if not set)
+  name: ""
+  # -- Annotations for the service account
+  annotations: {}

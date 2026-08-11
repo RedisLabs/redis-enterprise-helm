@@ -1,0 +1,44 @@
+{{- /*
+Minimal Role + RoleBinding that gives the chart's ServiceAccount just
+enough access to read the server Deployment so the `helm test` pod in
+security-profile.yaml can verify its env vars.
+
+Scoped to `get` on `deployments` in the release namespace only — deliberately
+narrow so clusters that never run `helm test` get no extra RBAC, and even
+opted-in clusters cannot list or modify any other resource type. These
+resources are regular release-managed resources gated by tests.enabled instead
+of test hooks so `helm test --logs` only collects logs from test Pods. Disable
+tests.enabled on a later upgrade, or uninstall the release, to remove them.
+*/ -}}
+{{- if .Values.tests.enabled -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: "{{ include "redis-agent-memory.fullname" . }}-test-reader"
+  labels:
+    {{- include "redis-agent-memory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get"]
+    resourceNames:
+      - "{{ include "redis-agent-memory.fullname" . }}"
+      - "{{ include "redis-agent-memory.fullname" . }}-worker"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: "{{ include "redis-agent-memory.fullname" . }}-test-reader"
+  labels:
+    {{- include "redis-agent-memory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: "{{ include "redis-agent-memory.fullname" . }}-test-reader"
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "redis-agent-memory.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: redis-agent-memory
+description: Helm chart to deploy Redis Agent Memory for on-premises deployment.
+type: application
+version: 0.5.3
+appVersion: "0.5.3"

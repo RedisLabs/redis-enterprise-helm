@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "redis-agent-memory values",
+  "description": "Schema for the redis-agent-memory Helm chart values. Enforced by `helm install`/`helm upgrade` via Helm's built-in JSON Schema validation (see https://helm.sh/docs/topics/charts/#schema-files). Anything not defined here is accepted — the schema's job is to catch typos and invalid values on the keys we care most about, not to document every field.",
+  "type": "object",
+  "properties": {
+    "image": {
+      "type": "object",
+      "properties": {
+        "tag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repository": {
+          "type": "string"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"]
+        }
+      },
+      "required": ["tag"]
+    },
+    "security": {
+      "type": "object",
+      "description": "Application-level security posture selector. See chart README section \"FIPS-oriented posture\" for the list of guardrails each profile activates.",
+      "properties": {
+        "profile": {
+          "type": "string",
+          "description": "Allowed values: \"\" (default, no app-level FIPS guardrails) or \"fips\" (opt-in FIPS-oriented posture). Any other value is rejected at install/upgrade time so typos can't silently fall back to the default posture.",
+          "enum": ["", "fips"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "tests": {
+      "type": "object",
+      "description": "Gate for the `helm test` hooks shipped with this chart. When enabled, the chart renders test Pods plus a minimal Role + RoleBinding scoped to `get` on the release Deployments. Defaults to false so clusters that never run `helm test` get no extra RBAC.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "When true, render the `helm test` hooks. Defaults to false."
+        },
+        "smoke": {
+          "type": "object",
+          "description": "Optional public API smoke test run by `helm test` when both tests.enabled and tests.smoke.enabled are true.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "When true with tests.enabled=true, render the public RAM API smoke test Pod."
+            },
+            "storeId": {
+              "type": "string",
+              "description": "Store ID configured in the mounted memory-dataplane config and used by the smoke test API paths.",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-zA-Z0-9-]+$"
+            },
+            "image": {
+              "type": "object",
+              "description": "Container image used to run the API smoke script.",
+              "properties": {
+                "repository": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "tag": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "pullPolicy": {
+                  "type": "string",
+                  "enum": ["Always", "IfNotPresent", "Never"]
+                }
+              },
+              "additionalProperties": false
+            },
+            "timeoutSeconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "activeDeadlineSeconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "searchRetries": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "searchRetryIntervalSeconds": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "workerAuth": {
+      "type": "object",
+      "description": "Worker-to-RAM authentication preset. When enabled, the chart creates or uses a worker service account and mounts a projected Kubernetes service-account token for dataplane_client.auth.type=service_account_token. The shared config Secret must still configure auth.worker_identity.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "When true, render worker projected service-account token wiring with the defaults from worker.serviceAccount.token.*."
+        }
+      },
+      "additionalProperties": false
+    },
+    "controlplane": {
+      "type": "object",
+      "description": "On-prem Control Plane (admin store API). Disabled by default. When enabled, controlplane.image.tag, controlplane.config.existingSecret/secretKey, and an admin-token source (existingSecret or autoGenerate) are required — enforced at install/upgrade time by the chart's validate helper.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "When true, render the control-plane Deployment + Service (+ auto-generated admin-token Secret). Defaults to false."
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+          },
+          "additionalProperties": false
+        },
+        "replicaCount": { "type": "integer", "minimum": 0 },
+        "config": {
+          "type": "object",
+          "properties": {
+            "existingSecret": { "type": "string" },
+            "secretKey": { "type": "string" },
+            "existingSecretChecksum": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "adminToken": {
+          "type": "object",
+          "properties": {
+            "existingSecret": { "type": "string" },
+            "secretKey": { "type": "string", "minLength": 1 },
+            "autoGenerate": { "type": "boolean" },
+            "existingSecretChecksum": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string" },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+          },
+          "additionalProperties": false
+        },
+        "resources": { "type": "object" },
+        "podAnnotations": { "type": "object" },
+        "podLabels": { "type": "object" },
+        "nodeSelector": { "type": "object" },
+        "affinity": { "type": "object" },
+        "tolerations": { "type": "array" },
+        "volumes": { "type": "array" },
+        "volumeMounts": { "type": "array" }
+      },
+      "additionalProperties": false
+    }
+  }
+}
