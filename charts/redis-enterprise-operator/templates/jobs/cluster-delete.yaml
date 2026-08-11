@@ -23,7 +23,7 @@ spec:
       restartPolicy: Never
       containers:
       - name: delete-cluster
-        image: {{ include "redis-enterprise-operator.operator.image" . | printf "%s" | trim }}
+        image: {{ include "redis-enterprise-operator.operator.image" . }}
         imagePullPolicy: IfNotPresent
         command:
         - install-helper
