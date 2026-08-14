@@ -9,21 +9,11 @@ metadata:
 rules:
     - apiGroups:
         - rbac.authorization.k8s.io
-      resources:
-        - roles
-        - rolebindings
-      verbs:
-        - create
-        - get
-        - list
-        - watch
-        - update
-        - patch
-        - delete
-    - apiGroups:
         - ""
       resources:
+        - roles
         - serviceaccounts
+        - rolebindings
       verbs:
         - create
         - get
@@ -55,9 +45,9 @@ rules:
         - list
         - watch
     - apiGroups:
-        - discovery.k8s.io
+        - ""
       resources:
-        - endpointslices
+        - endpoints
       verbs:
         - get
         - list
@@ -181,6 +171,7 @@ rules:
         - route.openshift.io
       resources:
         - routes
+        - routes/custom-host
       verbs:
         - create
         - delete
@@ -189,13 +180,6 @@ rules:
         - patch
         - update
         - watch
-    - apiGroups:
-        - route.openshift.io
-      resources:
-        - routes/custom-host
-      verbs:
-        - create
-        - update
     - apiGroups:
         - security.openshift.io
       resourceNames:

@@ -1,4 +1,3 @@
----
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -84,7 +83,7 @@ spec:
         - install-helper
         args:
         - -action=applyCRD
-        - -crdPaths=/crds
+        - -crdPaths=/crds/rec_crd.yaml,/crds/redb_crd.yaml,/crds/reaadb_crd.yaml,/crds/rerc_crd.yaml
         - -operatorVersion={{ .Chart.AppVersion }}
         - -helmChartVersion={{ .Chart.Version }}
       {{- if .Values.admission.limitToNamespace }}
@@ -107,18 +106,6 @@ spec:
       {{- end }}
       serviceAccountName: redis-enterprise-installer
       restartPolicy: OnFailure
-      {{- with .Values.operator.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.operator.tolerations }}
-      tolerations:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.operator.affinity }}
-      affinity:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
       imagePullSecrets:
       {{- range .Values.imagePullSecrets }}
       - name: {{ . }}
