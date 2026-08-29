@@ -39,9 +39,18 @@ operator:
 admission:
 
   # Whether to create a new CA key and certificate for the admission webhook as part of the chart installation.
-  # When disabled, the CA key and certificate will be created by the operator upon startup and stored in a secret named admission-tls,
-  # which needs to be manually copied to the ValidatingWebhookConfiguration object.
+  # When disabled, the CA key and certificate will be created by the operator upon startup and stored in a secret named admission-tls.
+  # GitOps renderers that run `helm template` without cluster access cannot `lookup` that secret, so
+  # setCABundle=true regenerates a new cert on every sync. Prefer setCABundle=false in that case.
   setCABundle: true
+
+  # When setCABundle is false, copy admission-tls into the ValidatingWebhookConfiguration caBundle
+  # via a post-install/post-upgrade Job. The operator does not patch the webhook itself.
+  # Disable only if you will copy the cert some other way. No-op when setCABundle is true.
+  reconcileCABundle: true
+
+  # Image for the caBundle reconciler Job. Must provide /bin/sh and kubectl.
+  reconcileImage: bitnami/kubectl:1.32.4
 
   # Whether to deploy the admission webhook limited to objects in the installation namespace.
   limitToNamespace: true

@@ -69,5 +69,13 @@ To learn more about the release, try:
   $ helm status {{ .Release.Name }} -n {{ .Release.Namespace }}
   $ helm get all {{ .Release.Name }} -n {{ .Release.Namespace }}
 
+{{- if and (not .Values.admission.setCABundle) .Values.admission.reconcileCABundle }}
+
+A post-install Job copies Secret admission-tls into the admission webhook caBundle.
+If REDB create/update fails with x509 unknown authority, check:
+
+  kubectl logs -n {{ .Release.Namespace }} job/redis-enterprise-admission-cabundle
+{{- end }}
+
 For documentation, visit: https://redis.io/docs/latest/operate/kubernetes/
 
