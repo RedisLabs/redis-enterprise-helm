@@ -1,0 +1,13 @@
+name: Release LangCache Chart
+
+on:
+  workflow_dispatch:
+
+jobs:
+  call-release-workflow:
+    uses: ./.github/workflows/release-chart-reusable.yaml
+    with:
+      chart_name: langcache
+      chart_path: ai/charts/langcache
+      tag_prefix: langcache
+    secrets: inherit
