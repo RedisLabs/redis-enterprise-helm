@@ -48,14 +48,10 @@ spec:
                       value: {{ .rigger.registry }}/{{ .rigger.image }}
                     - name: DEFAULT_BOOTSTRAPPER_IMAGE_REPOSITORY
                       value: {{ .operator.registry }}/{{ .operator.image }}
-                    - name: DEFAULT_CALL_HOME_IMAGE_REPOSITORY
-                      value: {{ .callhome.registry }}/{{ .callhome.image }}
                     - name: DEFAULT_RIGGER_IMAGE_DIGEST
                       value: {{ .rigger.digest }}
                     - name: DEFAULT_BOOTSTRAPPER_IMAGE_DIGEST
                       value: {{ .operator.digest }}
-                    - name: DEFAULT_CALL_HOME_IMAGE_DIGEST
-                      value: {{ .callhome.digest }}
                     {{- end }}
                     {{- end }}
                   envFrom:
@@ -67,20 +63,12 @@ spec:
                   livenessProbe:
                     failureThreshold: 3
                     httpGet:
-                        path: /liveness
+                        path: /healthz
                         port: 8080
                         scheme: HTTP
                     periodSeconds: 10
                     successThreshold: 1
                     timeoutSeconds: 5
-                  readinessProbe:
-                    failureThreshold: 3
-                    exec:
-                      command: ["true"]
-                    periodSeconds: 60
-                    successThreshold: 1
-                    timeoutSeconds: 5
-                    initialDelaySeconds: 0
                   name: redis-enterprise-operator
                   ports:
                     - containerPort: 8080
@@ -136,7 +124,7 @@ spec:
                   readinessProbe:
                     failureThreshold: 3
                     httpGet:
-                        path: /readiness
+                        path: /healthz
                         port: 8443
                         scheme: HTTPS
                     periodSeconds: 10
@@ -156,23 +144,13 @@ spec:
                             - ALL
                     privileged: false
                     readOnlyRootFilesystem: true
-            securityContext:
+            securityContext: 
+                {{- if not .Values.openshift.mode}}
               seccompProfile:
                 type: RuntimeDefault
+                {{- end }}
               runAsNonRoot: true
             serviceAccountName: redis-enterprise-operator
-            {{- with .Values.operator.nodeSelector }}
-            nodeSelector:
-              {{- toYaml . | nindent 14 }}
-            {{- end }}
-            {{- with .Values.operator.tolerations }}
-            tolerations:
-              {{- toYaml . | nindent 14 }}
-            {{- end }}
-            {{- with .Values.operator.affinity }}
-            affinity:
-              {{- toYaml . | nindent 14 }}
-            {{- end }}
             imagePullSecrets:
             {{- range .Values.imagePullSecrets }}
               - name: {{ . }}
