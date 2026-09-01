@@ -1,0 +1,123 @@
+{{- define "langcache.controlplaneAnnotations" -}}
+{{- if .Values.controlplane.config.existingSecretChecksum }}
+checksum/config: {{ .Values.controlplane.config.existingSecretChecksum | quote }}
+{{- else if .Values.controlplane.config.render }}
+checksum/config: {{ include "langcache.controlplaneConfig" . | sha256sum | quote }}
+{{- end }}
+{{- if .Values.controlplane.secrets.existingSecretChecksum }}
+checksum/overlay: {{ .Values.controlplane.secrets.existingSecretChecksum | quote }}
+{{- else if include "langcache.controlplaneOverlaySecretNames" . | fromJsonArray }}
+checksum/overlay: {{ include "langcache.controlplaneOverlaySecretNames" . | sha256sum | quote }}
+{{- end }}
+{{- if .Values.controlplane.adminToken.existingSecretChecksum }}
+checksum/admin-token: {{ .Values.controlplane.adminToken.existingSecretChecksum | quote }}
+{{- end }}
+{{- if .Values.controlplane.internalToken.existingSecretChecksum }}
+checksum/internal-token: {{ .Values.controlplane.internalToken.existingSecretChecksum | quote }}
+{{- end }}
+{{- if .Values.dataplane.license.existingSecretChecksum }}
+checksum/license: {{ .Values.dataplane.license.existingSecretChecksum | quote }}
+{{- end }}
+{{- end }}
+
+{{- define "langcache.controlplaneArgs" -}}
+- "--config"
+- "/etc/langcache-controlplane/controlplane-onprem.config.yaml"
+{{- include "langcache.controlplaneOverlayConfigArgs" . }}
+{{- end }}
+
+{{- define "langcache.controlplaneEnv" -}}
+- name: LC_SERVER_PORT
+  value: {{ .Values.controlplane.service.port | quote }}
+{{ include "langcache.commonEnv" . }}
+{{- end }}
+
+{{- define "langcache.controlplaneVolumeMounts" -}}
+- name: config-volume
+  mountPath: /etc/langcache-controlplane
+  readOnly: true
+- name: admin-token-volume
+  mountPath: /etc/langcache-controlplane/admin
+  readOnly: true
+- name: internal-token-volume
+  mountPath: /etc/langcache-controlplane/internal
+  readOnly: true
+- name: license-volume
+  mountPath: {{ .Values.dataplane.license.mountDir }}
+  readOnly: true
+{{ include "langcache.controlplaneOverlayVolumeMounts" . }}
+{{ include "langcache.tlsVolumeMount" . }}
+{{- with .Values.controlplane.volumeMounts }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "langcache.controlplaneVolumes" -}}
+- name: config-volume
+  {{- if .Values.controlplane.config.existingSecret }}
+  secret:
+    secretName: {{ include "langcache.controlplaneConfigName" . }}
+    items:
+      - key: {{ .Values.controlplane.config.secretKey }}
+        path: controlplane-onprem.config.yaml
+  {{- else }}
+  configMap:
+    name: {{ include "langcache.controlplaneConfigName" . }}
+    items:
+      - key: {{ .Values.controlplane.config.secretKey }}
+        path: controlplane-onprem.config.yaml
+  {{- end }}
+- name: admin-token-volume
+  secret:
+    secretName: {{ include "langcache.controlplaneAdminTokenSecretName" . }}
+    items:
+      - key: {{ .Values.controlplane.adminToken.secretKey }}
+        path: token
+- name: internal-token-volume
+  secret:
+    secretName: {{ include "langcache.controlplaneInternalTokenSecretName" . }}
+    items:
+      - key: {{ .Values.controlplane.internalToken.secretKey }}
+        path: token
+- name: license-volume
+  secret:
+    secretName: {{ include "langcache.licenseSecretName" . }}
+    items:
+      - key: {{ .Values.dataplane.license.secretKey }}
+        path: {{ .Values.dataplane.license.fileName }}
+{{ include "langcache.controlplaneOverlayVolumes" . }}
+{{ include "langcache.tlsVolume" . }}
+{{- with .Values.controlplane.volumes }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- include "langcache.validate" . }}
+{{- include "redis-onprem.controlplane.deployment" (dict
+  "root" .
+  "name" (include "langcache.controlplaneFullname" .)
+  "component" "controlplane"
+  "labelsTemplate" "langcache.labels"
+  "selectorLabelsTemplate" "langcache.selectorLabels"
+  "replicas" .Values.controlplane.replicaCount
+  "annotationsTemplate" "langcache.controlplaneAnnotations"
+  "podAnnotations" .Values.controlplane.podAnnotations
+  "podLabels" .Values.controlplane.podLabels
+  "imagePullSecrets" .Values.imagePullSecrets
+  "serviceAccountName" (include "langcache.serviceAccountName" .)
+  "podSecurityContext" .Values.podSecurityContext
+  "containerName" "controlplane"
+  "argsTemplate" "langcache.controlplaneArgs"
+  "containerSecurityContext" .Values.securityContext
+  "image" .Values.controlplane.image
+  "envTemplate" "langcache.controlplaneEnv"
+  "port" .Values.controlplane.service.port
+  "livenessProbe" .Values.controlplane.livenessProbe
+  "readinessProbe" .Values.controlplane.readinessProbe
+  "resources" .Values.controlplane.resources
+  "volumeMountsTemplate" "langcache.controlplaneVolumeMounts"
+  "volumesTemplate" "langcache.controlplaneVolumes"
+  "nodeSelector" .Values.controlplane.nodeSelector
+  "affinity" .Values.controlplane.affinity
+  "tolerations" .Values.controlplane.tolerations
+) }}

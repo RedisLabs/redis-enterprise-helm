@@ -1,0 +1,18 @@
+{{- if and (eq .Values.identityService.mode "bundled") .Values.identityService.bundled.config.render (not .Values.identityService.bundled.config.existingSecret) }}
+{{- /*
+  Chart-rendered bundled Identity Service config ConfigMap. The chart owns
+  every credential token_file path, so there is little left for an operator
+  to author here. Metadata Redis URLs arrive via
+  identityService.bundled.metadata as a Secret overlay.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "langcache.identityServiceConfigName" . }}
+  labels:
+    {{- include "langcache.labels" . | nindent 4 }}
+    app.kubernetes.io/component: identity-service
+data:
+  {{ .Values.identityService.bundled.config.secretKey }}: |
+{{ include "langcache.identityServiceConfig" . | indent 4 }}
+{{- end }}

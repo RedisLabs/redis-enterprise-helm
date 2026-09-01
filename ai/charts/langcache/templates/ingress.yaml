@@ -1,0 +1,12 @@
+{{- include "redis-onprem.dataplane.ingress" (dict
+  "root" .
+  "enabled" .Values.dataplane.ingress.enabled
+  "name" (include "langcache.fullname" .)
+  "labelsTemplate" "langcache.labels"
+  "annotations" .Values.dataplane.ingress.annotations
+  "className" .Values.dataplane.ingress.className
+  "tls" .Values.dataplane.ingress.tls
+  "hosts" .Values.dataplane.ingress.hosts
+  "serviceName" (include "langcache.fullname" .)
+  "servicePort" .Values.dataplane.service.port
+) }}

@@ -1,0 +1,17 @@
+{{- if and .Values.controlplane.config.render (not .Values.controlplane.config.existingSecret) }}
+{{- /*
+  Chart-rendered Control Plane config ConfigMap. Contains STRUCTURE ONLY plus
+  the public embedding provider/model/dimensions facts (never a credential).
+  metadata.urls and databases arrive via the mounted overlay Secret(s).
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "langcache.controlplaneConfigName" . }}
+  labels:
+    {{- include "langcache.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controlplane
+data:
+  {{ .Values.controlplane.config.secretKey }}: |
+{{ include "langcache.controlplaneConfig" . | indent 4 }}
+{{- end }}

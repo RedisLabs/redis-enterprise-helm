@@ -1,0 +1,252 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "langcache values",
+  "description": "Schema for the langcache Helm chart values. Enforced by `helm install`/`helm upgrade` via Helm's built-in JSON Schema validation (see https://helm.sh/docs/topics/charts/#schema-files). Anything not defined here is accepted — the schema's job is to catch typos and invalid values on the keys we care most about, not to document every field.",
+  "type": "object",
+  "properties": {
+    "security": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "type": "string",
+          "enum": ["", "fips"]
+        }
+      }
+    },
+    "identityService": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["bundled", "external"],
+          "description": "Defaults to \"bundled\", which renders this chart's own Identity Service; \"external\" wires the Data Plane to one the suite already runs."
+        },
+        "bundled": {
+          "type": "object",
+          "properties": {
+            "image": {
+              "type": "object",
+              "properties": {
+                "repository": { "type": "string" },
+                "pullPolicy": { "type": "string" },
+                "tag": { "type": "string" }
+              }
+            },
+            "replicaCount": { "type": "integer", "minimum": 1 },
+            "config": {
+              "type": "object",
+              "properties": {
+                "existingSecret": { "type": "string" },
+                "render": { "type": "boolean" },
+                "secretKey": { "type": "string" },
+                "existingSecretChecksum": { "type": "string" }
+              },
+              "additionalProperties": false
+            },
+            "metadata": {
+              "type": "object",
+              "properties": {
+                "existingSecret": { "type": "string" },
+                "secretKey": { "type": "string" },
+                "existingSecretChecksum": { "type": "string" }
+              },
+              "additionalProperties": false
+            },
+            "controlToken": {
+              "type": "object",
+              "properties": {
+                "existingSecret": { "type": "string" },
+                "secretKey": { "type": "string" },
+                "autoGenerate": { "type": "boolean" },
+                "existingSecretChecksum": { "type": "string" }
+              },
+              "additionalProperties": false
+            },
+            "runtime": {
+              "type": "object",
+              "properties": {
+                "cache": {
+                  "type": "object",
+                  "properties": {
+                    "softTtlSeconds": { "type": "integer", "minimum": 0 },
+                    "hardTtlSeconds": { "type": "integer", "minimum": 0 }
+                  }
+                },
+                "dataplaneCredential": {
+                  "type": "object",
+                  "properties": {
+                    "existingSecret": { "type": "string" },
+                    "secretKey": { "type": "string" },
+                    "autoGenerate": { "type": "boolean" },
+                    "existingSecretChecksum": { "type": "string" }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "external": {
+          "type": "object",
+          "properties": {
+            "baseURL": {
+              "type": "string",
+              "description": "Required when identityService.mode=external. Must be https:// unless allowInsecureTransport is set."
+            },
+            "allowInsecureTransport": { "type": "boolean" },
+            "credential": {
+              "type": "object",
+              "properties": {
+                "existingSecret": { "type": "string" },
+                "secretKey": { "type": "string" },
+                "existingSecretChecksum": { "type": "string" }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      },
+      "required": ["mode"]
+    },
+    "dataplane": {
+      "type": "object",
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 0 },
+        "autoscaling": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "minReplicas": { "type": "integer", "minimum": 1 },
+            "maxReplicas": { "type": "integer", "minimum": 1 },
+            "targetCPUUtilizationPercentage": { "type": "integer", "minimum": 1, "maximum": 100 },
+            "targetMemoryUtilizationPercentage": { "type": "integer", "minimum": 1, "maximum": 100 }
+          }
+        },
+        "config": {
+          "type": "object",
+          "properties": {
+            "existingSecret": { "type": "string" },
+            "render": { "type": "boolean" },
+            "secretKey": { "type": "string" },
+            "existingSecretChecksum": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "secrets": {
+          "type": "object",
+          "properties": {
+            "secretName": { "type": "string" },
+            "overlayKey": { "type": "string" },
+            "additionalSecrets": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "existingSecretChecksum": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "embedding": {
+          "type": "object",
+          "properties": {
+            "provider": { "type": "string", "enum": ["openai", "noop"] },
+            "endpoint": {
+              "type": "object",
+              "properties": {
+                "baseURL": { "type": "string" }
+              }
+            },
+            "credentials": {
+              "type": "object",
+              "properties": {
+                "type": { "type": "string", "enum": ["static", "none"] }
+              }
+            },
+            "models": {
+              "type": "object",
+              "properties": {
+                "defaultEmbeddingModel": { "type": "string" },
+                "dimensions": { "type": "integer", "minimum": 1 }
+              }
+            }
+          }
+        },
+        "ingress": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "controlplane": {
+      "type": "object",
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "config": {
+          "type": "object",
+          "properties": {
+            "existingSecret": { "type": "string" },
+            "render": { "type": "boolean" },
+            "secretKey": { "type": "string" },
+            "existingSecretChecksum": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "secrets": {
+          "type": "object",
+          "properties": {
+            "secretName": { "type": "string" },
+            "overlayKey": { "type": "string" },
+            "additionalSecrets": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "existingSecretChecksum": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "adminToken": {
+          "type": "object",
+          "properties": {
+            "existingSecret": { "type": "string" },
+            "secretKey": { "type": "string" },
+            "autoGenerate": { "type": "boolean" },
+            "existingSecretChecksum": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "internalToken": {
+          "type": "object",
+          "properties": {
+            "existingSecret": { "type": "string" },
+            "secretKey": { "type": "string" },
+            "autoGenerate": { "type": "boolean" },
+            "existingSecretChecksum": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "tests": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "smoke": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "cacheID": { "type": "string" },
+            "apiKey": {
+              "type": "object",
+              "properties": {
+                "existingSecret": { "type": "string" },
+                "secretKey": { "type": "string" }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      }
+    }
+  }
+}

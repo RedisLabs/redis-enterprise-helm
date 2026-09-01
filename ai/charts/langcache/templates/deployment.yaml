@@ -1,0 +1,123 @@
+{{- define "langcache.dataplaneAnnotations" -}}
+{{- if .Values.dataplane.config.existingSecretChecksum }}
+checksum/config: {{ .Values.dataplane.config.existingSecretChecksum | quote }}
+{{- else if .Values.dataplane.config.render }}
+checksum/config: {{ include "langcache.dataplaneConfig" . | sha256sum | quote }}
+{{- end }}
+{{- if .Values.dataplane.secrets.existingSecretChecksum }}
+checksum/overlay: {{ .Values.dataplane.secrets.existingSecretChecksum | quote }}
+{{- else if include "langcache.dataplaneOverlaySecretNames" . | fromJsonArray }}
+checksum/overlay: {{ include "langcache.dataplaneOverlaySecretNames" . | sha256sum | quote }}
+{{- end }}
+{{- if .Values.dataplane.license.existingSecretChecksum }}
+checksum/license: {{ .Values.dataplane.license.existingSecretChecksum | quote }}
+{{- end }}
+{{- if eq .Values.identityService.mode "bundled" }}
+{{- if .Values.identityService.bundled.runtime.dataplaneCredential.existingSecretChecksum }}
+checksum/identity-service-credential: {{ .Values.identityService.bundled.runtime.dataplaneCredential.existingSecretChecksum | quote }}
+{{- end }}
+{{- else if .Values.identityService.external.credential.existingSecretChecksum }}
+checksum/identity-service-credential: {{ .Values.identityService.external.credential.existingSecretChecksum | quote }}
+{{- end }}
+{{- end }}
+
+{{- define "langcache.dataplaneArgs" -}}
+- "--config"
+- "/etc/langcache/onprem-dataplane.config.yaml"
+{{- include "langcache.dataplaneOverlayConfigArgs" . }}
+{{- end }}
+
+{{- define "langcache.dataplaneEnv" -}}
+- name: LC_SERVER_PORT
+  value: {{ .Values.dataplane.service.port | quote }}
+{{ include "langcache.commonEnv" . }}
+{{- end }}
+
+{{- define "langcache.dataplaneVolumeMounts" -}}
+- name: config-volume
+  mountPath: /etc/langcache
+  readOnly: true
+- name: license-volume
+  mountPath: {{ .Values.dataplane.license.mountDir }}
+  readOnly: true
+- name: identity-service-credential
+  mountPath: /etc/langcache/identity-service-credential
+  readOnly: true
+{{ include "langcache.dataplaneOverlayVolumeMounts" . }}
+{{ include "langcache.tlsVolumeMount" . }}
+{{- with .Values.dataplane.volumeMounts }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "langcache.dataplaneVolumes" -}}
+- name: config-volume
+  {{- if .Values.dataplane.config.existingSecret }}
+  secret:
+    secretName: {{ include "langcache.dataplaneConfigName" . }}
+    items:
+      - key: {{ .Values.dataplane.config.secretKey }}
+        path: onprem-dataplane.config.yaml
+  {{- else }}
+  configMap:
+    name: {{ include "langcache.dataplaneConfigName" . }}
+    items:
+      - key: {{ .Values.dataplane.config.secretKey }}
+        path: onprem-dataplane.config.yaml
+  {{- end }}
+- name: license-volume
+  secret:
+    secretName: {{ include "langcache.licenseSecretName" . }}
+    items:
+      - key: {{ .Values.dataplane.license.secretKey }}
+        path: {{ .Values.dataplane.license.fileName }}
+- name: identity-service-credential
+  secret:
+    {{- if eq .Values.identityService.mode "bundled" }}
+    secretName: {{ include "langcache.identityServiceDataplaneCredentialSecretName" . }}
+    items:
+      - key: {{ .Values.identityService.bundled.runtime.dataplaneCredential.secretKey }}
+        path: token
+    {{- else }}
+    secretName: {{ .Values.identityService.external.credential.existingSecret }}
+    items:
+      - key: {{ .Values.identityService.external.credential.secretKey }}
+        path: token
+    {{- end }}
+{{ include "langcache.dataplaneOverlayVolumes" . }}
+{{ include "langcache.tlsVolume" . }}
+{{- with .Values.dataplane.volumes }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- include "langcache.validate" . }}
+{{- include "redis-onprem.dataplane.deployment" (dict
+  "root" .
+  "name" (include "langcache.fullname" .)
+  "component" "dataplane"
+  "labelsTemplate" "langcache.labels"
+  "selectorLabelsTemplate" "langcache.selectorLabels"
+  "replicas" .Values.dataplane.replicaCount
+  "autoscalingEnabled" .Values.dataplane.autoscaling.enabled
+  "annotationsTemplate" "langcache.dataplaneAnnotations"
+  "podAnnotations" .Values.podAnnotations
+  "podLabels" .Values.podLabels
+  "imagePullSecrets" .Values.imagePullSecrets
+  "serviceAccountName" (include "langcache.serviceAccountName" .)
+  "podSecurityContext" .Values.podSecurityContext
+  "containerName" (include "langcache.name" .)
+  "argsTemplate" "langcache.dataplaneArgs"
+  "containerSecurityContext" .Values.securityContext
+  "image" .Values.dataplane.image
+  "envTemplate" "langcache.dataplaneEnv"
+  "port" .Values.dataplane.service.port
+  "livenessProbe" .Values.dataplane.livenessProbe
+  "readinessProbe" .Values.dataplane.readinessProbe
+  "resources" .Values.dataplane.resources
+  "volumeMountsTemplate" "langcache.dataplaneVolumeMounts"
+  "volumesTemplate" "langcache.dataplaneVolumes"
+  "nodeSelector" .Values.dataplane.nodeSelector
+  "affinity" .Values.dataplane.affinity
+  "tolerations" .Values.dataplane.tolerations
+) }}

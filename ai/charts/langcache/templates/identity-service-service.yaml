@@ -1,0 +1,11 @@
+{{- if eq .Values.identityService.mode "bundled" }}
+{{- include "redis-onprem.identityService.service" (dict
+  "root" .
+  "name" (include "langcache.identityServiceFullname" .)
+  "component" "identity-service"
+  "labelsTemplate" "langcache.labels"
+  "selectorLabelsTemplate" "langcache.selectorLabels"
+  "type" .Values.identityService.bundled.service.type
+  "port" .Values.identityService.bundled.service.port
+) }}
+{{- end }}

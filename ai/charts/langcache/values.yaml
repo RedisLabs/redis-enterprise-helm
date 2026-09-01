@@ -1,0 +1,389 @@
+# Default values for the langcache chart.
+#
+# This chart always installs the LangCache Control Plane and Data Plane. The
+# Identity Service is either "bundled" (rendered by this chart, the default
+# for a standalone LangCache install) or "external" (owned by the suite —
+# this chart wires the Data Plane to it but renders no workload of its own).
+# See identityService.mode below.
+
+imagePullSecrets: []
+# Keep the chart-owned resource names stable so the CP/DP/IdS can always
+# reach each other's in-cluster Service by a fixed DNS name, and so the
+# on-prem config examples in the README stay accurate across installs.
+# This assumes a single release per namespace.
+fullnameOverride: 'langcache'
+
+# security.profile selects the application-level security posture for every
+# LangCache container (Data Plane, Control Plane, and — in bundled mode — the
+# Identity Service). See the chart README section "FIPS-oriented posture" for
+# the full list of guarantees, caveats, and required config changes.
+#
+# Allowed values:
+#   ""     (default) - existing posture, no app-level guardrails applied.
+#                      The chart sets GODEBUG=fips140=off.
+#   "fips"           - opt-in FIPS-oriented posture. The chart sets
+#                      GODEBUG=fips140=on so the Go runtime activates its
+#                      FIPS module, and refuses to render a plaintext
+#                      Identity Service introspection endpoint. This is NOT a
+#                      formal FIPS compliance claim; see the README.
+security:
+  profile: ""
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext: {}
+securityContext: {}
+
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+# TLS CA bundle trusted by every outbound HTTPS client (embedding endpoint,
+# Identity Service introspection) across all three workloads.
+tls:
+  caCertSecret: ""
+  caCertKey: "ca.crt"
+
+# ---------------------------------------------------------------------------
+# Data Plane
+# ---------------------------------------------------------------------------
+dataplane:
+  image:
+    repository: 'redislabs/iris-langcache-data'
+    pullPolicy: IfNotPresent
+    # Must be set explicitly at install or upgrade time.
+    tag: "0.0.1-test"
+
+  replicaCount: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+
+  service:
+    type: ClusterIP
+    port: 9000
+
+  ingress:
+    enabled: false
+    className: nginx
+    hosts:
+      - host: langcache.example.com
+        paths:
+          - path: /
+            pathType: ImplementationSpecific
+    annotations: {}
+    tls: []
+
+  # Data-plane config source. Bring your own Secret (existingSecret) or let
+  # the chart render a ConfigMap (render=true) from .Values.dataplane.configData.
+  # Either way, the Redis URLs and embedding credential arrive separately via
+  # the secrets.* overlay below — never through this value or the rendered
+  # ConfigMap.
+  config:
+    existingSecret: ""
+    render: true
+    secretKey: "onprem-dataplane.config.yaml"
+    existingSecretChecksum: ""
+
+  # Rendered data-plane config body (snake_case), used when config.render=true.
+  # Structure and public facts only — metadata.urls, databases, and any
+  # embedding credential arrive via the secrets.* overlay.
+  configData:
+    profile: prod
+    client_side_cache:
+      enabled: true
+      default_ttl: 1m
+      max_items: 30000
+    client_pool:
+      enable: true
+      max_size: 10000
+      client_acquisition_timeout_ms: 2000
+
+  # Pre-created Secret(s) holding a YAML overlay merged over configData at
+  # runtime (later overlay wins). Provide metadata.urls (metadata Redis),
+  # databases (the cache database registry), and, when
+  # embedding.credentials.type=static, embedding.credentials.api_key. Keep
+  # credentials out of configData and out of the rendered ConfigMap.
+  secrets:
+    secretName: ""
+    overlayKey: "overlay.yaml"
+    additionalSecrets: []
+    existingSecretChecksum: ""
+
+  # Public embedding facts. The endpoint and provider/model/dimensions are
+  # not secret; the credential value (when credentials.type=static) is
+  # supplied via the secrets.* overlay above as embedding.credentials.api_key.
+  embedding:
+    provider: openai
+    endpoint:
+      baseURL: ""
+    credentials:
+      type: static
+    models:
+      defaultEmbeddingModel: ""
+      dimensions: 0
+
+  license:
+    existingSecret: ""
+    secretKey: "license"
+    mountDir: /etc/langcache/license
+    fileName: license.key
+    existingSecretChecksum: ""
+
+  livenessProbe:
+    httpGet:
+      path: /health/liveness
+      port: http
+  readinessProbe:
+    httpGet:
+      path: /health/readiness
+      port: http
+
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  volumes: []
+  volumeMounts: []
+
+# ---------------------------------------------------------------------------
+# Control Plane
+# ---------------------------------------------------------------------------
+controlplane:
+  image:
+    repository: 'redislabs/iris-langcache-control'
+    pullPolicy: IfNotPresent
+    tag: "0.0.1-test"
+
+  # No autoscaling and no HPA for the Control Plane.
+  replicaCount: 1
+
+  service:
+    type: ClusterIP
+    port: 9100
+
+  config:
+    existingSecret: ""
+    render: true
+    secretKey: "controlplane-onprem.config.yaml"
+    existingSecretChecksum: ""
+
+  # Rendered control-plane config body. embedders carries the same public
+  # provider/model/dimensions facts as dataplane.embedding — the Control
+  # Plane never receives an embedding credential.
+  configData:
+    profile: prod
+
+  # Pre-created Secret(s) holding a YAML overlay merged over configData at
+  # runtime. Provide metadata.urls (the same metadata Redis as the Data
+  # Plane) and databases (the same cache database registry).
+  secrets:
+    secretName: ""
+    overlayKey: "overlay.yaml"
+    additionalSecrets: []
+    existingSecretChecksum: ""
+
+  # Admin API token for the LangCache Control Plane's external/operator API.
+  # Precedence: existingSecret (BYO) wins; else autoGenerate lookup-or-
+  # generates a Helm-managed Secret on first install (stable across upgrades).
+  adminToken:
+    existingSecret: ""
+    secretKey: "token"
+    autoGenerate: true
+    existingSecretChecksum: ""
+
+  # Internal grant-validation token. Consumed by /internal/v1/grants/validate
+  # and, in bundled Identity Service mode, by identityService's
+  # productValidation.langcache credential by default. Must be distinct from
+  # adminToken.
+  internalToken:
+    existingSecret: ""
+    secretKey: "token"
+    autoGenerate: true
+    existingSecretChecksum: ""
+
+  livenessProbe:
+    httpGet:
+      path: /health/liveness
+      port: http
+  readinessProbe:
+    httpGet:
+      path: /health/readiness
+      port: http
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  volumes: []
+  volumeMounts: []
+
+# ---------------------------------------------------------------------------
+# Identity Service (IdS) — suite-level agent-key authority. The Data Plane
+# always authenticates by introspecting against an Identity Service; this
+# chart either runs one itself (bundled) or points at one the suite already
+# runs (external). Exactly one mode is configured — there is no default.
+# ---------------------------------------------------------------------------
+identityService:
+  # "bundled" - this chart renders its own Identity Service Deployment and
+  #             Service, and wires the Data Plane and Control Plane to it.
+  # "external" - this chart renders no Identity Service workload. You must
+  #             set identityService.external.baseURL and
+  #             identityService.external.credential, and the suite-level
+  #             Identity Service owner must configure that Identity Service's
+  #             own product validation for "langcache" against this
+  #             release's Control Plane internal Service and internalToken.
+  #             See the README "External Identity Service" section.
+  mode: bundled
+
+  bundled:
+    image:
+      repository: 'redislabs/iris-identity-service'
+      pullPolicy: IfNotPresent
+      # Must be set explicitly when identityService.mode=bundled.
+      tag: "0.0.1-test"
+
+    replicaCount: 1
+
+    service:
+      type: ClusterIP
+      port: 9200
+
+    # Configuration source. The chart renders the non-secret structure into a
+    # ConfigMap by default; it owns every credential token_file path in that
+    # config. Set existingSecret instead to bring your own full config
+    # Secret; the two are mutually exclusive.
+    config:
+      existingSecret: ""
+      render: true
+      secretKey: "identity-service.config.yaml"
+      existingSecretChecksum: ""
+
+    configData: {}
+
+    # Pre-created Secret holding an overlay YAML document with the bundled
+    # Identity Service's own metadata Redis connection details, e.g.:
+    #   metadata:
+    #     urls: [redis://user:pass@redis-meta:6379]
+    # Required when config.render=true.
+    metadata:
+      existingSecret: ""
+      secretKey: "metadata.yaml"
+      existingSecretChecksum: ""
+
+    # Identity Service Control static admin credential. Unlocks IdS Control
+    # only; intentionally separate from the Control Plane admin credential.
+    controlToken:
+      existingSecret: ""
+      secretKey: "token"
+      autoGenerate: true
+      existingSecretChecksum: ""
+
+    runtime:
+      cache:
+        softTtlSeconds: 180
+        hardTtlSeconds: 300
+      # The Data Plane's own runtime credential for API-key introspection.
+      # Fixed to allowed_operations=[api-key-introspect] and
+      # allowed_products=[langcache] — this chart only ever mints the one
+      # credential its own Data Plane needs.
+      dataplaneCredential:
+        existingSecret: ""
+        secretKey: "token"
+        autoGenerate: true
+        existingSecretChecksum: ""
+
+    livenessProbe:
+      httpGet:
+        path: /v1/health/live
+        port: http
+    readinessProbe:
+      httpGet:
+        path: /v1/health/ready
+        port: http
+
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+    podAnnotations: {}
+    podLabels: {}
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+    volumes: []
+    volumeMounts: []
+
+  # Required when mode=external.
+  external:
+    baseURL: ""
+    allowInsecureTransport: false
+    # The Data Plane's pre-existing runtime credential for API-key
+    # introspection against the external Identity Service, minted out of
+    # band by the suite-level Identity Service owner.
+    credential:
+      existingSecret: ""
+      secretKey: "token"
+      existingSecretChecksum: ""
+
+# ---------------------------------------------------------------------------
+# Helm tests
+# ---------------------------------------------------------------------------
+tests:
+  # Renders the shared security-profile GODEBUG check and its minimal
+  # Deployment-read RBAC. Independent of tests.smoke.enabled.
+  enabled: false
+
+  smoke:
+    # Independently gates the LangCache public API smoke test. Requires a
+    # cache and API key to already exist (seeded by CI, not by this chart —
+    # see the README "Testing" section): a READY cache created through the
+    # Control Plane, and an Iris API key minted through the Identity Service
+    # with a concrete langcache/lc-cache grant, whose plaintext token is
+    # stored in apiKey.existingSecret.
+    enabled: false
+    cacheID: ""
+    apiKey:
+      existingSecret: ""
+      secretKey: "token"
+    image:
+      repository: python
+      tag: "3.13-alpine"
+    timeoutSeconds: 60
+    activeDeadlineSeconds: 120
+    searchRetries: 5
+    searchRetryIntervalSeconds: 2
+
+# ---------------------------------------------------------------------------
+# Support tooling
+# ---------------------------------------------------------------------------
+supportPackage:
+  enabled: true
+  healthCheckImage: "replicated/troubleshoot:0.131.0"
+
+preflight:
+  enabled: true

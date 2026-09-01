@@ -1,0 +1,37 @@
+{{- /*
+  Asserts the effective GODEBUG on every container this chart actually
+  renders (Data Plane, Control Plane, and — in bundled mode — the Identity
+  Service) matches security.profile. Unlike RAM, which only checks its
+  single data-plane Deployment, LangCache checks every workload it owns.
+*/}}
+{{- include "redis-onprem.securityProfileTest" (dict
+  "root" .
+  "enabled" .Values.tests.enabled
+  "name" (include "langcache.fullname" .)
+  "labelsTemplate" "langcache.labels"
+  "serviceAccountName" (include "langcache.serviceAccountName" .)
+  "deploymentName" (include "langcache.fullname" .)
+  "securityProfile" (default "" .Values.security.profile)
+) }}
+---
+{{- include "redis-onprem.securityProfileTest" (dict
+  "root" .
+  "enabled" .Values.tests.enabled
+  "name" (include "langcache.controlplaneFullname" .)
+  "labelsTemplate" "langcache.labels"
+  "serviceAccountName" (include "langcache.serviceAccountName" .)
+  "deploymentName" (include "langcache.controlplaneFullname" .)
+  "securityProfile" (default "" .Values.security.profile)
+) }}
+{{- if eq .Values.identityService.mode "bundled" }}
+---
+{{- include "redis-onprem.securityProfileTest" (dict
+  "root" .
+  "enabled" .Values.tests.enabled
+  "name" (include "langcache.identityServiceFullname" .)
+  "labelsTemplate" "langcache.labels"
+  "serviceAccountName" (include "langcache.serviceAccountName" .)
+  "deploymentName" (include "langcache.identityServiceFullname" .)
+  "securityProfile" (default "" .Values.security.profile)
+) }}
+{{- end }}

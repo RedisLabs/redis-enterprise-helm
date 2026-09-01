@@ -1,0 +1,9 @@
+{{- include "redis-onprem.dataplane.service" (dict
+  "root" .
+  "name" (include "langcache.fullname" .)
+  "component" "dataplane"
+  "labelsTemplate" "langcache.labels"
+  "selectorLabelsTemplate" "langcache.selectorLabels"
+  "type" .Values.dataplane.service.type
+  "port" .Values.dataplane.service.port
+) }}
