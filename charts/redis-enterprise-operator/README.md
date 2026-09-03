@@ -187,6 +187,16 @@ If you created the REC manually (not through the chart), see [Delete custom reso
 
 > **Note:** Custom Resource Definitions (CRDs) installed by the chart are not removed during chart uninstallation. To remove them manually after uninstalling the chart, run `kubectl delete crds -l app=redis-enterprise`.
 
+## Admission webhook certificates
+
+`admission.setCABundle` defaults to `true`: Helm generates a serving cert and writes it into both Secret `admission-tls` and the `ValidatingWebhookConfiguration` `caBundle`.
+
+Set `admission.setCABundle=false` when a GitOps renderer runs `helm template` without cluster access. In that mode Helm's `lookup` of `admission-tls` is empty, so `setCABundle=true` mints a new cert on every sync and the webhook starts failing REDB create/update with `x509: certificate signed by unknown authority`.
+
+With `setCABundle=false` the operator owns `admission-tls`. The chart still renders an empty `caBundle`. A `post-install`/`post-upgrade` Job (`admission.reconcileCABundle`, default `true`) copies the operator cert into the webhook. The image (`admission.reconcileImage`) must provide `/bin/sh` and `kubectl`.
+
+GitOps tools that re-apply the empty `caBundle` after the Job runs should ignore live drift on `webhooks[].clientConfig.caBundle`. The Job re-patches on the next upgrade or sync hook.
+
 ## Known limitations
 
 - The chart can optionally create a Redis Enterprise Cluster (see `cluster.create` option), but this feature is disabled by default and primarily intended for new deployments.
