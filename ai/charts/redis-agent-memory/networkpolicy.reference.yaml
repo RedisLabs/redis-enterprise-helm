@@ -73,7 +73,7 @@ spec:
         - protocol: TCP
           port: 9000
 ---
-# Control-plane ingress (only rendered/needed when controlplane.enabled=true).
+# Bundled control-plane ingress.
 # The admin store API listens on 9100. Restrict it to approved admin clients
 # only — it provisions and deletes stores. The control plane itself reaches OUT
 # to the metadata Redis and the shared store database; egress is not restricted

@@ -1,20 +1,26 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
   "title": "redis-agent-memory values",
-  "description": "Schema for the redis-agent-memory Helm chart values. Enforced by `helm install`/`helm upgrade` via Helm's built-in JSON Schema validation (see https://helm.sh/docs/topics/charts/#schema-files). Anything not defined here is accepted — the schema's job is to catch typos and invalid values on the keys we care most about, not to document every field.",
+  "description": "Schema for the redis-agent-memory Helm chart values. Enforced by `helm install`/`helm upgrade` via Helm's built-in JSON Schema validation (see https://helm.sh/docs/topics/charts/#schema-files). Anything not defined here is accepted \u2014 the schema's job is to catch typos and invalid values on the keys we care most about, not to document every field.",
   "type": "object",
   "properties": {
     "config": {
       "type": "object",
       "description": "Data-plane config source. Bring your own Secret (existingSecret) or let the chart render a ConfigMap (render=true) from .Values.shared + .Values.memory.",
       "properties": {
-        "existingSecret": { "type": "string" },
+        "existingSecret": {
+          "type": "string"
+        },
         "render": {
           "type": "boolean",
           "description": "When true (and no existingSecret), the chart renders the data-plane config into a ConfigMap from .Values.shared + .Values.memory."
         },
-        "secretKey": { "type": "string" },
-        "existingSecretChecksum": { "type": "string" }
+        "secretKey": {
+          "type": "string"
+        },
+        "existingSecretChecksum": {
+          "type": "string"
+        }
       },
       "additionalProperties": false
     },
@@ -33,7 +39,9 @@
         "additionalSecrets": {
           "type": "array",
           "description": "Optional: names of extra Secrets layered on top of secretName, merged in order (later wins). Leave empty if one Secret is enough.",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       },
       "additionalProperties": false
@@ -44,7 +52,7 @@
     },
     "memory": {
       "type": "object",
-      "description": "Rendered data-plane config file body (snake_case), used when config.render=true. Structure only; Redis URLs and API keys arrive via the mounted secret overlays. metadata.stores is a map keyed by store id. Freeform — matches the on-prem data-plane config file schema."
+      "description": "Rendered data-plane config file body (snake_case), used when config.render=true. Structure only; Redis URLs and API keys arrive via the mounted secret overlays. Freeform \u2014 matches the on-prem data-plane config file schema."
     },
     "image": {
       "type": "object",
@@ -58,19 +66,28 @@
         },
         "pullPolicy": {
           "type": "string",
-          "enum": ["Always", "IfNotPresent", "Never"]
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
         }
       },
-      "required": ["tag"]
+      "required": [
+        "tag"
+      ]
     },
     "security": {
       "type": "object",
-      "description": "Application-level security posture selector. See chart README section \"FIPS-oriented posture\" for the list of guardrails each profile activates.",
+      "description": "Runtime security posture selector. The chart maps this value to GODEBUG=fips140=on|off, and each binary derives its injected profile from the effective Go runtime state.",
       "properties": {
         "profile": {
           "type": "string",
           "description": "Allowed values: \"\" (default, no app-level FIPS guardrails) or \"fips\" (opt-in FIPS-oriented posture). Any other value is rejected at install/upgrade time so typos can't silently fall back to the default posture.",
-          "enum": ["", "fips"]
+          "enum": [
+            "",
+            "fips"
+          ]
         }
       },
       "additionalProperties": false
@@ -112,7 +129,11 @@
                 },
                 "pullPolicy": {
                   "type": "string",
-                  "enum": ["Always", "IfNotPresent", "Never"]
+                  "enum": [
+                    "Always",
+                    "IfNotPresent",
+                    "Never"
+                  ]
                 }
               },
               "additionalProperties": false
@@ -170,8 +191,14 @@
           "type": "object",
           "description": "Limits for RAM server, worker, and optional control-plane pod log collection.",
           "properties": {
-            "maxLines": { "type": "integer", "minimum": 1 },
-            "maxBytes": { "type": "integer", "minimum": 1 }
+            "maxLines": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maxBytes": {
+              "type": "integer",
+              "minimum": 1
+            }
           },
           "additionalProperties": false
         },
@@ -179,9 +206,17 @@
           "type": "object",
           "description": "In-cluster Troubleshoot HTTP health probes against RAM Services.",
           "properties": {
-            "enabled": { "type": "boolean" },
-            "timeout": { "type": "string", "minLength": 1 },
-            "queueMonitorPath": { "type": "string", "minLength": 1 }
+            "enabled": {
+              "type": "boolean"
+            },
+            "timeout": {
+              "type": "string",
+              "minLength": 1
+            },
+            "queueMonitorPath": {
+              "type": "string",
+              "minLength": 1
+            }
           },
           "additionalProperties": false
         },
@@ -189,21 +224,46 @@
           "type": "object",
           "description": "Troubleshoot image used by supportPackage.healthChecks runPod collectors.",
           "properties": {
-            "repository": { "type": "string", "minLength": 1 },
-            "tag": { "type": "string", "minLength": 1 },
-            "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tag": {
+              "type": "string",
+              "minLength": 1
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
+            }
           },
           "additionalProperties": false
         },
-        "healthCheckImagePullSecretName": { "type": "string" },
-        "healthCheckPodTimeout": { "type": "string", "minLength": 1 },
+        "healthCheckImagePullSecretName": {
+          "type": "string"
+        },
+        "healthCheckPodTimeout": {
+          "type": "string",
+          "minLength": 1
+        },
         "registryImages": {
           "type": "object",
           "description": "Native Troubleshoot registryImages collector/analyzer for chart-rendered images.",
           "properties": {
-            "enabled": { "type": "boolean" },
-            "imagePullSecretName": { "type": "string" },
-            "imagePullSecretType": { "type": "string", "minLength": 1 }
+            "enabled": {
+              "type": "boolean"
+            },
+            "imagePullSecretName": {
+              "type": "string"
+            },
+            "imagePullSecretType": {
+              "type": "string",
+              "minLength": 1
+            }
           },
           "additionalProperties": false
         },
@@ -240,65 +300,131 @@
     },
     "controlplane": {
       "type": "object",
-      "description": "On-prem Control Plane (admin store API). Disabled by default. When enabled, controlplane.image.tag, controlplane.config.existingSecret/secretKey, and an admin-token source (existingSecret or autoGenerate) are required — enforced at install/upgrade time by the chart's validate helper.",
+      "description": "Bundled on-prem Control Plane (admin store API). Its image, config, admin-token source, and internal-token source are required.",
       "properties": {
-        "enabled": {
-          "type": "boolean",
-          "description": "When true, render the control-plane Deployment + Service (+ auto-generated admin-token Secret). Defaults to false."
-        },
         "image": {
           "type": "object",
           "properties": {
-            "repository": { "type": "string" },
-            "tag": { "type": "string" },
-            "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+            "repository": {
+              "type": "string"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
+            }
           },
           "additionalProperties": false
         },
-        "replicaCount": { "type": "integer", "minimum": 0 },
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 1
+        },
         "config": {
           "type": "object",
           "properties": {
-            "existingSecret": { "type": "string" },
+            "existingSecret": {
+              "type": "string"
+            },
             "render": {
               "type": "boolean",
               "description": "When true (and no existingSecret), the chart renders the control-plane config into a ConfigMap from .Values.shared + .Values.controlplane.configData."
             },
-            "secretKey": { "type": "string" },
-            "existingSecretChecksum": { "type": "string" }
+            "secretKey": {
+              "type": "string"
+            },
+            "existingSecretChecksum": {
+              "type": "string"
+            }
           },
           "additionalProperties": false
         },
         "configData": {
           "type": "object",
-          "description": "Rendered control-plane config file body (snake_case), used when controlplane.config.render=true. Structure only; Redis URLs and API keys arrive via the mounted secret overlays. Freeform — matches the on-prem CP config file schema."
+          "description": "Rendered control-plane config file body (snake_case), used when controlplane.config.render=true. Structure only; Redis URLs and API keys arrive via the mounted secret overlays. Freeform \u2014 matches the on-prem CP config file schema."
         },
         "adminToken": {
           "type": "object",
           "properties": {
-            "existingSecret": { "type": "string" },
-            "secretKey": { "type": "string", "minLength": 1 },
-            "autoGenerate": { "type": "boolean" },
-            "existingSecretChecksum": { "type": "string" }
+            "existingSecret": {
+              "type": "string"
+            },
+            "secretKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "autoGenerate": {
+              "type": "boolean"
+            },
+            "existingSecretChecksum": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "internalToken": {
+          "type": "object",
+          "properties": {
+            "existingSecret": {
+              "type": "string"
+            },
+            "secretKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "autoGenerate": {
+              "type": "boolean"
+            },
+            "existingSecretChecksum": {
+              "type": "string"
+            }
           },
           "additionalProperties": false
         },
         "service": {
           "type": "object",
           "properties": {
-            "type": { "type": "string" },
-            "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+            "type": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
           },
           "additionalProperties": false
         },
-        "resources": { "type": "object" },
-        "podAnnotations": { "type": "object" },
-        "podLabels": { "type": "object" },
-        "nodeSelector": { "type": "object" },
-        "affinity": { "type": "object" },
-        "tolerations": { "type": "array" },
-        "volumes": { "type": "array" },
-        "volumeMounts": { "type": "array" },
+        "resources": {
+          "type": "object"
+        },
+        "podAnnotations": {
+          "type": "object"
+        },
+        "podLabels": {
+          "type": "object"
+        },
+        "nodeSelector": {
+          "type": "object"
+        },
+        "affinity": {
+          "type": "object"
+        },
+        "tolerations": {
+          "type": "array"
+        },
+        "volumes": {
+          "type": "array"
+        },
+        "volumeMounts": {
+          "type": "array"
+        },
         "queueMonitor": {
           "type": "object",
           "description": "Optional Asynqmon UI for the on-prem regional Redis job queue backend. Disabled by default. When enabled, Redis credentials and Basic Auth htpasswd data must come from existing Secrets.",
@@ -314,18 +440,40 @@
             "image": {
               "type": "object",
               "properties": {
-                "repository": { "type": "string", "minLength": 1 },
-                "tag": { "type": "string", "minLength": 1 },
-                "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+                "repository": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "tag": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "pullPolicy": {
+                  "type": "string",
+                  "enum": [
+                    "Always",
+                    "IfNotPresent",
+                    "Never"
+                  ]
+                }
               },
               "additionalProperties": false
             },
-            "replicaCount": { "type": "integer", "minimum": 0 },
+            "replicaCount": {
+              "type": "integer",
+              "minimum": 0
+            },
             "service": {
               "type": "object",
               "properties": {
-                "type": { "type": "string" },
-                "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+                "type": {
+                  "type": "string"
+                },
+                "port": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535
+                }
               },
               "additionalProperties": false
             },
@@ -333,10 +481,19 @@
               "type": "object",
               "description": "Existing Secret wiring for the same Redis queue backend configured in background_jobs.redis.",
               "properties": {
-                "existingSecret": { "type": "string" },
-                "urlKey": { "type": "string", "minLength": 1 },
-                "tlsServerNameKey": { "type": "string" },
-                "insecureTLSKey": { "type": "string" }
+                "existingSecret": {
+                  "type": "string"
+                },
+                "urlKey": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "tlsServerNameKey": {
+                  "type": "string"
+                },
+                "insecureTLSKey": {
+                  "type": "string"
+                }
               },
               "additionalProperties": false
             },
@@ -344,40 +501,375 @@
               "type": "object",
               "description": "Ingress Basic Auth settings. existingSecret must be an htpasswd-formatted Kubernetes Secret.",
               "properties": {
-                "type": { "type": "string", "enum": ["basic"] },
-                "existingSecret": { "type": "string" },
-                "secretKey": { "type": "string", "enum": ["auth"] }
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "basic"
+                  ]
+                },
+                "existingSecret": {
+                  "type": "string"
+                },
+                "secretKey": {
+                  "type": "string",
+                  "enum": [
+                    "auth"
+                  ]
+                }
               },
               "additionalProperties": false
             },
             "ingress": {
               "type": "object",
               "properties": {
-                "enabled": { "type": "boolean" },
-                "className": { "type": "string" },
-                "host": { "type": "string" },
-                "path": { "type": "string" },
-                "pathType": { "type": "string", "enum": ["Exact", "Prefix", "ImplementationSpecific"] },
-                "annotations": { "type": "object" },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "className": {
+                  "type": "string"
+                },
+                "host": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "pathType": {
+                  "type": "string",
+                  "enum": [
+                    "Exact",
+                    "Prefix",
+                    "ImplementationSpecific"
+                  ]
+                },
+                "annotations": {
+                  "type": "object"
+                },
                 "tls": {
                   "type": "object",
                   "properties": {
-                    "secretName": { "type": "string" }
+                    "secretName": {
+                      "type": "string"
+                    }
                   },
                   "additionalProperties": false
                 }
               },
               "additionalProperties": false
             },
-            "resources": { "type": "object" },
-            "podAnnotations": { "type": "object" },
-            "podLabels": { "type": "object" },
-            "securityContext": { "type": "object" },
-            "nodeSelector": { "type": "object" },
-            "affinity": { "type": "object" },
-            "tolerations": { "type": "array" }
+            "resources": {
+              "type": "object"
+            },
+            "podAnnotations": {
+              "type": "object"
+            },
+            "podLabels": {
+              "type": "object"
+            },
+            "securityContext": {
+              "type": "object"
+            },
+            "nodeSelector": {
+              "type": "object"
+            },
+            "affinity": {
+              "type": "object"
+            },
+            "tolerations": {
+              "type": "array"
+            }
           },
           "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "identityService": {
+      "type": "object",
+      "description": "Suite-level Iris Identity Service deployment for on-prem agent-key lifecycle and runtime introspection. Enabled by default; requires identityService.image.tag and identityService.metadata.existingSecret.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tag": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "config": {
+          "type": "object",
+          "properties": {
+            "existingSecret": {
+              "type": "string"
+            },
+            "render": {
+              "type": "boolean"
+            },
+            "secretKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "existingSecretChecksum": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "configData": {
+          "type": "object",
+          "description": "Extra non-secret IdS config fields used with identityService.config.render=true. The chart owns mounted credential paths."
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Pre-created Secret holding a YAML overlay with IdS metadata Redis connection details.",
+          "properties": {
+            "existingSecret": {
+              "type": "string"
+            },
+            "secretKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "existingSecretChecksum": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "controlToken": {
+          "type": "object",
+          "description": "IdS Control static admin credential.",
+          "properties": {
+            "existingSecret": {
+              "type": "string"
+            },
+            "secretKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "autoGenerate": {
+              "type": "boolean"
+            },
+            "existingSecretChecksum": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "runtime": {
+          "type": "object",
+          "properties": {
+            "cache": {
+              "type": "object",
+              "properties": {
+                "softTtlSeconds": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "hardTtlSeconds": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            },
+            "unscopedGrantsProduct": {
+              "type": "string",
+              "description": "Product that owns grants stored before grants carried an explicit product. Must name a configured productValidation product, or be empty to ignore such grants. Limited to the products the Identity Service recognises.",
+              "enum": [
+                "",
+                "memory",
+                "langcache",
+                "context"
+              ]
+            },
+            "memoryCredentialName": {
+              "type": "string",
+              "pattern": "^[a-z0-9-]{1,44}$",
+              "description": "Runtime credential name consumed by the packaged Agent Memory data plane when chart-rendered config enables IdS-backed API-key introspection."
+            },
+            "serviceCredentials": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9-]{1,44}$",
+                    "description": "Stable credential name used for generated Secret names and mounted token_file paths."
+                  },
+                  "subject": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "existingSecret": {
+                    "type": "string"
+                  },
+                  "secretKey": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "autoGenerate": {
+                    "type": "boolean"
+                  },
+                  "existingSecretChecksum": {
+                    "type": "string"
+                  },
+                  "allowedOperations": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "api-key-introspect",
+                        "auth-introspect",
+                        "auth-me"
+                      ],
+                      "description": "Operation the runtime service credential may perform, in canonical lowercase. An unrecognised name grants nothing, so it is rejected here rather than surfacing as a 403 at request time. The Identity Service itself compares operation names case-insensitively, so this enum is deliberately stricter: chart values are a curated surface and rendered config should be uniform, matching how the chart already requires canonical lowercase product names."
+                    }
+                  },
+                  "allowedProducts": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "memory",
+                        "langcache",
+                        "context"
+                      ]
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "productValidation": {
+          "type": "object",
+          "description": "Product control planes that IdS calls before persisting API-key grants.",
+          "properties": {
+            "products": {
+              "type": "object",
+              "minProperties": 1,
+              "patternProperties": {
+                "^[a-z0-9-]{1,44}$": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "baseURL": {
+                      "type": "string"
+                    },
+                    "credential": {
+                      "type": "object",
+                      "properties": {
+                        "existingSecret": {
+                          "type": "string"
+                        },
+                        "secretKey": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "existingSecretChecksum": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false,
+              "propertyNames": {
+                "enum": [
+                  "memory",
+                  "langcache",
+                  "context"
+                ]
+              }
+            }
+          },
+          "required": [
+            "products"
+          ],
+          "additionalProperties": false
+        },
+        "apiKeys": {
+          "type": "object",
+          "properties": {
+            "maxRotateGraceSeconds": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          },
+          "additionalProperties": false
+        },
+        "livenessProbe": {
+          "type": "object"
+        },
+        "readinessProbe": {
+          "type": "object"
+        },
+        "resources": {
+          "type": "object"
+        },
+        "podAnnotations": {
+          "type": "object"
+        },
+        "podLabels": {
+          "type": "object"
+        },
+        "nodeSelector": {
+          "type": "object"
+        },
+        "affinity": {
+          "type": "object"
+        },
+        "tolerations": {
+          "type": "array"
+        },
+        "volumes": {
+          "type": "array"
+        },
+        "volumeMounts": {
+          "type": "array"
         }
       },
       "additionalProperties": false

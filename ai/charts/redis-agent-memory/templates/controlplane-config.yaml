@@ -1,4 +1,4 @@
-{{- if and .Values.controlplane.enabled .Values.controlplane.config.render (not .Values.controlplane.config.existingSecret) }}
+{{- if and .Values.controlplane.config.render (not .Values.controlplane.config.existingSecret) }}
 {{- /*
   Chart-rendered control-plane config ConfigMap, mirroring the data-plane
   config.yaml. Body assembled from .Values.shared + .Values.controlplane.configData

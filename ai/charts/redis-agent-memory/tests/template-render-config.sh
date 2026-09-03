@@ -14,7 +14,7 @@
 #     ordered overlay list mounted at /etc/ai/overlays/0 and /etc/ai/overlays/1,
 #     appended as repeatable --config args in order so the later entry wins;
 #   - base + region values deep-merge so regional overrides win;
-#   - metadata.stores is a map keyed by store id and keeps a store's fields;
+#   - dynamic metadata and deployment embedding defaults render without store fixtures;
 #   - the rendered config ConfigMap contains NO credential material and NO urls;
 #   - control-plane config renders (as a ConfigMap) from the same shared block;
 #   - the control plane also gets the region's overlay;
@@ -22,7 +22,7 @@
 #   - fail-closed when both existingSecret and render are set (mutual exclusion).
 #
 # Usage:
-#   ./deployment/redis-agent-memory/tests/template-render-config.sh
+#   ./memory/helm/tests/template-render-config.sh
 #
 # Expects:
 #   - helm >= 3.x on PATH
@@ -39,10 +39,19 @@ fail() {
   exit 1
 }
 
+# The Identity Service is enabled by default, so every render needs the two
+# inputs that enabling it makes mandatory. This suite is about the RAM config
+# carrier, not IdS, but leaving IdS on keeps the renders realistic.
+IDS_ARGS=(
+  --set identityService.image.tag=ids-0.0.0-test
+  --set identityService.metadata.existingSecret=ids-metadata
+)
+
 echo "=== Case 1: config.render renders a config ConfigMap from base + region ==="
-OUT="$(helm template "$RELEASE" "$CHART_DIR" \
+OUT="$(helm template "$RELEASE" "$CHART_DIR" "${IDS_ARGS[@]}" \
   -f "$EXAMPLES/base-values.yaml" -f "$EXAMPLES/region-eu.yaml" \
-  --set image.tag=0.0.0-test --set license.existingSecret=ram-license)"
+  --set image.tag=0.0.0-test --set controlplane.image.tag=cp-0.0.0-test \
+  --set license.existingSecret=ram-license)"
 
 # The rendered config body lives in a ConfigMap, not a Secret.
 grep -qE "^kind: ConfigMap" <<<"$OUT" \
@@ -56,16 +65,14 @@ grep -q "default: eu1" <<<"$OUT" \
   || fail "region-eu request_region.default did not merge in"
 echo "OK: rendered config ConfigMap merges base + region overrides"
 
-echo "=== Case 1b: metadata.stores is a map keyed by id, structure preserved ==="
-grep -qE '^\s*"00000000000000000000000000000001":' <<<"$OUT" \
-  || fail "metadata.stores is not keyed by store id"
-grep -q "ttl_seconds: 86400" <<<"$OUT" \
-  || fail "store short_memory.ttl_seconds missing from rendered config"
+echo "=== Case 1b: service defaults and deployment embedding config are preserved ==="
+grep -q "namespace: iris:memory" <<<"$OUT" \
+  && fail "default metadata namespace should not be rendered" || true
 grep -q "embedding_model: text-embedding-3-large" <<<"$OUT" \
-  || fail "store long_term_memory missing from rendered config"
-grep -qE "^\s*storesByID:" <<<"$OUT" \
-  && fail "rendered config still contains storesByID (removed helper)" || true
-echo "OK: stores map keyed by id, structural fields preserved"
+  || fail "deployment embedding model missing from rendered config"
+grep -qE "^\s*(source|stores|live):" <<<"$OUT" \
+  && fail "rendered config contains removed metadata keys" || true
+echo "OK: metadata namespace uses the service default and embedding config is preserved"
 
 echo "=== Case 2: region's single overlay is mounted and passed as a --config arg ==="
 OVERLAY_ARG_COUNT="$(grep -c -- '- "/etc/ai/overlays/0/overlay.yaml"' <<<"$OUT" || true)"
@@ -80,9 +87,11 @@ grep -q "mountPath: /etc/ai/overlays/1" <<<"$OUT" \
 echo "OK: region's single secretName overlay mounted at index 0 and passed as a --config arg"
 
 echo "=== Case 2b: single-region — ONE secretName overlay at index 0 ==="
-SR_OUT="$(helm template "$RELEASE" "$CHART_DIR" \
+SR_OUT="$(helm template "$RELEASE" "$CHART_DIR" "${IDS_ARGS[@]}" \
   --set image.tag=0.0.0-test --set license.existingSecret=ram-license \
-  --set config.render=true --set 'memory.metadata.source=static' \
+  --set controlplane.image.tag=cp-0.0.0-test \
+  --set controlplane.config.existingSecret=cp-config-test \
+  --set config.render=true --set 'memory.auth.method=none' \
   --set secrets.secretName=ram-secrets)"
 SR_ARG_COUNT="$(grep -c -- '- "/etc/ai/overlays/0/overlay.yaml"' <<<"$SR_OUT" || true)"
 [ "$SR_ARG_COUNT" -ge 2 ] \
@@ -96,8 +105,10 @@ grep -q "mountPath: /etc/ai/overlays/1" <<<"$SR_OUT" \
 echo "OK: single-region secretName mounts exactly one overlay at index 0"
 
 echo "=== Case 2c: BYO existingSecret with no secretName — no overlays at all ==="
-BYO_OUT="$(helm template "$RELEASE" "$CHART_DIR" \
+BYO_OUT="$(helm template "$RELEASE" "$CHART_DIR" "${IDS_ARGS[@]}" \
   --set image.tag=0.0.0-test --set license.existingSecret=ram-license \
+  --set controlplane.image.tag=cp-0.0.0-test \
+  --set controlplane.config.existingSecret=cp-config-test \
   --set config.existingSecret=ram-config)"
 # config volume is carried by a Secret, not a ConfigMap.
 grep -q "secretName: ram-config" <<<"$BYO_OUT" \
@@ -109,9 +120,11 @@ echo "OK: BYO existingSecret with no secretName renders no overlay mounts and no
 echo "=== Case 2d: additionalSecrets (advanced) layers an ordered second overlay ==="
 # The examples use one Secret per region, but the chart still supports layering
 # extra Secrets via additionalSecrets (later wins). Exercise that code path directly.
-MULTI_OUT="$(helm template "$RELEASE" "$CHART_DIR" \
+MULTI_OUT="$(helm template "$RELEASE" "$CHART_DIR" "${IDS_ARGS[@]}" \
   --set image.tag=0.0.0-test --set license.existingSecret=ram-license \
-  --set config.render=true --set 'memory.metadata.source=static' \
+  --set controlplane.image.tag=cp-0.0.0-test \
+  --set controlplane.config.existingSecret=cp-config-test \
+  --set config.render=true --set 'memory.auth.method=none' \
   --set secrets.secretName=ram-base-secrets \
   --set 'secrets.additionalSecrets[0]=ram-extra-secrets')"
 # Repeatable --config: overlay 0 then overlay 1 appended after the base --config,
@@ -137,27 +150,29 @@ grep -qiE "urls:|redis://" <<<"$CONFIG_BODY" \
 echo "OK: rendered config contains structure only (secrets via mounted overlays)"
 
 echo "=== Case 4: fail-closed when neither existingSecret nor render is set ==="
-if helm template "$RELEASE" "$CHART_DIR" \
-  --set image.tag=0.0.0-test --set license.existingSecret=lic >/dev/null 2>&1; then
+if helm template "$RELEASE" "$CHART_DIR" "${IDS_ARGS[@]}" \
+  --set image.tag=0.0.0-test --set license.existingSecret=lic \
+  --set controlplane.image.tag=cp-0.0.0-test \
+  --set controlplane.config.existingSecret=cp-config-test >/dev/null 2>&1; then
   fail "expected failure when config source is unset"
 fi
 echo "OK: chart fails closed with a clear error when config source is unset"
 
 echo "=== Case 4b: fail-closed when both existingSecret and render are set ==="
-if helm template "$RELEASE" "$CHART_DIR" \
+if helm template "$RELEASE" "$CHART_DIR" "${IDS_ARGS[@]}" \
   --set image.tag=0.0.0-test --set license.existingSecret=lic \
+  --set controlplane.image.tag=cp-0.0.0-test \
+  --set controlplane.config.existingSecret=cp-config-test \
   --set config.existingSecret=ram-config --set config.render=true >/dev/null 2>&1; then
   fail "expected failure when both config.existingSecret and config.render are set"
 fi
 echo "OK: chart fails closed when config.existingSecret and config.render are both set"
 
 echo "=== Case 5: control-plane config renders as a ConfigMap and gets the region overlay ==="
-CP_OUT="$(helm template "$RELEASE" "$CHART_DIR" \
+CP_OUT="$(helm template "$RELEASE" "$CHART_DIR" "${IDS_ARGS[@]}" \
   -f "$EXAMPLES/base-values.yaml" -f "$EXAMPLES/region-eu.yaml" \
   --set image.tag=0.0.0-test --set license.existingSecret=ram-license \
-  --set controlplane.enabled=true --set controlplane.image.tag=cp-0.0.0-test \
-  --set controlplane.config.render=true \
-  --set-json 'controlplane.configData={"metadata":{"namespace":"iris:memory"},"embedding":{"dimensions":3072}}')"
+  --set controlplane.image.tag=cp-0.0.0-test)"
 grep -q "controlplane-onprem.config.yaml: |" <<<"$CP_OUT" \
   || fail "control-plane config carrier not rendered"
 CP_KIND="$(awk '/kind: ConfigMap/{k="ConfigMap"} /kind: Secret/{k="Secret"} /controlplane-onprem.config.yaml: \|/{print k; exit}' <<<"$CP_OUT")"

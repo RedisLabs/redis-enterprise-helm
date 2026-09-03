@@ -25,6 +25,7 @@
 {{- $healthCheckImagePullSecretName := default "" $supportPackage.healthCheckImagePullSecretName -}}
 {{- $healthCheckPodTimeout := default "30s" $supportPackage.healthCheckPodTimeout -}}
 {{- $queueMonitor := .Values.controlplane.queueMonitor -}}
+{{- $ids := default (dict) .Values.identityService -}}
 {{- $secretChecks := list -}}
 {{- $configMapChecks := list -}}
 {{- $httpChecks := list -}}
@@ -52,7 +53,6 @@
 {{- if .Values.license.existingSecret -}}
 {{- $secretChecks = append $secretChecks (dict "name" (include "redis-agent-memory.licenseSecretName" .) "key" .Values.license.secretKey "label" "RAM license" "includeValue" false "severity" "fail") -}}
 {{- end -}}
-{{- if .Values.controlplane.enabled -}}
 {{- $registryImages = append $registryImages (printf "%s:%s" .Values.controlplane.image.repository .Values.controlplane.image.tag) -}}
 {{- if .Values.controlplane.config.existingSecret -}}
 {{- $secretChecks = append $secretChecks (dict "name" .Values.controlplane.config.existingSecret "key" .Values.controlplane.config.secretKey "label" "RAM control plane config" "includeValue" true "severity" "fail") -}}
@@ -64,6 +64,9 @@
 {{- if or .Values.controlplane.adminToken.existingSecret .Values.controlplane.adminToken.autoGenerate -}}
 {{- $secretChecks = append $secretChecks (dict "name" (include "redis-agent-memory.controlplaneAdminTokenSecretName" .) "key" .Values.controlplane.adminToken.secretKey "label" "RAM control plane admin token" "includeValue" false "severity" "fail") -}}
 {{- end -}}
+{{- if or .Values.controlplane.internalToken.existingSecret .Values.controlplane.internalToken.autoGenerate -}}
+{{- $secretChecks = append $secretChecks (dict "name" (include "redis-agent-memory.controlplaneInternalTokenSecretName" .) "key" .Values.controlplane.internalToken.secretKey "label" "RAM control plane internal token" "includeValue" false "severity" "fail") -}}
+{{- end -}}
 {{- if and $queueMonitor $queueMonitor.enabled -}}
 {{- $registryImages = append $registryImages (printf "%s:%s" $queueMonitor.image.repository $queueMonitor.image.tag) -}}
 {{- if $queueMonitor.redis.existingSecret -}}
@@ -73,6 +76,42 @@
 {{- end -}}
 {{- if $queueMonitor.redis.insecureTLSKey -}}
 {{- $secretChecks = append $secretChecks (dict "name" $queueMonitor.redis.existingSecret "key" $queueMonitor.redis.insecureTLSKey "label" "RAM queue monitor optional Redis insecure TLS flag" "includeValue" false "severity" "warn") -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if $ids.enabled -}}
+{{- $registryImages = append $registryImages (printf "%s:%s" $ids.image.repository $ids.image.tag) -}}
+{{- if $ids.config.existingSecret -}}
+{{- $secretChecks = append $secretChecks (dict "name" $ids.config.existingSecret "key" $ids.config.secretKey "label" "Iris Identity Service config" "includeValue" true "severity" "fail") -}}
+{{- $configValuesCollected = true -}}
+{{- else if $ids.config.render -}}
+{{- $configMapChecks = append $configMapChecks (dict "name" (include "redis-agent-memory.identityServiceConfigName" .) "key" $ids.config.secretKey "label" "Iris Identity Service config") -}}
+{{- $configValuesCollected = true -}}
+{{- end -}}
+{{- if $ids.metadata.existingSecret -}}
+{{- $secretChecks = append $secretChecks (dict "name" $ids.metadata.existingSecret "key" $ids.metadata.secretKey "label" "Iris Identity Service metadata config" "includeValue" true "severity" "fail") -}}
+{{- $configValuesCollected = true -}}
+{{- end -}}
+{{- if or $ids.controlToken.existingSecret $ids.controlToken.autoGenerate -}}
+{{- $secretChecks = append $secretChecks (dict "name" (include "redis-agent-memory.identityServiceControlTokenSecretName" .) "key" $ids.controlToken.secretKey "label" "Iris Identity Service control token" "includeValue" false "severity" "fail") -}}
+{{- end -}}
+{{- range $i, $credential := (default (list) $ids.runtime.serviceCredentials) -}}
+{{- if or $credential.existingSecret $credential.autoGenerate -}}
+{{- $credentialName := include "redis-agent-memory.identityServiceRuntimeCredentialName" (dict "credential" $credential) -}}
+{{- $secretChecks = append $secretChecks (dict "name" (include "redis-agent-memory.identityServiceRuntimeCredentialSecretName" (dict "root" $ "credential" $credential)) "key" $credential.secretKey "label" (printf "Iris Identity Service runtime credential %s" $credentialName) "includeValue" false "severity" "fail") -}}
+{{- end -}}
+{{- end -}}
+{{- $validationProducts := default (dict) $ids.productValidation.products -}}
+{{- range $product, $validation := $validationProducts -}}
+{{- $enabled := true -}}
+{{- if hasKey $validation "enabled" }}{{- $enabled = $validation.enabled -}}{{- end -}}
+{{- if $enabled -}}
+{{- $credential := default (dict) $validation.credential -}}
+{{- $secretName := include "redis-agent-memory.identityServiceProductValidationSecretName" (dict "root" $ "product" $product "config" $validation) -}}
+{{- $secretKey := include "redis-agent-memory.identityServiceProductValidationSecretKey" (dict "root" $ "product" $product "config" $validation) -}}
+{{- $usesPackagedMemoryDefault := and (eq $product "memory") (not $credential.existingSecret) -}}
+{{- if and $secretName (not $usesPackagedMemoryDefault) -}}
+{{- $secretChecks = append $secretChecks (dict "name" $secretName "key" $secretKey "label" (printf "Iris Identity Service %s product-validation credential" $product) "includeValue" false "severity" "fail") -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -91,7 +130,6 @@
 {{- $httpChecks = append $httpChecks (dict "collectorName" "ram-server-readiness" "checkName" "RAM server readiness" "url" (printf "%s/health/readiness" $serverBaseURL) "timeout" $timeout "severity" "fail") -}}
 {{- $httpChecks = append $httpChecks (dict "collectorName" "ram-worker-liveness" "checkName" "RAM worker liveness" "url" (printf "%s/health/liveness" $workerBaseURL) "timeout" $timeout "severity" "fail") -}}
 {{- $httpChecks = append $httpChecks (dict "collectorName" "ram-worker-readiness" "checkName" "RAM worker readiness" "url" (printf "%s/health/readiness" $workerBaseURL) "timeout" $timeout "severity" "fail") -}}
-{{- if .Values.controlplane.enabled -}}
 {{- $controlplaneBaseURL := printf "http://%s.%s.svc.cluster.local:%v" (include "redis-agent-memory.controlplaneFullname" .) .Release.Namespace .Values.controlplane.service.port -}}
 {{- $httpChecks = append $httpChecks (dict "collectorName" "ram-controlplane-live" "checkName" "RAM control plane live" "url" (printf "%s/v1/health/live" $controlplaneBaseURL) "timeout" $timeout "severity" "fail") -}}
 {{- $httpChecks = append $httpChecks (dict "collectorName" "ram-controlplane-ready" "checkName" "RAM control plane ready" "url" (printf "%s/v1/health/ready" $controlplaneBaseURL) "timeout" $timeout "severity" "fail") -}}
@@ -99,6 +137,10 @@
 {{- $queueMonitorBaseURL := printf "http://%s.%s.svc.cluster.local:%v" (include "redis-agent-memory.queueMonitorFullname" .) .Release.Namespace $queueMonitor.service.port -}}
 {{- $httpChecks = append $httpChecks (dict "collectorName" "ram-queue-monitor-root" "checkName" "RAM queue monitor" "url" (printf "%s%s" $queueMonitorBaseURL (default "/" $healthChecks.queueMonitorPath)) "timeout" $timeout "severity" "warn") -}}
 {{- end -}}
+{{- if $ids.enabled -}}
+{{- $identityServiceBaseURL := printf "http://%s.%s.svc.cluster.local:%v" (include "redis-agent-memory.identityServiceFullname" .) .Release.Namespace $ids.service.port -}}
+{{- $httpChecks = append $httpChecks (dict "collectorName" "iris-identity-service-live" "checkName" "Iris Identity Service live" "url" (printf "%s/v1/health/live" $identityServiceBaseURL) "timeout" $timeout "severity" "fail") -}}
+{{- $httpChecks = append $httpChecks (dict "collectorName" "iris-identity-service-ready" "checkName" "Iris Identity Service ready" "url" (printf "%s/v1/health/ready" $identityServiceBaseURL) "timeout" $timeout "severity" "fail") -}}
 {{- end -}}
 {{- end -}}
 apiVersion: v1
@@ -202,14 +244,18 @@ data:
                 "namespace": {{ .Release.Namespace | quote }},
                 "serverDeployment": {{ include "redis-agent-memory.fullname" . | quote }},
                 "workerDeployment": {{ include "redis-agent-memory.workerFullname" . | quote }},
-                "controlPlaneEnabled": {{ .Values.controlplane.enabled }},
+                "controlPlaneBundled": true,
                 "controlPlaneDeployment": {{ include "redis-agent-memory.controlplaneFullname" . | quote }},
+                "identityServiceEnabled": {{ $ids.enabled }},
+                "identityServiceDeployment": {{ include "redis-agent-memory.identityServiceFullname" . | quote }},
                 "securityProfile": {{ default "" .Values.security.profile | quote }},
                 "airgapEnabled": {{ .Values.airgap.enabled }},
                 "imageRepository": {{ .Values.image.repository | quote }},
                 "imageTag": {{ .Values.image.tag | quote }},
                 "controlPlaneImageRepository": {{ .Values.controlplane.image.repository | quote }},
                 "controlPlaneImageTag": {{ .Values.controlplane.image.tag | quote }},
+                "identityServiceImageRepository": {{ $ids.image.repository | quote }},
+                "identityServiceImageTag": {{ $ids.image.tag | quote }},
                 "helmValuesCollected": false,
                 "configValuesCollected": {{ $configValuesCollected }},
                 "httpHealthCollected": {{ $healthChecksEnabled }},
@@ -243,7 +289,6 @@ data:
               maxLines: {{ int $logMaxLines }}
               maxBytes: {{ int $logMaxBytes }}
             timestamps: true
-        {{- if .Values.controlplane.enabled }}
         - logs:
             selector:
               - app.kubernetes.io/name={{ include "redis-agent-memory.name" . }}
@@ -253,6 +298,20 @@ data:
             name: logs/controlplane
             containerNames:
               - controlplane
+            limits:
+              maxLines: {{ int $logMaxLines }}
+              maxBytes: {{ int $logMaxBytes }}
+            timestamps: true
+        {{- if $ids.enabled }}
+        - logs:
+            selector:
+              - app.kubernetes.io/name={{ include "redis-agent-memory.name" . }}
+              - app.kubernetes.io/instance={{ .Release.Name }}
+              - app.kubernetes.io/component=identity-service
+            namespace: {{ .Release.Namespace | quote }}
+            name: logs/identity-service
+            containerNames:
+              - identity-service
             limits:
               maxLines: {{ int $logMaxLines }}
               maxBytes: {{ int $logMaxBytes }}
@@ -299,17 +358,17 @@ data:
         {{- end }}
         {{- if $registryImagesEnabled }}
         - registryImages:
-            checkName: RAM image registry availability
+            checkName: Iris image registry availability
             collectorName: ram-registry-images
             outcomes:
               - fail:
                   when: "missing > 0"
-                  message: One or more RAM images are missing from the registry.
+                  message: One or more Iris images are missing from the registry.
               - warn:
                   when: "errors > 0"
-                  message: One or more RAM images could not be checked in the registry.
+                  message: One or more Iris images could not be checked in the registry.
               - pass:
-                  message: All RAM images were found in the registry.
+                  message: All Iris images were found in the registry.
         {{- end }}
         - textAnalyze:
             checkName: RAM node metrics collection
@@ -389,7 +448,6 @@ data:
                   message: RAM worker has no ready replicas.
               - pass:
                   message: RAM worker has at least one ready replica.
-        {{- if .Values.controlplane.enabled }}
         - deploymentStatus:
             name: {{ include "redis-agent-memory.controlplaneFullname" . | quote }}
             namespace: {{ .Release.Namespace | quote }}
@@ -402,6 +460,19 @@ data:
                   message: RAM control plane has no ready replicas.
               - pass:
                   message: RAM control plane has at least one ready replica.
+        {{- if $ids.enabled }}
+        - deploymentStatus:
+            name: {{ include "redis-agent-memory.identityServiceFullname" . | quote }}
+            namespace: {{ .Release.Namespace | quote }}
+            outcomes:
+              - fail:
+                  when: absent
+                  message: Iris Identity Service Deployment is missing.
+              - fail:
+                  when: "< 1"
+                  message: Iris Identity Service has no ready replicas.
+              - pass:
+                  message: Iris Identity Service has at least one ready replica.
         {{- end }}
         - clusterPodStatuses:
             namespaces:
@@ -477,10 +548,14 @@ data:
               - session_summary_view.llm.credentials
               - promote_session_memory.strategies.*.llm.credentials
               - auth.admin_token
+              - auth.internal_token
+              - auth.control.token
               - auth.session_shared_secret
               - auth.shared_secret
               - auth.worker_identity.jwks_uri
               - auth.worker_identity.shared_secret
+              - runtime.service_credentials.*.token
+              - product_validation.*.credential.token
               - headers
               - "*.headers"
               - license
