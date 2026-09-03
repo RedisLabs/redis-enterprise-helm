@@ -37,7 +37,7 @@ func TestSupportPackageSpecsRenderRedactorsWhenEnabled(t *testing.T) {
 
 	supportBundle := parseSupportBundleSpec(t, supportBundleCM.Data["support-bundle-spec"])
 	require.Equal(t, "SupportBundle", supportBundle.Kind)
-	requireSafeContains(t, supportBundleCM.Data["support-bundle-spec"], `"chartVersion": "0.0.13"`)
+	requireSafeContains(t, supportBundleCM.Data["support-bundle-spec"], `"chartVersion": "0.0.14"`)
 	requireSafeContains(t, supportBundleCM.Data["support-bundle-spec"], `"appVersion": "0.1.0"`)
 	requireSafeContains(t, supportBundleCM.Data["support-bundle-spec"], `"releaseName": "ram-fixture"`)
 	requireSafeContains(t, supportBundleCM.Data["support-bundle-spec"], `"namespace": "ram-fixture"`)
@@ -47,12 +47,15 @@ func TestSupportPackageSpecsRenderRedactorsWhenEnabled(t *testing.T) {
 	helmCollector := findCollector(t, supportBundle, "helm")
 	require.Equal(t, "ram-helm-release", helmCollector["collectorName"])
 	require.Equal(t, false, helmCollector["collectValues"])
-	requireCollectorCount(t, supportBundle.Spec.Collectors, "secret", 2)
-	requireCollectorCount(t, supportBundle.Spec.Collectors, "runPod", 4)
+	// The Identity Service is enabled by default, so its three Secrets (control
+	// token, runtime credential, metadata overlay) and its two runPod probes are
+	// part of a default bundle.
+	requireCollectorCount(t, supportBundle.Spec.Collectors, "secret", 8)
+	requireCollectorCount(t, supportBundle.Spec.Collectors, "runPod", 8)
 	requireCollectorCount(t, supportBundle.Spec.Collectors, "registryImages", 1)
 	requireCollectorCount(t, supportBundle.Spec.Collectors, "nodeMetrics", 1)
-	requireAnalyzerCount(t, supportBundle.Spec.Analyzers, "secret", 2)
-	requireAnalyzerCount(t, supportBundle.Spec.Analyzers, "textAnalyze", 5)
+	requireAnalyzerCount(t, supportBundle.Spec.Analyzers, "secret", 8)
+	requireAnalyzerCount(t, supportBundle.Spec.Analyzers, "textAnalyze", 9)
 	requireAnalyzerCount(t, supportBundle.Spec.Analyzers, "registryImages", 1)
 	requireAnalyzerCount(t, supportBundle.Spec.Analyzers, "nodeMetrics", 1)
 	requireAnalyzerCount(t, supportBundle.Spec.Analyzers, "nodeResources", 4)
@@ -98,7 +101,11 @@ func TestSupportPackageSpecsRenderRedactorsWhenEnabled(t *testing.T) {
 		"session_summarisation.llm.credentials",
 		"promote_session_memory.strategies.*.llm.credentials",
 		"auth.admin_token",
+		"auth.internal_token",
+		"auth.control.token",
 		"auth.worker_identity.jwks_uri",
+		"runtime.service_credentials.*.token",
+		"product_validation.*.credential.token",
 		"license",
 		"*.api_key",
 		"*.private_key",
@@ -123,10 +130,10 @@ func TestSupportPackageSparseReusedValuesUseDefaultEnabledCollectors(t *testing.
 	supportBundleCM := findConfigMap(t, configMaps, "redis-agent-memory-support-bundle")
 	supportBundle := parseSupportBundleSpec(t, supportBundleCM.Data["support-bundle-spec"])
 
-	requireCollectorCount(t, supportBundle.Spec.Collectors, "runPod", 4)
+	requireCollectorCount(t, supportBundle.Spec.Collectors, "runPod", 8)
 	requireCollectorCount(t, supportBundle.Spec.Collectors, "registryImages", 1)
 	requireCollectorCount(t, supportBundle.Spec.Collectors, "nodeMetrics", 1)
-	requireAnalyzerCount(t, supportBundle.Spec.Analyzers, "textAnalyze", 5)
+	requireAnalyzerCount(t, supportBundle.Spec.Analyzers, "textAnalyze", 9)
 	requireAnalyzerCount(t, supportBundle.Spec.Analyzers, "registryImages", 1)
 	requireAnalyzerCount(t, supportBundle.Spec.Analyzers, "nodeMetrics", 1)
 	requireAnalyzerCount(t, supportBundle.Spec.Analyzers, "nodeResources", 4)
@@ -151,11 +158,10 @@ func TestSupportPackageSpecsDoNotRenderWhenDisabled(t *testing.T) {
 	}
 }
 
-func TestSupportPackageIncludesControlPlaneCollectorsWhenEnabled(t *testing.T) {
+func TestSupportPackageIncludesBundledControlPlaneCollectors(t *testing.T) {
 	rendered := helmTemplate(t,
 		"--show-only", "templates/support-package.yaml",
 		"--set", "supportPackage.enabled=true",
-		"--set", "controlplane.enabled=true",
 		"--set", "controlplane.image.tag=0.0.0-test",
 		"--set", "controlplane.config.existingSecret=cp-config-test",
 		"--set", "controlplane.config.secretKey=controlplane-onprem.config.yaml",
@@ -168,6 +174,44 @@ func TestSupportPackageIncludesControlPlaneCollectorsWhenEnabled(t *testing.T) {
 	requireSafeContains(t, spec, "redis-agent-memory-controlplane")
 }
 
+func TestSupportPackageIncludesIdentityServiceCollectorsWhenEnabled(t *testing.T) {
+	rendered := helmTemplate(t,
+		"--show-only", "templates/support-package.yaml",
+		"--set", "supportPackage.enabled=true",
+		"--set", "controlplane.image.tag=0.0.0-test",
+		"--set", "controlplane.config.existingSecret=cp-config-test",
+		"--set", "controlplane.config.secretKey=controlplane-onprem.config.yaml",
+		"--set", "identityService.enabled=true",
+		"--set", "identityService.image.tag=0.0.0-test",
+		"--set", "identityService.config.render=true",
+		"--set", "identityService.metadata.existingSecret=ids-metadata",
+		"--set", "identityService.metadata.secretKey=metadata.yaml",
+	)
+
+	configMaps := parseConfigMaps(t, rendered)
+	supportBundleCM := findConfigMap(t, configMaps, "redis-agent-memory-support-bundle")
+	spec := parseSupportBundleSpec(t, supportBundleCM.Data["support-bundle-spec"])
+
+	requireSafeContains(t, supportBundleCM.Data["support-bundle-spec"], `"identityServiceEnabled": true`)
+	requireSafeContains(t, supportBundleCM.Data["support-bundle-spec"], `"identityServiceDeployment": "redis-agent-memory-identity-service"`)
+	requireSafeContains(t, supportBundleCM.Data["support-bundle-spec"], `"identityServiceImageRepository": "redislabs/iris-identity-service"`)
+	requireSafeContains(t, supportBundleCM.Data["support-bundle-spec"], `"identityServiceImageTag": "0.0.0-test"`)
+	requireSafeContains(t, supportBundleCM.Data["support-bundle-spec"], "logs/identity-service")
+	requireCollectorCount(t, spec.Spec.Collectors, "runPod", 8)
+	requireAnalyzerCount(t, spec.Spec.Analyzers, "textAnalyze", 9)
+	requireSecretCollector(t, spec, "ids-metadata", "metadata.yaml", true)
+	requireSecretCollector(t, spec, "redis-agent-memory-identity-service-control-token", "token", false)
+	requireSecretCollector(t, spec, "redis-agent-memory-identity-service-runtime-memory-dp", "token", false)
+	requireNamedEntry(t, spec.Spec.Collectors, "configMap", "name", "redis-agent-memory-identity-service-config")
+	requireNamedEntry(t, spec.Spec.Collectors, "runPod", "name", "iris-identity-service-live")
+	requireNamedEntry(t, spec.Spec.Collectors, "runPod", "name", "iris-identity-service-ready")
+	requireNamedEntry(t, spec.Spec.Analyzers, "textAnalyze", "collectorName", "iris-identity-service-live")
+	requireNamedEntry(t, spec.Spec.Analyzers, "deploymentStatus", "name", "redis-agent-memory-identity-service")
+
+	registryImages := findCollector(t, spec, "registryImages")
+	requireContainsValue(t, registryImages["images"], "redislabs/iris-identity-service:0.0.0-test")
+}
+
 func TestSupportPackageDeepDiagnosticsRenderFromDefaults(t *testing.T) {
 	rendered := helmTemplate(t,
 		"--set", "supportPackage.enabled=true",
@@ -178,7 +222,6 @@ func TestSupportPackageDeepDiagnosticsRenderFromDefaults(t *testing.T) {
 		"--set", "secrets.additionalSecrets[0]=ram-overlay-region",
 		"--set", "tls.caCertSecret=ram-ca",
 		"--set", "tls.caCertKey=ca.pem",
-		"--set", "controlplane.enabled=true",
 		"--set", "controlplane.image.tag=0.0.0-test",
 		"--set", "controlplane.config.existingSecret=cp-config-test",
 		"--set", "controlplane.config.secretKey=controlplane-onprem.config.yaml",
@@ -193,12 +236,12 @@ func TestSupportPackageDeepDiagnosticsRenderFromDefaults(t *testing.T) {
 	supportBundleCM := findConfigMap(t, configMaps, "redis-agent-memory-support-bundle")
 	spec := parseSupportBundleSpec(t, supportBundleCM.Data["support-bundle-spec"])
 
-	requireCollectorCount(t, spec.Spec.Collectors, "secret", 10)
-	requireCollectorCount(t, spec.Spec.Collectors, "runPod", 7)
+	requireCollectorCount(t, spec.Spec.Collectors, "secret", 14)
+	requireCollectorCount(t, spec.Spec.Collectors, "runPod", 9)
 	requireCollectorCount(t, spec.Spec.Collectors, "registryImages", 1)
 	requireCollectorCount(t, spec.Spec.Collectors, "nodeMetrics", 1)
-	requireAnalyzerCount(t, spec.Spec.Analyzers, "secret", 10)
-	requireAnalyzerCount(t, spec.Spec.Analyzers, "textAnalyze", 8)
+	requireAnalyzerCount(t, spec.Spec.Analyzers, "secret", 14)
+	requireAnalyzerCount(t, spec.Spec.Analyzers, "textAnalyze", 10)
 	requireAnalyzerCount(t, spec.Spec.Analyzers, "registryImages", 1)
 	requireAnalyzerCount(t, spec.Spec.Analyzers, "nodeMetrics", 1)
 	requireAnalyzerCount(t, spec.Spec.Analyzers, "nodeResources", 4)
@@ -208,6 +251,7 @@ func TestSupportPackageDeepDiagnosticsRenderFromDefaults(t *testing.T) {
 	requireSecretCollector(t, spec, "ram-overlay-region", "overlay.yaml", true)
 	requireSecretCollector(t, spec, "license-test", "license", false)
 	requireSecretCollector(t, spec, "cp-admin-token", "admin-token", false)
+	requireSecretCollector(t, spec, "redis-agent-memory-controlplane-internal-token", "token", false)
 	requireSecretCollector(t, spec, "queue-monitor-redis", "QUEUE_REDIS_URL", false)
 	requireSafeContains(t, rendered, "name: redis-agent-memory-worker-support")
 
@@ -284,8 +328,8 @@ func TestSupportPackageCollectsRenderedConfigMaps(t *testing.T) {
 		"--set", "config.existingSecret=",
 		"--set", "config.render=true",
 		"--set", "memory.auth.method=none",
-		"--set", "controlplane.enabled=true",
 		"--set", "controlplane.image.tag=0.0.0-test",
+		"--set", "controlplane.config.existingSecret=",
 		"--set", "controlplane.config.render=true",
 		"--set", "controlplane.configData.auth.admin_token.token_file=/etc/controlplane-onprem/admin/token",
 	)
@@ -294,10 +338,32 @@ func TestSupportPackageCollectsRenderedConfigMaps(t *testing.T) {
 	supportBundleCM := findConfigMap(t, configMaps, "redis-agent-memory-support-bundle")
 	spec := parseSupportBundleSpec(t, supportBundleCM.Data["support-bundle-spec"])
 
-	requireCollectorCount(t, spec.Spec.Collectors, "configMap", 2)
-	requireAnalyzerCount(t, spec.Spec.Analyzers, "configMap", 2)
+	requireCollectorCount(t, spec.Spec.Collectors, "configMap", 3)
+	requireAnalyzerCount(t, spec.Spec.Analyzers, "configMap", 3)
 	requireNamedEntry(t, spec.Spec.Collectors, "configMap", "name", "redis-agent-memory-config")
 	requireNamedEntry(t, spec.Spec.Collectors, "configMap", "name", "redis-agent-memory-controlplane-config")
+	// The Identity Service renders its config into a ConfigMap by default, so the
+	// bundle has a third one to collect.
+	requireNamedEntry(t, spec.Spec.Collectors, "configMap", "name", "redis-agent-memory-identity-service-config")
+}
+
+func TestBundledControlPlaneAlwaysRenders(t *testing.T) {
+	rendered := helmTemplate(t)
+
+	requireSafeContains(t, rendered, "name: redis-agent-memory-controlplane")
+	requireSafeContains(t, rendered, "app.kubernetes.io/component: controlplane")
+}
+
+func TestControlPlaneRequiresPositiveReplicaCount(t *testing.T) {
+	output := helmTemplateError(t, "--set", "controlplane.replicaCount=0")
+
+	requireSafeContains(t, output, "minimum: got 0, want 1")
+}
+
+func TestRemovedControlPlaneEnabledValueIsRejected(t *testing.T) {
+	output := helmTemplateError(t, "--set", "controlplane.enabled=false")
+
+	requireSafeContains(t, output, "enabled")
 }
 
 func TestSupportPackageRedactorsCoverRAMFixtures(t *testing.T) {
@@ -514,16 +580,14 @@ background_jobs:
     urls:
       - %s
 metadata:
-  source: static
-  stores:
-    content:
-      region: eu1
-      urls:
-        - %s
-    metadata:
-      region: us1
-      urls:
-        - %s
+  urls:
+    - %s
+databases:
+  "1":
+    name: content
+    region: eu1
+    urls:
+      - %s
 idempotency:
   urls:
     - %s
@@ -542,8 +606,8 @@ analyzer:
   outcome: queue-backlog
 `,
 				fixtureRedisURL("rediss", "job-user", "FIXTURE_JOB_REDIS_PASSWORD", "job-redis.example.test:6380/0", "client_name=FIXTURE_JOB_CLIENT&token=FIXTURE_JOB_QUERY_TOKEN"),
-				fixtureRedisURL("redis", "content-user", "FIXTURE_CONTENT_REDIS_PASSWORD", "content-redis.example.test:6379/1", "password=FIXTURE_CONTENT_QUERY_PASSWORD"),
 				fixtureRedisURL("rediss", "metadata-user", "FIXTURE_METADATA_REDIS_PASSWORD", "metadata-redis.example.test:6380", "credential=FIXTURE_METADATA_QUERY_CREDENTIAL"),
+				fixtureRedisURL("redis", "content-user", "FIXTURE_CONTENT_REDIS_PASSWORD", "content-redis.example.test:6379/1", "password=FIXTURE_CONTENT_QUERY_PASSWORD"),
 				fixtureRedisURL("redis", "idem-user", "FIXTURE_IDEMPOTENCY_REDIS_PASSWORD", "idempotency-redis.example.test:6379", "token=FIXTURE_IDEMPOTENCY_QUERY_TOKEN"),
 				fixtureRedisURL("rediss", "override-user", "FIXTURE_OVERRIDE_REDIS_PASSWORD", "override-redis.example.test:6380", "api_key=FIXTURE_OVERRIDE_QUERY_KEY"),
 			),
@@ -811,6 +875,13 @@ func runHelmTemplate(t *testing.T, args ...string) ([]byte, error) {
 		"--set", "license.existingSecret=license-test",
 		"--set", "config.existingSecret=config-test",
 		"--set", "config.secretKey=config.yaml",
+		"--set", "controlplane.image.tag=0.0.0-test",
+		"--set", "controlplane.config.existingSecret=cp-config-test",
+		"--set", "controlplane.config.secretKey=controlplane-onprem.config.yaml",
+		// The Identity Service is enabled by default, and enabling it makes the
+		// image tag and the metadata Redis overlay Secret mandatory.
+		"--set", "identityService.image.tag=0.0.0-test",
+		"--set", "identityService.metadata.existingSecret=ids-metadata",
 	}
 	cmd := exec.Command("helm", append(baseArgs, args...)...)
 

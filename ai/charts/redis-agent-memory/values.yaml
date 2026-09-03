@@ -5,7 +5,7 @@ image:
   pullPolicy: IfNotPresent
   # Defaults to the chart appVersion stamped at release time.
   # Override at install/upgrade to pin a different RAM image version.
-  tag: "0.6.0"
+  tag: "0.7.0"
 
 imagePullSecrets: []
 # Keep the short chart name stable in labels and notes.
@@ -27,18 +27,18 @@ airgap:
 #
 # Allowed values:
 #   ""     (default) - existing posture, no app-level guardrails applied.
-#                      The Go runtime runs with GODEBUG=fips140=off because
-#                      the image entrypoint forces that value; this matches
-#                      pre-FIPS behavior.
-#   "fips"           - opt-in FIPS-oriented posture. The image entrypoint
-#                      sets GODEBUG=fips140=on so the Go runtime activates
-#                      its FIPS module; the binary additionally refuses to
+#                      The chart sets GODEBUG=fips140=off, matching pre-FIPS
+#                      behavior.
+#   "fips"           - opt-in FIPS-oriented posture. The chart sets
+#                      GODEBUG=fips140=on so the Go runtime activates its
+#                      FIPS module; the binary additionally refuses to
 #                      start if the config sets skip_verify=true on any
 #                      outbound HTTP client or if any Redis URL is not
 #                      rediss://. This is NOT a formal FIPS compliance
 #                      claim; see the README.
 #
-# This value is propagated to the container as MEM_SECURITY_PROFILE.
+# This value is translated to GODEBUG=fips140=on|off for every application
+# container. The binaries inject the effective Go runtime profile into DI.
 security:
   profile: ""
 
@@ -46,7 +46,7 @@ security:
 #
 # When true, the chart renders:
 #   - templates/tests/security-profile.yaml - a Pod that asserts the server
-#     Deployment carries the expected MEM_SECURITY_PROFILE env var.
+#     Deployment carries the expected GODEBUG FIPS mode.
 #   - templates/tests/api-smoke.yaml - an optional Pod that calls the public
 #     RAM API to verify short-term memory writes, optional async promotion,
 #     long-term memory writes, and long-term memory search against the
@@ -182,8 +182,9 @@ config:
 #   embedders_connection_details:
 #     openai: { credentials: { api_key: sk-... } }
 #   metadata:
-#     stores:
-#       "0000...0001": { urls: [redis://user:pass@host:6379] }
+#     urls: [redis://user:pass@metadata-redis:6379]
+#   databases:
+#     "1": { urls: [redis://user:pass@store-redis:6379] }
 #   background_jobs: { redis: { urls: [redis://user:pass@host:6379] } }
 #
 # Create the Secret out of band, for example:
@@ -216,11 +217,11 @@ secrets:
   additionalSecrets: []
 
 # shared holds config blocks common to the data plane and control plane
-# (embedders structure, store metadata structure, endpoints). It is deep-merged
+# (metadata and database registry structure). It is deep-merged
 # UNDER both .Values.memory and .Values.controlplane.configData so overlapping
 # config is defined once. The component-specific block wins on key conflicts.
-# Keys unknown to a given binary are ignored, so a shared block is safe for
-# both. Leave empty ({}) if you do not use the chart-rendered config path.
+# Keep only fields accepted by both binaries here. Leave empty ({}) if you do
+# not use the chart-rendered config path.
 shared: {}
 
 # memory is the rendered data-plane config file body, in the on-prem config
@@ -230,30 +231,21 @@ shared: {}
 # (see the secrets block). Helm deep-merges base-values + region overrides into
 # this subtree before rendering, which is what makes multi-region overrides small.
 #
-# metadata.stores is a MAP keyed by store id (NOT a list), so Helm deep-merges
-# base and region store entries per id, and the regional secret overlay merges
-# its `urls` into the same id at runtime. Set store structure directly under
-# metadata.stores.<id>.* — there is no storesByID helper anymore.
-#
 # Example (put the stable parts in base-values.yaml):
 #   memory:
 #     default_extraction_strategy: instruct
-#     auth:
-#       method: none
+#     embedding:
+#       provider: openai
+#       models:
+#         default_embedding_model: text-embedding-3-large
+#         dimensions: 3072
 #     background_jobs:
 #       redis:                                # regional Active-Active queue backend
 #         enabled: true                       # urls via the regional secret overlay
 #         queue_prefix: ram
 #         worker_regions: ["eu1"]             # set per region
-#     metadata:
-#       source: static
-#       stores:                               # a MAP keyed by store id (no urls here)
-#         "00000000000000000000000000000001":
-#           short_memory: { ttl_seconds: 86400 }
-#           long_term_memory:
-#             embedding_provider: openai
-#             embedding_model: text-embedding-3-large
-#             embedding_dimensions: 3072
+#     databases:
+#       "1": {}                              # urls via the secret overlay
 #     request_region:
 #       default: ""                            # set per region (e.g. eu1)
 memory: {}
@@ -393,34 +385,29 @@ workerAuth:
 # On-prem Control Plane (CP) — the admin store API (/v1/stores, admin-token
 # auth) used to create/list/get/update/delete memory stores at runtime.
 #
-# DISABLED BY DEFAULT. A deployment that only serves memory (server + worker,
-# static store config) does not need the CP — leave controlplane.enabled=false
-# and no CP resources are rendered. Enable it to provision/manage stores at
-# runtime; pair with the data plane's `metadata.source: live` config so the DP
-# serves CP-created stores.
+# The bundled control plane is mandatory and provisions every store at runtime.
+# It shares metadata Redis and the top-level `databases` fallback registry with
+# the data plane.
 #
 # The CP runs as its own Deployment + Service (port 9100), reuses the chart's
 # license / TLS / serviceAccount / security settings, and mounts its own config
 # Secret + a single admin-token Secret.
 # ---------------------------------------------------------------------------
 controlplane:
-  enabled: false
-
   image:
     # Separate image from the data plane (control-plane binary).
     repository: 'redislabs/agent-memory-control-plane'
     pullPolicy: IfNotPresent
-    # Must be set explicitly at install/upgrade time when controlplane.enabled=true.
-    tag: "0.6.0"
+    # Must be set explicitly at install/upgrade time.
+    tag: "0.7.0"
 
   replicaCount: 1
 
-  # The CP config file (admin-token source, metadata Redis, store_db, embedding)
+  # The CP config file (admin/internal token sources, metadata Redis, databases registry, embedding)
   # mounted at /etc/ai — rendered into a ConfigMap (config.render=true) or brought
   # as a pre-created Secret (config.existingSecret). The config's
-  # auth.admin_token.token_file must point at the mounted admin-token path
-  # (/etc/controlplane-onprem/admin/token) and metadata.namespace is set to
-  # iris:memory for on-prem.
+  # auth.admin_token.token_file and auth.internal_token.token_file must point at
+  # separate mounted Secret paths; metadata.namespace defaults to iris:memory.
   config:
     existingSecret: ""
     # RECOMMENDED: when true (and no existingSecret), the chart renders the CP
@@ -443,6 +430,16 @@ controlplane:
   # autoGenerate lookup-or-generates a Helm-managed Secret on first install
   # (stable across upgrades; never clobbers an operator edit).
   adminToken:
+    existingSecret: ""
+    secretKey: "token"
+    autoGenerate: true
+    existingSecretChecksum: ""
+
+  # RAM control-plane internal validation token. It must be distinct from
+  # adminToken and is mounted at /etc/controlplane-onprem/internal/token when
+  # generated or provided here. The packaged Identity Service `memory` product
+  # validation uses this token by default.
+  internalToken:
     existingSecret: ""
     secretKey: "token"
     autoGenerate: true
@@ -545,3 +542,154 @@ controlplane:
     nodeSelector: {}
     affinity: {}
     tolerations: []
+
+# ---------------------------------------------------------------------------
+# Iris Identity Service (IdS) — suite-level API-key lifecycle and runtime
+# introspection service. The RAM chart packages the first on-prem deployment
+# path, but IdS is configured by product so additional Iris products can join
+# without a second IdS instance or a RAM-specific IdS fork.
+# ---------------------------------------------------------------------------
+identityService:
+  # The Identity Service is the authority for agent keys: it mints them, and the
+  # RAM data plane authenticates them by introspecting against it rather than
+  # reading the records out of metadata Redis itself. It is therefore on by
+  # default, and a deployment that turns it off has no agent-key authority.
+  #
+  # Enabling it makes two inputs mandatory, because neither has a safe default:
+  # identityService.image.tag (IdS is versioned independently of RAM) and
+  # identityService.metadata.existingSecret (the Redis holding the key records).
+  enabled: true
+
+  image:
+    repository: 'redislabs/iris-identity-service'
+    pullPolicy: IfNotPresent
+    # Must be set explicitly when identityService.enabled=true.
+    tag: "0.7.0"
+
+  replicaCount: 1
+
+  # Configuration source. The chart renders the non-secret structure into a
+  # ConfigMap by default — it owns every credential token_file path in that
+  # config, so there is little left for an operator to author — and takes
+  # metadata.urls from identityService.metadata.existingSecret. Set
+  # existingSecret instead to bring your own full config Secret; the two are
+  # mutually exclusive.
+  config:
+    existingSecret: ""
+    render: true
+    secretKey: "identity-service.config.yaml"
+    existingSecretChecksum: ""
+
+  # Extra non-secret config fields to merge into the chart-rendered IdS config.
+  # The chart owns credential token_file paths for mounted Secrets.
+  configData: {}
+
+  # Pre-created Secret holding an overlay YAML document with IdS metadata Redis
+  # connection details, for example:
+  #   metadata:
+  #     urls: [redis://user:pass@redis-meta:6379]
+  metadata:
+    existingSecret: ""
+    secretKey: "metadata.yaml"
+    existingSecretChecksum: ""
+
+  # IdS Control static admin credential. This unlocks IdS Control only; it is
+  # intentionally separate from product CP admin credentials.
+  controlToken:
+    existingSecret: ""
+    secretKey: "token"
+    autoGenerate: true
+    existingSecretChecksum: ""
+
+  runtime:
+    cache:
+      softTtlSeconds: 180
+      hardTtlSeconds: 300
+    # Product that owns grants stored before grants carried an explicit product.
+    # Every API key minted before the Identity Service has such grants, and they
+    # resolve to no product grants unless one product claims them — so leaving
+    # this empty denies the whole pre-existing key population the moment a data
+    # plane switches to introspection. RAM is the only product that can have
+    # legacy on-prem keys, so it claims them; set to "" for a deployment with no
+    # pre-Identity-Service keys.
+    unscopedGrantsProduct: memory
+    # Runtime credential name consumed by the packaged RAM data plane when the
+    # chart injects IdS-backed API-key introspection.
+    memoryCredentialName: memory-dp
+    # Service credentials used by product DPs/CPs when calling IdS Runtime.
+    # `name` is stable and is used in generated Secret names and token_file paths.
+    # The packaged RAM data plane consumes the default `memory-dp` credential
+    # when chart-rendered config enables IdS-backed API-key introspection.
+    serviceCredentials:
+      - name: memory-dp
+        subject: memory-dp
+        existingSecret: ""
+        secretKey: "token"
+        autoGenerate: true
+        existingSecretChecksum: ""
+        allowedOperations:
+          - api-key-introspect
+        allowedProducts:
+          - memory
+
+  productValidation:
+    # Product control planes that IdS calls before persisting API-key grants.
+    # Product keys must match ^[a-z0-9-]{1,44}$ because they are used in
+    # Kubernetes volume names.
+    # `memory` is the first packaged product and defaults to the on-prem RAM
+    # control-plane Service/internal token when baseURL/existingSecret are empty.
+    # Add sibling products such as `langcache` with explicit baseURL and
+    # credential.existingSecret as those products join the suite.
+    products:
+      memory:
+        enabled: true
+        # Empty means the chart uses the on-prem RAM control-plane Service.
+        baseURL: ""
+        # An empty existingSecret means the chart points IdS at the on-prem RAM
+        # control plane's own internal-token Secret. In that mode secretKey is
+        # ignored and the chart follows controlplane.internalToken.secretKey,
+        # because the key has to be the one that Secret actually publishes.
+        # secretKey applies when you bring your own Secret via existingSecret.
+        credential:
+          existingSecret: ""
+          secretKey: "token"
+          existingSecretChecksum: ""
+      # langcache:
+      #   enabled: true
+      #   baseURL: http://langcache-controlplane:9100
+      #   credential:
+      #     existingSecret: langcache-controlplane-internal-token
+      #     secretKey: token
+      #     existingSecretChecksum: ""
+
+  apiKeys:
+    maxRotateGraceSeconds: 604800
+
+  service:
+    type: ClusterIP
+    port: 9200
+
+  livenessProbe:
+    httpGet:
+      path: /v1/health/live
+      port: http
+  readinessProbe:
+    httpGet:
+      path: /v1/health/ready
+      port: http
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  volumes: []
+  volumeMounts: []

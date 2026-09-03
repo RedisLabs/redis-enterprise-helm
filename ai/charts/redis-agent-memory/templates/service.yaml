@@ -1,17 +1,9 @@
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ include "redis-agent-memory.fullname" . }}
-  labels:
-    {{- include "redis-agent-memory.labels" . | nindent 4 }}
-    app.kubernetes.io/component: server
-spec:
-  type: {{ .Values.service.type }}
-  ports:
-    - port: {{ .Values.service.port }}
-      targetPort: http
-      protocol: TCP
-      name: http
-  selector:
-    {{- include "redis-agent-memory.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: server
+{{- include "redis-onprem.dataplane.service" (dict
+  "root" .
+  "name" (include "redis-agent-memory.fullname" .)
+  "component" "server"
+  "labelsTemplate" "redis-agent-memory.labels"
+  "selectorLabelsTemplate" "redis-agent-memory.selectorLabels"
+  "type" .Values.service.type
+  "port" .Values.service.port
+) }}

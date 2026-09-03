@@ -1,6 +1,8 @@
 # EU region overrides. Merged on top of base-values.yaml.
 #
-#   helm install ram-eu ../.. -f base-values.yaml -f region-eu.yaml --set image.tag=<VER>
+#   helm install ram-eu ../.. -f base-values.yaml -f region-eu.yaml \
+#     --set image.tag=<VER> --set controlplane.image.tag=<VER> \
+#     --set identityService.image.tag=<IDS_VER>
 #
 # Only the non-secret regional deltas live here: the region identity, the
 # regions this deployment owns, and the ingress host. The API keys and Redis
@@ -11,7 +13,24 @@ secrets:
   # in one overlay document, mounted and merged over the base config at runtime.
   secretName: ram-eu-secrets
 
+identityService:
+  metadata:
+    # The Identity Service keeps its agent-key records in this region's metadata
+    # Redis, and reads the connection string from its own overlay Secret rather
+    # than from the data plane's. Use the same URL as `metadata.urls` in
+    # region-eu.secret-overlay.example.yaml, under the key the chart mounts.
+    # Put it in the environment first so the credential -- which lives inside the
+    # URL -- never lands in your shell history:
+    #
+    #   read -rs RAM_EU_IDS_METADATA_URL
+    #   kubectl create secret generic ram-eu-ids-metadata \
+    #     --from-literal=metadata.yaml="metadata:
+    #       urls: [$RAM_EU_IDS_METADATA_URL]"
+    existingSecret: ram-eu-ids-metadata
+
 memory:
+  dataplane_client:
+    base_url: http://ram-eu-redis-agent-memory:9000
   request_region:
     default: eu1
   background_jobs:
@@ -21,7 +40,8 @@ memory:
         - eu1
 
 ingress:
-  enabled: true
+  # Enable only after configuring Data Plane auth or an authenticated gateway.
+  enabled: false
   hosts:
     - host: memory-eu.example.com
       paths:

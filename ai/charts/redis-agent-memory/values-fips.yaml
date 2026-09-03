@@ -13,20 +13,29 @@
 #
 # Selecting this overlay:
 #
-#   1. Sets security.profile=fips so the container is started with
-#      MEM_SECURITY_PROFILE=fips. The image entrypoint then sets
-#      GODEBUG=fips140=on at process start. See the chart README and
-#      deployment/redis-agent-memory/README.md for the exact effects and
+#   1. Sets security.profile=fips so every application container starts with
+#      GODEBUG=fips140=on. See the chart README and
+#      memory/helm/README.md for the exact effects and
 #      the conservative compliance wording we use.
 #
 #   2. Does NOT automatically rewrite your config Secret. The config file
 #      you mount through config.existingSecret must also:
 #        - remove skip_verify=true from every outbound HTTP client;
+#        - remove allow_insecure_transport=true from every auth block
+#          (auth.oidc, auth.agent_keys.introspection, auth.worker_identity).
+#          That flag relaxes URL-scheme validation for the block's endpoints,
+#          so leaving it on would send bearer material over plaintext HTTP.
+#          It is rejected even when the owning block is disabled;
 #        - use rediss:// (TLS) URLs for every Redis connection, including
-#          background_jobs.redis.urls and metadata.stores[].urls.
-#      The binary fails startup with a joined error list if either of those
+#          background_jobs.redis.urls, metadata.urls, and databases.*.urls.
+#      The binary fails startup with a joined error list if any of those
 #      rules is violated while security.profile=fips, so catching this at
 #      install time rather than config-bake time is the intended workflow.
+#
+#   3. Requires a TLS Identity Service endpoint when identityService.enabled=true.
+#      The chart's default introspection base_url is the in-cluster http://
+#      address, which this profile forbids, so it refuses to render until you
+#      set memory.auth.agent_keys.introspection.base_url to an https:// URL.
 #
 # This file intentionally only sets the security toggle. Keep your resource
 # sizing, autoscaling, ingress, and image config in your main values file.

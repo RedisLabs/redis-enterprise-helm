@@ -76,6 +76,196 @@ Create the name of the control-plane admin-token Secret to use.
 {{- end }}
 
 {{/*
+Create the name of the control-plane internal-token Secret to use.
+*/}}
+{{- define "redis-agent-memory.controlplaneInternalTokenSecretName" -}}
+{{- if .Values.controlplane.internalToken.existingSecret }}
+{{- .Values.controlplane.internalToken.existingSecret }}
+{{- else }}
+{{- printf "%s-internal-token" (include "redis-agent-memory.controlplaneFullname" .) }}
+{{- end }}
+{{- end }}
+
+{{/*
+Fully qualified name for the optional suite-level Identity Service Deployment
+and resources. The RAM chart packages the first deployment path, but the service
+itself is shared across Iris products.
+*/}}
+{{- define "redis-agent-memory.identityServiceFullname" -}}
+{{- printf "%s-identity-service" (include "redis-agent-memory.fullname" . | trunc 46 | trimSuffix "-") }}
+{{- end }}
+
+{{/*
+Create the name of the Identity Service config carrier to use. When
+identityService.config.existingSecret is set it names that BYO Secret; otherwise
+it names the chart-rendered config ConfigMap.
+*/}}
+{{- define "redis-agent-memory.identityServiceConfigName" -}}
+{{- if .Values.identityService.config.existingSecret }}
+{{- .Values.identityService.config.existingSecret }}
+{{- else }}
+{{- printf "%s-config" (include "redis-agent-memory.identityServiceFullname" . | trunc 56 | trimSuffix "-") }}
+{{- end }}
+{{- end }}
+
+{{/*
+Create the name of the Identity Service Control admin-token Secret to use.
+*/}}
+{{- define "redis-agent-memory.identityServiceControlTokenSecretName" -}}
+{{- if .Values.identityService.controlToken.existingSecret }}
+{{- .Values.identityService.controlToken.existingSecret }}
+{{- else }}
+{{- printf "%s-control-token" (include "redis-agent-memory.identityServiceFullname" . | trunc 49 | trimSuffix "-") }}
+{{- end }}
+{{- end }}
+
+{{/*
+Stable name for one Identity Service Runtime service credential. The value is
+operator-provided because generated Secret names and mounted token_file paths
+must not depend on list position once multiple products share IdS.
+Takes a dict with credential.
+*/}}
+{{- define "redis-agent-memory.identityServiceRuntimeCredentialName" -}}
+{{- default "" .credential.name -}}
+{{- end }}
+
+{{/*
+Create the name of one Identity Service Runtime service-credential Secret.
+Takes a dict with root and credential.
+*/}}
+{{- define "redis-agent-memory.identityServiceRuntimeCredentialSecretName" -}}
+{{- $root := .root -}}
+{{- $credential := .credential -}}
+{{- if $credential.existingSecret -}}
+{{- $credential.existingSecret -}}
+{{- else -}}
+{{- $name := include "redis-agent-memory.identityServiceRuntimeCredentialName" (dict "credential" $credential) -}}
+{{- $suffix := printf "-runtime-%s" $name -}}
+{{- printf "%s%s" (include "redis-agent-memory.identityServiceFullname" $root | trunc (int (sub 63 (len $suffix))) | trimSuffix "-") $suffix -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Stable runtime credential name used by the packaged RAM data plane when it calls
+IdS Runtime for API-key introspection.
+*/}}
+{{- define "redis-agent-memory.identityServiceMemoryRuntimeCredentialExpectedName" -}}
+{{- default "memory-dp" .Values.identityService.runtime.memoryCredentialName -}}
+{{- end }}
+
+{{- define "redis-agent-memory.identityServiceMemoryRuntimeCredentialName" -}}
+{{- $name := "" -}}
+{{- $expectedName := include "redis-agent-memory.identityServiceMemoryRuntimeCredentialExpectedName" . -}}
+{{- range $credential := (default (list) .Values.identityService.runtime.serviceCredentials) }}
+{{- $credentialName := include "redis-agent-memory.identityServiceRuntimeCredentialName" (dict "credential" $credential) -}}
+{{- if eq $credentialName $expectedName -}}
+{{- $name = $credentialName -}}
+{{- end -}}
+{{- end -}}
+{{- $name -}}
+{{- end }}
+
+{{- define "redis-agent-memory.identityServiceMemoryRuntimeCredentialSecretName" -}}
+{{- $secretName := "" -}}
+{{- $expectedName := include "redis-agent-memory.identityServiceMemoryRuntimeCredentialExpectedName" . -}}
+{{- range $credential := (default (list) .Values.identityService.runtime.serviceCredentials) }}
+{{- $credentialName := include "redis-agent-memory.identityServiceRuntimeCredentialName" (dict "credential" $credential) -}}
+{{- if eq $credentialName $expectedName -}}
+{{- $secretName = include "redis-agent-memory.identityServiceRuntimeCredentialSecretName" (dict "root" $ "credential" $credential) -}}
+{{- end -}}
+{{- end -}}
+{{- $secretName -}}
+{{- end }}
+
+{{- define "redis-agent-memory.identityServiceMemoryRuntimeCredentialSecretKey" -}}
+{{- $secretKey := "" -}}
+{{- $expectedName := include "redis-agent-memory.identityServiceMemoryRuntimeCredentialExpectedName" . -}}
+{{- range $credential := (default (list) .Values.identityService.runtime.serviceCredentials) }}
+{{- $credentialName := include "redis-agent-memory.identityServiceRuntimeCredentialName" (dict "credential" $credential) -}}
+{{- if eq $credentialName $expectedName -}}
+{{- $secretKey = $credential.secretKey -}}
+{{- end -}}
+{{- end -}}
+{{- $secretKey -}}
+{{- end }}
+
+{{- define "redis-agent-memory.identityServiceMemoryRuntimeCredentialTokenFile" -}}
+{{- $credentialName := include "redis-agent-memory.identityServiceMemoryRuntimeCredentialName" . -}}
+{{- if $credentialName -}}
+{{- printf "/etc/identity-service/runtime/%s/token" $credentialName -}}
+{{- end -}}
+{{- end }}
+
+{{- define "redis-agent-memory.identityServiceMemoryRuntimeCredentialMountPath" -}}
+{{- $credentialName := include "redis-agent-memory.identityServiceMemoryRuntimeCredentialName" . -}}
+{{- if $credentialName -}}
+{{- printf "/etc/identity-service/runtime/%s" $credentialName -}}
+{{- end -}}
+{{- end }}
+
+{{- define "redis-agent-memory.identityServiceMemoryRuntimeCredentialVolumeName" -}}
+identity-service-runtime-memory-dp
+{{- end }}
+
+{{/*
+Base URL used by IdS product-validation calls.
+Takes a dict with root, product, and config. The memory product defaults to the
+RAM control-plane Service because this chart can deploy that product CP today.
+All other products must provide an explicit baseURL.
+*/}}
+{{- define "redis-agent-memory.identityServiceProductValidationBaseURL" -}}
+{{- $root := .root -}}
+{{- $product := .product -}}
+{{- $cfg := default (dict) .config -}}
+{{- if $cfg.baseURL -}}
+{{- $cfg.baseURL -}}
+{{- else if eq $product "memory" -}}
+{{- printf "http://%s:%v" (include "redis-agent-memory.controlplaneFullname" $root) $root.Values.controlplane.service.port -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Secret name used by one IdS product-validation credential.
+Takes a dict with root, product, and config.
+*/}}
+{{- define "redis-agent-memory.identityServiceProductValidationSecretName" -}}
+{{- $root := .root -}}
+{{- $product := .product -}}
+{{- $cfg := default (dict) .config -}}
+{{- $credential := default (dict) $cfg.credential -}}
+{{- if $credential.existingSecret -}}
+{{- $credential.existingSecret -}}
+{{- else if eq $product "memory" -}}
+{{- include "redis-agent-memory.controlplaneInternalTokenSecretName" $root -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Secret key used by one IdS product-validation credential.
+Takes a dict with root, product, and config.
+
+For the packaged memory product with no existingSecret, the chart is pointing IdS
+at the control plane's own internal-token Secret, so the key has to be the one
+that Secret publishes — controlplane.internalToken.secretKey. The operator is not
+supplying that Secret and therefore does not name its key; honouring
+credential.secretKey here would mount a key the Secret does not contain, leaving
+the container unable to start once controlplane.internalToken.secretKey was
+changed from its default. credential.secretKey applies when the operator brings
+their own Secret, which is the only case where they own the key name.
+*/}}
+{{- define "redis-agent-memory.identityServiceProductValidationSecretKey" -}}
+{{- $root := .root -}}
+{{- $product := .product -}}
+{{- $cfg := default (dict) .config -}}
+{{- $credential := default (dict) $cfg.credential -}}
+{{- if and (eq $product "memory") (not $credential.existingSecret) -}}
+{{- $root.Values.controlplane.internalToken.secretKey -}}
+{{- else if $credential.secretKey -}}
+{{- $credential.secretKey -}}
+{{- else -}}token{{- end -}}
+{{- end }}
+
+{{/*
 Create chart name and version as used by the chart label.
 */}}
 {{- define "redis-agent-memory.chart" -}}
@@ -200,9 +390,11 @@ Validate required enterprise inputs.
 {{- fail (printf "security.profile=%q is not supported (valid values: \"\", \"fips\"). See the chart README section \"FIPS-oriented posture\"." $profile) -}}
 {{- end -}}
 {{- end -}}
-{{- if .Values.controlplane.enabled -}}
 {{- if not .Values.controlplane.image.tag -}}
-{{- fail "controlplane.image.tag is required when controlplane.enabled=true" -}}
+{{- fail "controlplane.image.tag is required" -}}
+{{- end -}}
+{{- if lt (int .Values.controlplane.replicaCount) 1 -}}
+{{- fail "controlplane.replicaCount must be at least 1" -}}
 {{- end -}}
 {{- if and (not .Values.controlplane.config.existingSecret) (not .Values.controlplane.config.render) -}}
 {{- fail "controlplane.config: set controlplane.config.existingSecret (BYO) or controlplane.config.render=true (chart renders it from .Values.controlplane.configData / .Values.shared)" -}}
@@ -214,13 +406,209 @@ Validate required enterprise inputs.
 {{- fail "controlplane.config.render=true requires a config body: set .Values.controlplane.configData (and optionally .Values.shared)" -}}
 {{- end -}}
 {{- if not .Values.controlplane.config.secretKey -}}
-{{- fail "controlplane.config.secretKey is required when controlplane.enabled=true" -}}
+{{- fail "controlplane.config.secretKey is required" -}}
 {{- end -}}
 {{- if and (not .Values.controlplane.adminToken.existingSecret) (not .Values.controlplane.adminToken.autoGenerate) -}}
 {{- fail "controlplane.adminToken: set adminToken.existingSecret (BYO) or adminToken.autoGenerate=true" -}}
 {{- end -}}
+{{- if and (not .Values.controlplane.internalToken.existingSecret) (not .Values.controlplane.internalToken.autoGenerate) -}}
+{{- fail "controlplane.internalToken: set internalToken.existingSecret (BYO) or internalToken.autoGenerate=true" -}}
+{{- end -}}
+{{- if and (eq (include "redis-agent-memory.controlplaneAdminTokenSecretName" .) (include "redis-agent-memory.controlplaneInternalTokenSecretName" .)) (eq .Values.controlplane.adminToken.secretKey .Values.controlplane.internalToken.secretKey) -}}
+{{- fail "controlplane.internalToken must not use the same Secret/key as controlplane.adminToken" -}}
+{{- end -}}
 {{- if and .Values.airgap.enabled (eq .Values.controlplane.image.repository "redislabs/agent-memory-control-plane") -}}
 {{- fail "airgap.enabled=true requires controlplane.image.repository to point to a mirrored registry reachable from the cluster" -}}
+{{- end -}}
+{{- $ids := default (dict) .Values.identityService -}}
+{{- if and $ids $ids.enabled -}}
+{{- if not $ids.image.tag -}}
+{{- fail "identityService.image.tag is required when identityService.enabled=true" -}}
+{{- end -}}
+{{- if and (not $ids.config.existingSecret) (not $ids.config.render) -}}
+{{- fail "identityService.config: set identityService.config.existingSecret (BYO) or identityService.config.render=true" -}}
+{{- end -}}
+{{- if and $ids.config.existingSecret $ids.config.render -}}
+{{- fail "identityService.config: existingSecret (BYO Secret) and render (chart-rendered ConfigMap) are mutually exclusive; pick one" -}}
+{{- end -}}
+{{- if not $ids.config.secretKey -}}
+{{- fail "identityService.config.secretKey is required when identityService.enabled=true" -}}
+{{- end -}}
+{{- if and $ids.config.render (not $ids.metadata.existingSecret) -}}
+{{- fail "identityService.metadata.existingSecret is required when identityService.config.render=true" -}}
+{{- end -}}
+{{- if and $ids.metadata.existingSecret (not $ids.metadata.secretKey) -}}
+{{- fail "identityService.metadata.secretKey is required when identityService.metadata.existingSecret is set" -}}
+{{- end -}}
+{{- if and (not $ids.controlToken.existingSecret) (not $ids.controlToken.autoGenerate) -}}
+{{- fail "identityService.controlToken: set controlToken.existingSecret (BYO) or controlToken.autoGenerate=true" -}}
+{{- end -}}
+{{- if not $ids.controlToken.secretKey -}}
+{{- fail "identityService.controlToken.secretKey is required when identityService.enabled=true" -}}
+{{- end -}}
+{{- $runtime := default (dict) $ids.runtime -}}
+{{- $cache := default (dict) $runtime.cache -}}
+{{- $softTTL := int (default 180 $cache.softTtlSeconds) -}}
+{{- $hardTTL := int (default 300 $cache.hardTtlSeconds) -}}
+{{- if lt $softTTL 0 -}}
+{{- fail "identityService.runtime.cache.softTtlSeconds must not be negative" -}}
+{{- end -}}
+{{- if lt $hardTTL 0 -}}
+{{- fail "identityService.runtime.cache.hardTtlSeconds must not be negative" -}}
+{{- end -}}
+{{- if lt $hardTTL $softTTL -}}
+{{- fail "identityService.runtime.cache.hardTtlSeconds must be greater than or equal to identityService.runtime.cache.softTtlSeconds" -}}
+{{- end -}}
+{{- $runtimeCredentials := default (list) $runtime.serviceCredentials -}}
+{{- if not $runtimeCredentials -}}
+{{- fail "identityService.runtime.serviceCredentials is required when identityService.enabled=true" -}}
+{{- end -}}
+{{- $idsControlSecret := include "redis-agent-memory.identityServiceControlTokenSecretName" . -}}
+{{- $runtimeCredentialRefs := dict -}}
+{{- $runtimeCredentialNames := dict -}}
+{{- $memoryRuntimeCredentialName := include "redis-agent-memory.identityServiceMemoryRuntimeCredentialExpectedName" . -}}
+{{- if not (regexMatch "^[a-z0-9-]{1,44}$" $memoryRuntimeCredentialName) -}}
+{{- fail "identityService.runtime.memoryCredentialName must match ^[a-z0-9-]{1,44}$" -}}
+{{- end -}}
+{{- $memoryAuth := default (dict) .Values.memory.auth -}}
+{{- $memoryAuthMethod := default "agent_key" $memoryAuth.method -}}
+{{- $chartManagedMemoryIntrospection := and .Values.config.render (not .Values.config.existingSecret) (eq $memoryAuthMethod "agent_key") -}}
+{{- if and (eq $idsControlSecret (include "redis-agent-memory.controlplaneAdminTokenSecretName" .)) (eq $ids.controlToken.secretKey .Values.controlplane.adminToken.secretKey) -}}
+{{- fail "identityService.controlToken must not use the same Secret/key as controlplane.adminToken" -}}
+{{- end -}}
+{{- if and (eq $idsControlSecret (include "redis-agent-memory.controlplaneInternalTokenSecretName" .)) (eq $ids.controlToken.secretKey .Values.controlplane.internalToken.secretKey) -}}
+{{- fail "identityService.controlToken must not use the same Secret/key as controlplane.internalToken" -}}
+{{- end -}}
+{{- range $i, $credential := $runtimeCredentials -}}
+{{- $credentialName := include "redis-agent-memory.identityServiceRuntimeCredentialName" (dict "credential" $credential) -}}
+{{- if not $credentialName -}}
+{{- fail (printf "identityService.runtime.serviceCredentials[%d].name is required" $i) -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-z0-9-]{1,44}$" $credentialName) -}}
+{{- fail (printf "identityService.runtime.serviceCredentials[%d].name must match ^[a-z0-9-]{1,44}$" $i) -}}
+{{- end -}}
+{{- if hasKey $runtimeCredentialNames $credentialName -}}
+{{- fail (printf "identityService.runtime.serviceCredentials[%d].name duplicates %s" $i (index $runtimeCredentialNames $credentialName)) -}}
+{{- end -}}
+{{- $_ := set $runtimeCredentialNames $credentialName (printf "identityService.runtime.serviceCredentials[%d].name" $i) -}}
+{{- if not $credential.subject -}}
+{{- fail (printf "identityService.runtime.serviceCredentials[%d].subject is required" $i) -}}
+{{- end -}}
+{{- if and (not $credential.existingSecret) (not $credential.autoGenerate) -}}
+{{- fail (printf "identityService.runtime.serviceCredentials[%d]: set existingSecret (BYO) or autoGenerate=true" $i) -}}
+{{- end -}}
+{{- if not $credential.secretKey -}}
+{{- fail (printf "identityService.runtime.serviceCredentials[%d].secretKey is required" $i) -}}
+{{- end -}}
+{{- if not $credential.allowedOperations -}}
+{{- fail (printf "identityService.runtime.serviceCredentials[%d].allowedOperations is required" $i) -}}
+{{- end -}}
+{{- if not $credential.allowedProducts -}}
+{{- fail (printf "identityService.runtime.serviceCredentials[%d].allowedProducts is required" $i) -}}
+{{- end -}}
+{{- if and $chartManagedMemoryIntrospection (eq $credentialName $memoryRuntimeCredentialName) -}}
+{{- /*
+  The chart is wiring the RAM data plane to introspect against this credential,
+  so the credential has to actually carry that reach. Omitting it is otherwise
+  indistinguishable from a deliberate choice, and the failure surfaces only at
+  request time as a 403 naming no cause.
+
+  Matching is case-insensitive on purpose, even though values.schema.json admits
+  only canonical lowercase: the schema is the gate that enforces canonical form,
+  and this check is the fallback behind it (schema validation can be skipped).
+  A fallback must not be stricter than the service it guards — the Identity
+  Service compares operations and products case-insensitively, so rejecting a
+  value it would accept would turn this guard into its own outage.
+*/ -}}
+{{- $hasMemoryIntrospectionOperation := false -}}
+{{- range $operation := $credential.allowedOperations -}}
+{{- if eq (lower (trim (toString $operation))) "api-key-introspect" -}}
+{{- $hasMemoryIntrospectionOperation = true -}}
+{{- end -}}
+{{- end -}}
+{{- if not $hasMemoryIntrospectionOperation -}}
+{{- fail (printf "identityService.runtime.serviceCredentials[%d].allowedOperations must include api-key-introspect for chart-rendered RAM data-plane IdS introspection" $i) -}}
+{{- end -}}
+{{- $hasMemoryProduct := false -}}
+{{- range $product := $credential.allowedProducts -}}
+{{- if eq (lower (trim (toString $product))) "memory" -}}
+{{- $hasMemoryProduct = true -}}
+{{- end -}}
+{{- end -}}
+{{- if not $hasMemoryProduct -}}
+{{- fail (printf "identityService.runtime.serviceCredentials[%d].allowedProducts must include memory for chart-rendered RAM data-plane IdS introspection" $i) -}}
+{{- end -}}
+{{- end -}}
+{{- $runtimeSecretName := include "redis-agent-memory.identityServiceRuntimeCredentialSecretName" (dict "root" $ "credential" $credential) -}}
+{{- if and (eq $runtimeSecretName $idsControlSecret) (eq $credential.secretKey $.Values.identityService.controlToken.secretKey) -}}
+{{- fail (printf "identityService.runtime.serviceCredentials[%d] must not use the same Secret/key as identityService.controlToken" $i) -}}
+{{- end -}}
+{{- $runtimeCredentialRefKey := printf "%s/%s" $runtimeSecretName $credential.secretKey -}}
+{{- $runtimeCredentialRef := index $runtimeCredentialRefs $runtimeCredentialRefKey -}}
+{{- if $runtimeCredentialRef -}}
+{{- fail (printf "identityService.runtime.serviceCredentials[%d] must not use the same Secret/key as %s" $i $runtimeCredentialRef) -}}
+{{- end -}}
+{{- $_ := set $runtimeCredentialRefs $runtimeCredentialRefKey (printf "identityService.runtime.serviceCredentials[%d]" $i) -}}
+{{- end -}}
+{{- if and $chartManagedMemoryIntrospection (not (hasKey $runtimeCredentialNames $memoryRuntimeCredentialName)) -}}
+{{- fail (printf "identityService.runtime.serviceCredentials must include a credential named %s for chart-rendered RAM data-plane IdS introspection; set identityService.runtime.memoryCredentialName to the RAM credential name or provide matching serviceCredentials" $memoryRuntimeCredentialName) -}}
+{{- end -}}
+{{- $productValidationValues := default (dict) $ids.productValidation -}}
+{{- $validationProducts := default (dict) $productValidationValues.products -}}
+{{- if not $validationProducts -}}
+{{- fail "identityService.productValidation.products is required when identityService.enabled=true" -}}
+{{- end -}}
+{{- $enabledValidationProducts := 0 -}}
+{{- range $product, $validation := $validationProducts -}}
+{{- $enabled := true -}}
+{{- if hasKey $validation "enabled" }}{{- $enabled = $validation.enabled -}}{{- end -}}
+{{- if $enabled -}}
+{{- $enabledValidationProducts = add $enabledValidationProducts 1 -}}
+{{- if not (regexMatch "^[a-z0-9-]{1,44}$" $product) -}}
+{{- fail (printf "identityService.productValidation.products.%s: product names must match ^[a-z0-9-]{1,44}$" $product) -}}
+{{- end -}}
+{{- $baseURL := include "redis-agent-memory.identityServiceProductValidationBaseURL" (dict "root" $ "product" $product "config" $validation) -}}
+{{- if not $baseURL -}}
+{{- fail (printf "identityService.productValidation.products.%s.baseURL is required" $product) -}}
+{{- end -}}
+{{- if not (regexMatch "^https?://[^/?#]+" $baseURL) -}}
+{{- fail (printf "identityService.productValidation.products.%s.baseURL must be an absolute http:// or https:// URL" $product) -}}
+{{- end -}}
+{{- if regexMatch "^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]*@" $baseURL -}}
+{{- fail (printf "identityService.productValidation.products.%s.baseURL must not include user info" $product) -}}
+{{- end -}}
+{{- if contains "?" $baseURL -}}
+{{- fail (printf "identityService.productValidation.products.%s.baseURL must not include query parameters" $product) -}}
+{{- end -}}
+{{- if contains "#" $baseURL -}}
+{{- fail (printf "identityService.productValidation.products.%s.baseURL must not include a fragment" $product) -}}
+{{- end -}}
+{{- $credential := default (dict) $validation.credential -}}
+{{- $secretName := include "redis-agent-memory.identityServiceProductValidationSecretName" (dict "root" $ "product" $product "config" $validation) -}}
+{{- $secretKey := include "redis-agent-memory.identityServiceProductValidationSecretKey" (dict "root" $ "product" $product "config" $validation) -}}
+{{- if not $secretName -}}
+{{- fail (printf "identityService.productValidation.products.%s.credential.existingSecret is required" $product) -}}
+{{- end -}}
+{{- if not $secretKey -}}
+{{- fail (printf "identityService.productValidation.products.%s.credential.secretKey is required" $product) -}}
+{{- end -}}
+{{- if and (eq $secretName $idsControlSecret) (eq $secretKey $.Values.identityService.controlToken.secretKey) -}}
+{{- fail (printf "identityService.productValidation.products.%s.credential must not use the same Secret/key as identityService.controlToken" $product) -}}
+{{- end -}}
+{{- $runtimeCredentialRef := index $runtimeCredentialRefs (printf "%s/%s" $secretName $secretKey) -}}
+{{- if $runtimeCredentialRef -}}
+{{- fail (printf "identityService.productValidation.products.%s.credential must not use the same Secret/key as %s" $product $runtimeCredentialRef) -}}
+{{- end -}}
+{{- if and (eq $product "memory") (eq $secretName (include "redis-agent-memory.controlplaneAdminTokenSecretName" $)) (eq $secretKey $.Values.controlplane.adminToken.secretKey) -}}
+{{- fail "identityService.productValidation.products.memory.credential must not use the same Secret/key as controlplane.adminToken" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if eq (int $enabledValidationProducts) 0 -}}
+{{- fail "identityService.productValidation.products must contain at least one enabled product" -}}
+{{- end -}}
+{{- if and .Values.airgap.enabled (eq $ids.image.repository "redislabs/iris-identity-service") -}}
+{{- fail "airgap.enabled=true requires identityService.image.repository to point to a mirrored registry reachable from the cluster" -}}
 {{- end -}}
 {{- end -}}
 {{- $queueMonitor := .Values.controlplane.queueMonitor -}}
@@ -264,23 +652,18 @@ Validate required enterprise inputs.
 Common container env entries applied to both the server and worker
 Deployments. Centralizing env vars here avoids the classic Helm mistake
 of remembering to add a new env var to one Deployment but not the other.
-Carries MEM_SECURITY_PROFILE (see plan: "FIPS posture for on-prem Agent
-Memory") plus SSL_CERT_DIR when a TLS CA bundle is mounted.
+Carries the Go runtime's FIPS setting plus SSL_CERT_DIR when a TLS CA bundle
+is mounted.
 */}}
 {{- define "redis-agent-memory.commonEnv" -}}
-- name: MEM_SECURITY_PROFILE
-  value: {{ if .Values.security }}{{ default "" .Values.security.profile | quote }}{{ else }}""{{ end }}
-{{- if and .Values.tls .Values.tls.caCertSecret }}
-- name: SSL_CERT_DIR
-  value: "/etc/ssl/custom"
-{{- end }}
+{{ include "redis-onprem.commonEnv" (dict "securityProfile" (default "" .Values.security.profile) "tlsCaCertSecret" .Values.tls.caCertSecret) }}
 {{- end }}
 
 {{/*
 Full container env for the server and worker. Credentials are no longer injected
 as env vars — they arrive inside the mounted secret overlays (see
 overlayVolumes / overlayConfigArgs) — so this is just the common env
-(MEM_SECURITY_PROFILE, SSL_CERT_DIR). Kept as a named partial so the three
+(GODEBUG, SSL_CERT_DIR). Kept as a named partial so the three
 Deployments stay in sync if service-wide env is added later.
 */}}
 {{- define "redis-agent-memory.env" -}}
@@ -297,8 +680,7 @@ conflicts. Takes a dict with "Values" (root .Values, for .Values.shared) and
 
 The component body IS the on-prem config file body in snake_case; Helm has
 already deep-merged base-values + region overrides before this runs, so this is
-just serialization. metadata.stores is a native map keyed by store id, so no
-expansion is needed — Helm deep-merges base/region store maps directly. Secrets
+just serialization. Secrets
 (API keys, Redis connection URLs) are never present here — they arrive via the
 mounted secret overlays and are merged by the config loader at runtime.
 */}}
@@ -310,12 +692,155 @@ mounted secret overlays and are merged by the config loader at runtime.
 
 {{/* Rendered data-plane config body (.Values.memory). See renderConfig. */}}
 {{- define "redis-agent-memory.dataplaneConfig" -}}
-{{- include "redis-agent-memory.renderConfig" (dict "Values" .Values "body" .Values.memory) -}}
+{{- $body := deepCopy (default (dict) .Values.memory) -}}
+{{- $ids := default (dict) .Values.identityService -}}
+{{- $runtimeCredentialName := include "redis-agent-memory.identityServiceMemoryRuntimeCredentialName" . -}}
+{{/*
+  Turning the Identity Service off does not turn agent-key auth off. The data
+  plane defaults an unspecified auth method to agent_key on purpose, so that the
+  secure posture is what you get by not deciding. With IdS enabled the block
+  below writes the introspection endpoint that default needs; with IdS disabled
+  nothing writes it, and the pod dies at startup demanding
+  agent_keys.introspection.* fields the operator never wrote.
+
+  Make the operator say what they meant, at render time and in their own terms,
+  rather than at CrashLoopBackOff in ours. Anyone who has chosen a method -- or
+  enabled any auth flavour, including pointing agent keys at an Identity Service
+  this chart does not own -- passes straight through.
+*/}}
+{{- if and (not $ids.enabled) .Values.config.render (not .Values.config.existingSecret) -}}
+{{- $auth := default (dict) (index $body "auth") -}}
+{{- $agentKeys := default (dict) (index $auth "agent_keys") -}}
+{{- $workerIdentity := default (dict) (index $auth "worker_identity") -}}
+{{- $oidc := default (dict) (index $auth "oidc") -}}
+{{- $flavourEnabled := or (index $auth "enabled") (index $agentKeys "enabled") (index $workerIdentity "enabled") (index $oidc "enabled") -}}
+{{- if and (not (index $auth "method")) (not $flavourEnabled) -}}
+{{- fail "identityService.enabled=false leaves memory.auth.method unset, and the data plane defaults that to agent_key -- which then fails to start because no Identity Service introspection endpoint was rendered for it. Choose one: set memory.auth.method=none to run behind an infrastructure access boundary; or keep agent-key auth and set memory.auth.agent_keys.introspection.base_url (plus product and credential) to an Identity Service this chart does not manage; or re-enable identityService.enabled." -}}
+{{- end -}}
+{{/*
+  Choosing agent-key auth (explicitly or via agent_keys.enabled) is not the
+  same as it being renderable: with the Identity Service disabled, nothing
+  supplies agent_keys.introspection.base_url, and the data plane crashes at
+  startup demanding it.
+*/}}
+{{- $agentKeyMethod := or (eq (default "" (index $auth "method")) "agent_key") (index $agentKeys "enabled") -}}
+{{- $introspection := default (dict) (index $agentKeys "introspection") -}}
+{{- if and $agentKeyMethod (not (index $introspection "base_url")) -}}
+{{- fail "identityService.enabled=false leaves memory.auth resolving to agent-key auth (method=agent_key or agent_keys.enabled=true), but memory.auth.agent_keys.introspection.base_url is not set -- with the Identity Service disabled nothing will supply that endpoint and the data plane will crash at startup. Set memory.auth.agent_keys.introspection.base_url (plus product and credential) to an Identity Service this chart does not manage, or choose memory.auth.method=none instead." -}}
+{{- end -}}
+{{- end -}}
+{{- if and $ids.enabled .Values.config.render (not .Values.config.existingSecret) $runtimeCredentialName -}}
+{{- $auth := deepCopy (default (dict) (index $body "auth")) -}}
+{{- $methodWasSet := hasKey $auth "method" -}}
+{{- if not $methodWasSet -}}
+{{- $_ := set $auth "method" "agent_key" -}}
+{{- end -}}
+{{- if eq (default "" (index $auth "method")) "agent_key" -}}
+{{- $agentKeys := deepCopy (default (dict) (index $auth "agent_keys")) -}}
+{{- if not (hasKey $agentKeys "enabled") -}}
+{{- $_ := set $agentKeys "enabled" true -}}
+{{- end -}}
+{{- $introspection := deepCopy (default (dict) (index $agentKeys "introspection")) -}}
+{{- if not (hasKey $introspection "base_url") -}}
+{{/*
+  The in-cluster default is plaintext, and the chart pairs it with
+  allow_insecure_transport so the data plane accepts the http:// scheme. Under
+  the FIPS-oriented profile that combination is exactly what the profile exists
+  to forbid: agent-key material would travel to the Identity Service in the
+  clear. Refuse to default it rather than render a config the data plane will
+  reject at startup with a flag the operator never wrote.
+*/}}
+{{- if and .Values.security (eq (default "" .Values.security.profile) "fips") -}}
+{{- fail "security.profile=fips requires a TLS endpoint for Identity Service introspection; the chart will not default memory.auth.agent_keys.introspection.base_url to the in-cluster http:// address. Set memory.auth.agent_keys.introspection.base_url to an https:// URL and leave allow_insecure_transport unset." -}}
+{{- end -}}
+{{- $_ := set $introspection "base_url" (printf "http://%s:%v" (include "redis-agent-memory.identityServiceFullname" .) .Values.identityService.service.port) -}}
+{{- if not (hasKey $introspection "allow_insecure_transport") -}}
+{{- $_ := set $introspection "allow_insecure_transport" true -}}
+{{- end -}}
+{{- end -}}
+{{- if not (hasKey $introspection "product") -}}
+{{- $_ := set $introspection "product" "memory" -}}
+{{- end -}}
+{{- $credential := deepCopy (default (dict) (index $introspection "credential")) -}}
+{{- if not (or (index $credential "token_file") (index $credential "token")) -}}
+{{- $_ := set $credential "token_file" (include "redis-agent-memory.identityServiceMemoryRuntimeCredentialTokenFile" .) -}}
+{{- end -}}
+{{- $_ := set $introspection "credential" $credential -}}
+{{- $_ := set $agentKeys "introspection" $introspection -}}
+{{- $_ := set $auth "agent_keys" $agentKeys -}}
+{{- end -}}
+{{- $_ := set $body "auth" $auth -}}
+{{- end -}}
+{{- include "redis-agent-memory.renderConfig" (dict "Values" .Values "body" $body) -}}
 {{- end }}
 
 {{/* Rendered control-plane config body (.Values.controlplane.configData). See renderConfig. */}}
 {{- define "redis-agent-memory.controlplaneConfig" -}}
-{{- include "redis-agent-memory.renderConfig" (dict "Values" .Values "body" .Values.controlplane.configData) -}}
+{{- $body := deepCopy (default (dict) .Values.controlplane.configData) -}}
+{{- $ids := default (dict) .Values.identityService -}}
+{{- if and $ids.enabled .Values.controlplane.config.render (not .Values.controlplane.config.existingSecret) -}}
+{{- $auth := deepCopy (default (dict) (index $body "auth")) -}}
+{{- $internalToken := deepCopy (default (dict) (index $auth "internal_token")) -}}
+{{- if not (or (index $internalToken "token_file") (index $internalToken "token")) -}}
+{{- $_ := set $internalToken "token_file" "/etc/controlplane-onprem/internal/token" -}}
+{{- end -}}
+{{- $_ := set $auth "internal_token" $internalToken -}}
+{{- $_ := set $body "auth" $auth -}}
+{{- end -}}
+{{- include "redis-agent-memory.renderConfig" (dict "Values" .Values "body" $body) -}}
+{{- end }}
+
+{{/*
+Rendered Identity Service config body. The chart owns mounted credential paths,
+so this rendered ConfigMap carries structure only. Metadata Redis URLs arrive
+through identityService.metadata.existingSecret as a Secret overlay.
+*/}}
+{{- define "redis-agent-memory.identityServiceConfig" -}}
+{{- $ids := default (dict) .Values.identityService -}}
+{{- $runtime := default (dict) $ids.runtime -}}
+{{- $cache := default (dict) $runtime.cache -}}
+{{- $apiKeys := default (dict) $ids.apiKeys -}}
+{{- $cfg := deepCopy (default (dict) $ids.configData) -}}
+{{- $_ := set $cfg "auth" (dict "type" "static-credential" "control" (dict "token_file" "/etc/identity-service/control/token")) -}}
+{{- $runtimeCredentials := list -}}
+{{- range $i, $credential := (default (list) $runtime.serviceCredentials) }}
+{{- $credentialName := include "redis-agent-memory.identityServiceRuntimeCredentialName" (dict "credential" $credential) -}}
+{{- $runtimeCredentials = append $runtimeCredentials (dict "subject" $credential.subject "token_file" (printf "/etc/identity-service/runtime/%s/token" $credentialName) "allowed_operations" $credential.allowedOperations "allowed_products" $credential.allowedProducts) -}}
+{{- end }}
+{{- $runtimeCfg := dict "service_credentials" $runtimeCredentials "cache" (dict "soft_ttl_seconds" (int (default 180 $cache.softTtlSeconds)) "hard_ttl_seconds" (int (default 300 $cache.hardTtlSeconds))) -}}
+{{- $productValidationValues := default (dict) $ids.productValidation -}}
+{{- $validationProducts := default (dict) $productValidationValues.products -}}
+{{- $productValidation := dict -}}
+{{- range $product, $validation := $validationProducts }}
+{{- $enabled := true -}}
+{{- if hasKey $validation "enabled" }}{{- $enabled = $validation.enabled -}}{{- end -}}
+{{- if $enabled -}}
+{{- $entry := dict "base_url" (include "redis-agent-memory.identityServiceProductValidationBaseURL" (dict "root" $ "product" $product "config" $validation)) "credential" (dict "token_file" (printf "/etc/identity-service/product-validation/%s/token" $product)) -}}
+{{- $_ := set $productValidation $product $entry -}}
+{{- end -}}
+{{- end }}
+{{- $_ := set $cfg "product_validation" $productValidation -}}
+{{/*
+  Claim pre-product grants only for a product this release actually configures.
+  The default names `memory` because RAM is the only product that can hold
+  legacy on-prem keys, but the same chart can be rendered with the memory
+  validator disabled — and IdS rejects an owner that is not a configured
+  product, so emitting it unconditionally would render a config the service
+  refuses to start with.
+
+  Dropping it here is only safe because a *typo* can no longer reach this point:
+  values.schema.json holds unscopedGrantsProduct to the closed product set, so a
+  misspelling fails the render instead of silently denying every legacy key.
+  What is dropped here is a real product name this deployment does not
+  configure — the default "memory" in a langcache-only install — which is the
+  intended behaviour.
+*/}}
+{{- if and $runtime.unscopedGrantsProduct (hasKey $productValidation $runtime.unscopedGrantsProduct) -}}
+{{- $_ := set $runtimeCfg "unscoped_grants_product" $runtime.unscopedGrantsProduct -}}
+{{- end -}}
+{{- $_ := set $cfg "runtime" $runtimeCfg -}}
+{{- $_ := set $cfg "api_keys" (dict "max_rotate_grace_seconds" (int (default 604800 $apiKeys.maxRotateGraceSeconds))) -}}
+{{- toYaml $cfg -}}
 {{- end }}
 
 {{/*
