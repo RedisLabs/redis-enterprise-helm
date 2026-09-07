@@ -21,6 +21,6 @@ entries:
     name: radar
     type: application
     urls:
-    - https://github.com/redislabsdev/radar/releases/download/v2026.9.2/radar-2026.9.2.tgz
+    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/radar-2026.9.2/radar-2026.9.2.tgz
     version: 2026.9.2
 generated: "2026-09-03T12:40:54.508402318Z"
