@@ -1,0 +1,71 @@
+LangCache {{ .Chart.Version }} has been installed.
+
+Data Plane   : {{ include "langcache.fullname" . }} (Service port {{ .Values.dataplane.service.port }})
+Control Plane: {{ include "langcache.controlplaneFullname" . }} (Service port {{ .Values.controlplane.service.port }})
+{{- if eq .Values.identityService.mode "bundled" }}
+Identity Svc : {{ include "langcache.identityServiceFullname" . }} (Service port {{ .Values.identityService.bundled.service.port }}, bundled)
+{{- else }}
+Identity Svc : external — {{ .Values.identityService.external.baseURL }}
+{{- end }}
+
+{{- if and .Values.security (eq (default "" .Values.security.profile) "fips") }}
+
+FIPS-oriented posture is ACTIVE (security.profile=fips). GODEBUG=fips140=on is
+set on every LangCache container. This is NOT a formal FIPS compliance claim —
+see the chart README section "FIPS-oriented posture" for the full list of
+guarantees and caveats.
+{{- end }}
+
+{{- if .Values.controlplane.adminToken.autoGenerate }}
+{{- if not .Values.controlplane.adminToken.existingSecret }}
+
+The Control Plane admin token was auto-generated. Retrieve it with:
+  kubectl get secret --namespace {{ .Release.Namespace }} {{ include "langcache.controlplaneAdminTokenSecretName" . }} -o jsonpath="{.data.{{ .Values.controlplane.adminToken.secretKey }}}" | base64 -d
+{{- end }}
+{{- end }}
+{{- if .Values.controlplane.internalToken.autoGenerate }}
+{{- if not .Values.controlplane.internalToken.existingSecret }}
+
+The Control Plane internal grant-validation token was auto-generated.
+Retrieve it with:
+  kubectl get secret --namespace {{ .Release.Namespace }} {{ include "langcache.controlplaneInternalTokenSecretName" . }} -o jsonpath="{.data.{{ .Values.controlplane.internalToken.secretKey }}}" | base64 -d
+{{- end }}
+{{- end }}
+
+{{- if eq .Values.identityService.mode "bundled" }}
+{{- if .Values.identityService.bundled.controlToken.autoGenerate }}
+{{- if not .Values.identityService.bundled.controlToken.existingSecret }}
+
+The Identity Service Control admin token was auto-generated. Retrieve it
+with:
+  kubectl get secret --namespace {{ .Release.Namespace }} {{ include "langcache.identityServiceControlTokenSecretName" . }} -o jsonpath="{.data.{{ .Values.identityService.bundled.controlToken.secretKey }}}" | base64 -d
+{{- end }}
+{{- end }}
+{{- else }}
+
+External Identity Service mode: this release renders no Identity Service
+workload. Ask the suite-level Identity Service owner to configure that
+Identity Service's product_validation for "langcache" against this
+release's Control Plane internal Service
+({{ include "langcache.controlplaneFullname" . }}:{{ .Values.controlplane.service.port }})
+and internalToken Secret. See the chart README section "External Identity
+Service".
+{{- end }}
+
+{{- if .Values.dataplane.ingress.enabled }}
+
+Data Plane ingress hosts:
+{{- range .Values.dataplane.ingress.hosts }}
+  http{{ if $.Values.dataplane.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- else }}
+
+Reach the Data Plane in-cluster at:
+  http://{{ include "langcache.fullname" . }}:{{ .Values.dataplane.service.port }}
+
+Or port-forward it locally:
+  kubectl port-forward --namespace {{ .Release.Namespace }} svc/{{ include "langcache.fullname" . }} {{ .Values.dataplane.service.port }}:{{ .Values.dataplane.service.port }}
+{{- end }}
+
+See the chart README for how to mint an API key through the Identity
+Service and create your first cache through the Control Plane.

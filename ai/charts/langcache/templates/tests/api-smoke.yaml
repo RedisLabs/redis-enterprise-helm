@@ -1,0 +1,115 @@
+{{- if and .Values.tests.enabled .Values.tests.smoke.enabled }}
+{{- /*
+  Proves authenticated set/search/delete of one uniquely generated entry
+  against a pre-seeded cache and API key. CI (not this hook) is responsible
+  for: creating a READY cache through the Control Plane, minting an Iris API
+  key through the Identity Service with a concrete langcache/lc-cache grant,
+  and storing the plaintext token in tests.smoke.apiKey.existingSecret. This
+  hook only ever reads that cache and key — it never creates or deletes
+  operator-owned resources, and its own cleanup is best-effort.
+*/}}
+{{- $smoke := .Values.tests.smoke -}}
+{{- if not $smoke.cacheID -}}
+{{- fail "tests.smoke.cacheID is required when tests.smoke.enabled=true" -}}
+{{- end -}}
+{{- if not $smoke.apiKey.existingSecret -}}
+{{- fail "tests.smoke.apiKey.existingSecret is required when tests.smoke.enabled=true" -}}
+{{- end -}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "langcache.fullname" . }}-test-api-smoke"
+  labels:
+    {{- include "langcache.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  restartPolicy: Never
+  activeDeadlineSeconds: {{ $smoke.activeDeadlineSeconds }}
+  containers:
+    - name: api-smoke
+      image: "{{ $smoke.image.repository }}:{{ $smoke.image.tag }}"
+      env:
+        - name: LC_BASE_URL
+          value: "http://{{ include "langcache.fullname" . }}:{{ .Values.dataplane.service.port }}"
+        - name: LC_CACHE_ID
+          value: {{ $smoke.cacheID | quote }}
+        - name: LC_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ $smoke.apiKey.existingSecret }}
+              key: {{ $smoke.apiKey.secretKey }}
+        - name: LC_SEARCH_RETRIES
+          value: {{ $smoke.searchRetries | quote }}
+        - name: LC_SEARCH_RETRY_INTERVAL_SECONDS
+          value: {{ $smoke.searchRetryIntervalSeconds | quote }}
+        - name: LC_REQUEST_TIMEOUT_SECONDS
+          value: {{ $smoke.timeoutSeconds | quote }}
+      command: ["python", "-c"]
+      args:
+        - |
+          import json, os, time, urllib.error, urllib.request, uuid
+
+          base_url = os.environ["LC_BASE_URL"]
+          cache_id = os.environ["LC_CACHE_ID"]
+          token = os.environ["LC_API_TOKEN"]
+          search_retries = int(os.environ["LC_SEARCH_RETRIES"])
+          search_retry_interval = int(os.environ["LC_SEARCH_RETRY_INTERVAL_SECONDS"])
+          request_timeout = int(os.environ["LC_REQUEST_TIMEOUT_SECONDS"])
+
+          def request(method, path, body=None, expected=(200,)):
+              url = f"{base_url}{path}"
+              data = json.dumps(body).encode() if body is not None else None
+              req = urllib.request.Request(url, data=data, method=method)
+              req.add_header("Authorization", f"Bearer {token}")
+              if data is not None:
+                  req.add_header("Content-Type", "application/json")
+              try:
+                  with urllib.request.urlopen(req, timeout=request_timeout) as resp:
+                      status = resp.status
+                      payload = resp.read()
+              except urllib.error.HTTPError as e:
+                  status = e.code
+                  payload = e.read()
+              if status not in expected:
+                  raise SystemExit(f"{method} {path} -> {status}: {payload!r}")
+              return json.loads(payload) if payload else None
+
+          keyword = f"langcache-smoke-{uuid.uuid4().hex}"
+          entry_id = None
+          try:
+              health = request("GET", f"/v1/caches/{cache_id}/health")
+              assert health["ok"] is True, f"cache not healthy: {health}"
+              print("health check passed")
+
+              created = request(
+                  "POST",
+                  f"/v1/caches/{cache_id}/entries",
+                  {"prompt": keyword, "response": f"response-{keyword}"},
+                  expected=(201,),
+              )
+              entry_id = created["entryId"]
+              print(f"set entry {entry_id}")
+
+              found = False
+              for attempt in range(search_retries):
+                  results = request(
+                      "POST",
+                      f"/v1/caches/{cache_id}/entries/search",
+                      {"prompt": keyword, "similarityThreshold": 0.99, "maxResults": 5},
+                  )
+                  if any(e.get("id") == entry_id for e in results.get("data", [])):
+                      found = True
+                      break
+                  time.sleep(search_retry_interval)
+              assert found, f"entry {entry_id} not found by search after {search_retries} attempts"
+              print("search found the entry")
+          finally:
+              if entry_id:
+                  request("DELETE", f"/v1/caches/{cache_id}/entries/{entry_id}", expected=(204, 404))
+                  print(f"cleaned up entry {entry_id}")
+
+          print("api smoke test passed")
+{{- end }}

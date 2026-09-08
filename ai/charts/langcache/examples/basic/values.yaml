@@ -1,0 +1,38 @@
+# Minimal complete install: bundled Identity Service, single embedding
+# provider, chart-generated tokens. See the chart README "Install" and
+# "Supplying credentials" sections for the Secrets this expects
+# (langcache-license, dp-overlay, cp-overlay, ids-metadata).
+
+dataplane:
+  image:
+    repository: redislabs/iris-langcache-data
+    tag: "1.0.0"
+  license:
+    existingSecret: langcache-license
+  secrets:
+    secretName: dp-overlay
+  embedding:
+    provider: openai
+    endpoint:
+      baseURL: https://api.openai.com/v1
+    credentials:
+      type: static
+    models:
+      defaultEmbeddingModel: text-embedding-3-small
+      dimensions: 1536
+
+controlplane:
+  image:
+    repository: redislabs/iris-langcache-control
+    tag: "1.0.0"
+  secrets:
+    secretName: cp-overlay
+
+identityService:
+  mode: bundled
+  bundled:
+    image:
+      repository: redislabs/iris-identity-service
+      tag: "1.0.0"
+    metadata:
+      existingSecret: ids-metadata

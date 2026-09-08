@@ -1,0 +1,73 @@
+# Kept byte-identical to its counterpart (enforced by
+# tests/preflight_sync_test.go); update both together.
+apiVersion: troubleshoot.sh/v1beta2
+kind: Preflight
+metadata:
+  name: langcache-preflight
+spec:
+  collectors: []
+  analyzers:
+    - clusterVersion:
+        outcomes:
+          - fail:
+              when: "< 1.23.0"
+              message: LangCache on-prem requires Kubernetes 1.23 or newer because the Helm chart renders autoscaling/v2 HPAs by default.
+          - pass:
+              message: Kubernetes version is supported for LangCache on-prem.
+    - textAnalyze:
+        checkName: LangCache autoscaling/v2 API
+        fileName: cluster-resources/groups.json
+        regex: '"groupVersion": "autoscaling/v2"'
+        outcomes:
+          - fail:
+              when: "false"
+              message: LangCache defaults render an autoscaling/v2 HPA for the Data Plane, but autoscaling/v2 was not discovered in the cluster API.
+          - pass:
+              when: "true"
+              message: autoscaling/v2 is available for the LangCache Data Plane HorizontalPodAutoscaler.
+    - textAnalyze:
+        checkName: LangCache metrics API for autoscaling
+        fileName: cluster-resources/groups.json
+        regex: '"groupVersion": "metrics.k8s.io/v1beta1"'
+        outcomes:
+          - warn:
+              when: "false"
+              message: metrics.k8s.io/v1beta1 was not discovered. LangCache can install, but the Data Plane's CPU-based HorizontalPodAutoscaler needs Kubernetes metrics to scale.
+          - pass:
+              when: "true"
+              message: metrics.k8s.io/v1beta1 is available for LangCache CPU-based autoscaling.
+    - nodeResources:
+        checkName: LangCache default minimum cluster CPU
+        outcomes:
+          - fail:
+              when: "sum(cpuAllocatable) < 1500m"
+              message: The cluster has less than 1.5 CPU allocatable for the default minimum LangCache footprint of two Data Plane pods and one Control Plane pod.
+          - pass:
+              message: Cluster allocatable CPU can fit the default minimum LangCache footprint.
+    - nodeResources:
+        checkName: LangCache default minimum cluster memory
+        outcomes:
+          - fail:
+              when: "sum(memoryAllocatable) < 2560Mi"
+              message: The cluster has less than 2.5Gi allocatable memory for the default minimum LangCache footprint of two Data Plane pods and one Control Plane pod.
+          - pass:
+              message: Cluster allocatable memory can fit the default minimum LangCache footprint.
+    - nodeResources:
+        checkName: LangCache single-pod schedulable node floor
+        filters:
+          memoryAllocatable: 256Mi
+          cpuAllocatable: 250m
+        outcomes:
+          - fail:
+              when: "count() < 1"
+              message: No schedulable node has at least 250m CPU and 256Mi allocatable memory for a LangCache Data Plane pod.
+          - pass:
+              message: At least one node can schedule a LangCache Data Plane pod with the default request.
+    - nodeResources:
+        checkName: LangCache recommended node spread
+        outcomes:
+          - warn:
+              when: "count() < 2"
+              message: A single-node cluster can run LangCache, but production deployments should provide node redundancy for Data Plane replicas.
+          - pass:
+              message: Cluster has more than one node for LangCache replica spread.

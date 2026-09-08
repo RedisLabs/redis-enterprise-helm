@@ -1,0 +1,143 @@
+{{- define "langcache.identityServiceAnnotations" -}}
+{{- $bundled := .Values.identityService.bundled -}}
+{{- if $bundled.config.existingSecretChecksum }}
+checksum/config: {{ $bundled.config.existingSecretChecksum | quote }}
+{{- else if $bundled.config.render }}
+checksum/config: {{ include "langcache.identityServiceConfig" . | sha256sum | quote }}
+{{- end }}
+{{- if $bundled.metadata.existingSecretChecksum }}
+checksum/metadata: {{ $bundled.metadata.existingSecretChecksum | quote }}
+{{- end }}
+{{- if $bundled.controlToken.existingSecretChecksum }}
+checksum/control-token: {{ $bundled.controlToken.existingSecretChecksum | quote }}
+{{- end }}
+{{- if $bundled.runtime.dataplaneCredential.existingSecretChecksum }}
+checksum/dp-credential: {{ $bundled.runtime.dataplaneCredential.existingSecretChecksum | quote }}
+{{- end }}
+{{- if .Values.controlplane.internalToken.existingSecretChecksum }}
+checksum/product-validation-langcache: {{ .Values.controlplane.internalToken.existingSecretChecksum | quote }}
+{{- end }}
+{{- end }}
+
+{{- define "langcache.identityServiceArgs" -}}
+{{- $bundled := .Values.identityService.bundled -}}
+- "--config"
+- "/etc/identity-service/identity-service.config.yaml"
+{{- if $bundled.metadata.existingSecret }}
+- "--config"
+- "/etc/identity-service/metadata/metadata.yaml"
+{{- end }}
+{{- end }}
+
+{{- define "langcache.identityServiceEnv" -}}
+{{- $bundled := .Values.identityService.bundled -}}
+- name: IDS_SERVER_PORT
+  value: {{ $bundled.service.port | quote }}
+{{ include "langcache.commonEnv" . }}
+{{- end }}
+
+{{- define "langcache.identityServiceVolumeMounts" -}}
+{{- $bundled := .Values.identityService.bundled -}}
+- name: config-volume
+  mountPath: /etc/identity-service
+  readOnly: true
+{{- if $bundled.metadata.existingSecret }}
+- name: metadata-volume
+  mountPath: /etc/identity-service/metadata
+  readOnly: true
+{{- end }}
+- name: control-token-volume
+  mountPath: /etc/identity-service/control
+  readOnly: true
+- name: dp-credential-volume
+  mountPath: /etc/identity-service/runtime/langcache-dp
+  readOnly: true
+- name: product-validation-langcache
+  mountPath: /etc/identity-service/product-validation/langcache
+  readOnly: true
+{{ include "langcache.tlsVolumeMount" . }}
+{{- with $bundled.volumeMounts }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "langcache.identityServiceVolumes" -}}
+{{- $bundled := .Values.identityService.bundled -}}
+- name: config-volume
+  {{- if $bundled.config.existingSecret }}
+  secret:
+    secretName: {{ include "langcache.identityServiceConfigName" . }}
+    items:
+      - key: {{ $bundled.config.secretKey }}
+        path: identity-service.config.yaml
+  {{- else }}
+  configMap:
+    name: {{ include "langcache.identityServiceConfigName" . }}
+    items:
+      - key: {{ $bundled.config.secretKey }}
+        path: identity-service.config.yaml
+  {{- end }}
+{{- if $bundled.metadata.existingSecret }}
+- name: metadata-volume
+  secret:
+    secretName: {{ $bundled.metadata.existingSecret }}
+    items:
+      - key: {{ $bundled.metadata.secretKey }}
+        path: metadata.yaml
+{{- end }}
+- name: control-token-volume
+  secret:
+    secretName: {{ include "langcache.identityServiceControlTokenSecretName" . }}
+    items:
+      - key: {{ $bundled.controlToken.secretKey }}
+        path: token
+- name: dp-credential-volume
+  secret:
+    secretName: {{ include "langcache.identityServiceDataplaneCredentialSecretName" . }}
+    items:
+      - key: {{ $bundled.runtime.dataplaneCredential.secretKey }}
+        path: token
+- name: product-validation-langcache
+  secret:
+    secretName: {{ include "langcache.controlplaneInternalTokenSecretName" . }}
+    items:
+      - key: {{ .Values.controlplane.internalToken.secretKey }}
+        path: token
+{{ include "langcache.tlsVolume" . }}
+{{- with $bundled.volumes }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- include "langcache.validate" . }}
+{{- if eq .Values.identityService.mode "bundled" }}
+{{- $bundled := .Values.identityService.bundled -}}
+{{- include "redis-onprem.identityService.deployment" (dict
+  "root" .
+  "name" (include "langcache.identityServiceFullname" .)
+  "component" "identity-service"
+  "labelsTemplate" "langcache.labels"
+  "selectorLabelsTemplate" "langcache.selectorLabels"
+  "replicas" $bundled.replicaCount
+  "annotationsTemplate" "langcache.identityServiceAnnotations"
+  "podAnnotations" $bundled.podAnnotations
+  "podLabels" $bundled.podLabels
+  "imagePullSecrets" .Values.imagePullSecrets
+  "serviceAccountName" (include "langcache.serviceAccountName" .)
+  "podSecurityContext" .Values.podSecurityContext
+  "containerName" "identity-service"
+  "argsTemplate" "langcache.identityServiceArgs"
+  "containerSecurityContext" .Values.securityContext
+  "image" $bundled.image
+  "envTemplate" "langcache.identityServiceEnv"
+  "port" $bundled.service.port
+  "livenessProbe" $bundled.livenessProbe
+  "readinessProbe" $bundled.readinessProbe
+  "resources" $bundled.resources
+  "volumeMountsTemplate" "langcache.identityServiceVolumeMounts"
+  "volumesTemplate" "langcache.identityServiceVolumes"
+  "nodeSelector" $bundled.nodeSelector
+  "affinity" $bundled.affinity
+  "tolerations" $bundled.tolerations
+) }}
+{{- end }}

@@ -1,0 +1,12 @@
+{{- include "redis-onprem.dataplane.hpa" (dict
+  "root" .
+  "enabled" .Values.dataplane.autoscaling.enabled
+  "name" (include "langcache.fullname" .)
+  "targetName" (include "langcache.fullname" .)
+  "component" "dataplane"
+  "labelsTemplate" "langcache.labels"
+  "minReplicas" .Values.dataplane.autoscaling.minReplicas
+  "maxReplicas" .Values.dataplane.autoscaling.maxReplicas
+  "targetCPUUtilizationPercentage" .Values.dataplane.autoscaling.targetCPUUtilizationPercentage
+  "targetMemoryUtilizationPercentage" .Values.dataplane.autoscaling.targetMemoryUtilizationPercentage
+) }}
