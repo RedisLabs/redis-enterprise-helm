@@ -1,0 +1,13 @@
+name: Release redis-iris-onprem-lib Chart
+
+on:
+  workflow_dispatch:
+
+jobs:
+  call-release-workflow:
+    uses: ./.github/workflows/release-chart-reusable.yaml
+    with:
+      chart_name: redis-iris-onprem-lib
+      chart_path: ai/charts/redis-iris-onprem-lib
+      tag_prefix: redis-iris-onprem-lib
+    secrets: inherit
