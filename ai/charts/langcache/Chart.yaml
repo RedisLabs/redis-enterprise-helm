@@ -8,5 +8,5 @@ version: 0.0.1
 dependencies:
   - name: redis-iris-onprem-lib
     version: 0.1.0
-    repository: file://../../common/helm/lib/onprem
+    repository: https://helm.redis.io/ai
 appVersion: "0.0.1"
