@@ -1,0 +1,170 @@
+{{- define "redis-agent-memory.identityServiceAnnotations" -}}
+{{- $ids := .Values.identityService -}}
+{{- if $ids.config.existingSecretChecksum }}
+checksum/config: {{ $ids.config.existingSecretChecksum | quote }}
+{{- else if $ids.config.render }}
+checksum/config: {{ include "redis-agent-memory.identityServiceConfig" . | sha256sum | quote }}
+{{- end }}
+{{- if $ids.metadata.existingSecretChecksum }}
+checksum/metadata: {{ $ids.metadata.existingSecretChecksum | quote }}
+{{- end }}
+{{- if $ids.controlToken.existingSecretChecksum }}
+checksum/control-token: {{ $ids.controlToken.existingSecretChecksum | quote }}
+{{- end }}
+{{- range $i, $credential := $ids.runtime.serviceCredentials }}
+{{- $credentialName := include "redis-agent-memory.identityServiceRuntimeCredentialName" (dict "credential" $credential) }}
+{{- if $credential.existingSecretChecksum }}
+checksum/runtime-credential-{{ $credentialName }}: {{ $credential.existingSecretChecksum | quote }}
+{{- end }}
+{{- end }}
+{{- range $product, $validation := $ids.productValidation.products }}
+{{- $enabled := true -}}
+{{- if hasKey $validation "enabled" }}{{- $enabled = $validation.enabled -}}{{- end -}}
+{{- $credential := default (dict) $validation.credential -}}
+{{- if and $enabled $credential.existingSecretChecksum }}
+checksum/product-validation-{{ $product }}: {{ $credential.existingSecretChecksum | quote }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- define "redis-agent-memory.identityServiceArgs" -}}
+{{- $ids := .Values.identityService -}}
+- "--config"
+- "/etc/ai/identity-service.config.yaml"
+{{- if $ids.metadata.existingSecret }}
+- "--config"
+- "/etc/identity-service/metadata/metadata.yaml"
+{{- end }}
+{{- end }}
+
+{{- define "redis-agent-memory.identityServiceEnv" -}}
+{{- $ids := .Values.identityService -}}
+- name: IDS_SERVER_PORT
+  value: {{ $ids.service.port | quote }}
+- name: IDS_SECURITY_PROFILE
+  value: {{ if .Values.security }}{{ default "" .Values.security.profile | quote }}{{ else }}""{{ end }}
+{{ include "redis-agent-memory.commonEnv" . }}
+{{- end }}
+
+{{- define "redis-agent-memory.identityServiceVolumeMounts" -}}
+{{- $ids := .Values.identityService -}}
+- name: config-volume
+  mountPath: /etc/ai
+  readOnly: true
+{{- if $ids.metadata.existingSecret }}
+- name: metadata-volume
+  mountPath: /etc/identity-service/metadata
+  readOnly: true
+{{- end }}
+- name: control-token-volume
+  mountPath: /etc/identity-service/control
+  readOnly: true
+{{- range $i, $credential := $ids.runtime.serviceCredentials }}
+{{- $credentialName := include "redis-agent-memory.identityServiceRuntimeCredentialName" (dict "credential" $credential) }}
+- name: runtime-credential-{{ $credentialName }}
+  mountPath: /etc/identity-service/runtime/{{ $credentialName }}
+  readOnly: true
+{{- end }}
+{{- range $product, $validation := $ids.productValidation.products }}
+{{- $enabled := true -}}
+{{- if hasKey $validation "enabled" }}{{- $enabled = $validation.enabled -}}{{- end }}
+{{- if $enabled }}
+- name: product-validation-{{ $product }}
+  mountPath: /etc/identity-service/product-validation/{{ $product }}
+  readOnly: true
+{{- end }}
+{{- end }}
+{{ include "redis-agent-memory.tlsVolumeMount" . }}
+{{- with $ids.volumeMounts }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "redis-agent-memory.identityServiceVolumes" -}}
+{{- $ids := .Values.identityService -}}
+- name: config-volume
+  {{- if $ids.config.existingSecret }}
+  secret:
+    secretName: {{ include "redis-agent-memory.identityServiceConfigName" . }}
+    items:
+      - key: {{ $ids.config.secretKey }}
+        path: identity-service.config.yaml
+  {{- else }}
+  configMap:
+    name: {{ include "redis-agent-memory.identityServiceConfigName" . }}
+    items:
+      - key: {{ $ids.config.secretKey }}
+        path: identity-service.config.yaml
+  {{- end }}
+{{- if $ids.metadata.existingSecret }}
+- name: metadata-volume
+  secret:
+    secretName: {{ $ids.metadata.existingSecret }}
+    items:
+      - key: {{ $ids.metadata.secretKey }}
+        path: metadata.yaml
+{{- end }}
+- name: control-token-volume
+  secret:
+    secretName: {{ include "redis-agent-memory.identityServiceControlTokenSecretName" . }}
+    items:
+      - key: {{ $ids.controlToken.secretKey }}
+        path: token
+{{- range $i, $credential := $ids.runtime.serviceCredentials }}
+{{- $credentialName := include "redis-agent-memory.identityServiceRuntimeCredentialName" (dict "credential" $credential) }}
+- name: runtime-credential-{{ $credentialName }}
+  secret:
+    secretName: {{ include "redis-agent-memory.identityServiceRuntimeCredentialSecretName" (dict "root" $ "credential" $credential) }}
+    items:
+      - key: {{ $credential.secretKey }}
+        path: token
+{{- end }}
+{{- range $product, $validation := $ids.productValidation.products }}
+{{- $enabled := true -}}
+{{- if hasKey $validation "enabled" }}{{- $enabled = $validation.enabled -}}{{- end }}
+{{- if $enabled }}
+- name: product-validation-{{ $product }}
+  secret:
+    secretName: {{ include "redis-agent-memory.identityServiceProductValidationSecretName" (dict "root" $ "product" $product "config" $validation) }}
+    items:
+      - key: {{ include "redis-agent-memory.identityServiceProductValidationSecretKey" (dict "root" $ "product" $product "config" $validation) }}
+        path: token
+{{- end }}
+{{- end }}
+{{ include "redis-agent-memory.tlsVolume" . }}
+{{- with $ids.volumes }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- if .Values.identityService.enabled }}
+{{- $ids := .Values.identityService -}}
+{{- include "redis-onprem.identityService.deployment" (dict
+  "root" .
+  "name" (include "redis-agent-memory.identityServiceFullname" .)
+  "component" "identity-service"
+  "labelsTemplate" "redis-agent-memory.labels"
+  "selectorLabelsTemplate" "redis-agent-memory.selectorLabels"
+  "replicas" $ids.replicaCount
+  "annotationsTemplate" "redis-agent-memory.identityServiceAnnotations"
+  "podAnnotations" $ids.podAnnotations
+  "podLabels" $ids.podLabels
+  "imagePullSecrets" .Values.imagePullSecrets
+  "serviceAccountName" (include "redis-agent-memory.serviceAccountName" .)
+  "podSecurityContext" .Values.podSecurityContext
+  "containerName" "identity-service"
+  "argsTemplate" "redis-agent-memory.identityServiceArgs"
+  "containerSecurityContext" .Values.securityContext
+  "image" $ids.image
+  "envTemplate" "redis-agent-memory.identityServiceEnv"
+  "port" $ids.service.port
+  "livenessProbe" $ids.livenessProbe
+  "readinessProbe" $ids.readinessProbe
+  "resources" $ids.resources
+  "volumeMountsTemplate" "redis-agent-memory.identityServiceVolumeMounts"
+  "volumesTemplate" "redis-agent-memory.identityServiceVolumes"
+  "nodeSelector" $ids.nodeSelector
+  "affinity" $ids.affinity
+  "tolerations" $ids.tolerations
+) }}
+{{- end }}

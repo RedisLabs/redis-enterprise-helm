@@ -14,25 +14,22 @@ Security profile  : {{ if eq $profile "" }}default (no app-level FIPS guardrails
 {{- if eq $profile "fips" }}
 
 FIPS-oriented posture is ACTIVE for this release:
-  - Pods start with MEM_SECURITY_PROFILE=fips; the image entrypoint sets
-    GODEBUG=fips140=on so the Go runtime activates its FIPS module.
+  - Application containers start with GODEBUG=fips140=on so the Go runtime
+    activates its FIPS module.
   - The binary rejects startup if the mounted config enables skip_verify
     on any outbound HTTP client or uses a non-rediss:// Redis URL.
   - On-prem auth is disabled by design: this profile does not add in-
     process authentication. Access control is YOUR hosting environment's
     responsibility (ingress, network policy, service mesh auth).
   - This is NOT a formal FIPS validation claim. See
-    deployment/redis-agent-memory/README.md for exact wording.
+    memory/helm/README.md for exact wording.
 {{- end }}
 
 The worker connects to the server automatically at:
   http://{{ include "redis-agent-memory.fullname" . }}:{{ .Values.service.port }}
-{{- if .Values.controlplane.enabled }}
-
 Control Plane    : {{ include "redis-agent-memory.controlplaneFullname" . }}:{{ .Values.controlplane.service.port }} (admin store API, /v1/stores)
-  The control plane is ENABLED. Provision/manage stores via the admin API
-  (admin-token auth). Point the data plane at the same metadata Redis with
-  `metadata.source: live` in its config to serve CP-created stores.
+  Provision/manage stores via the admin API (admin-token auth). The bundled
+  control plane and data plane share metadata Redis and the database registry.
 {{- if and (not .Values.controlplane.adminToken.existingSecret) .Values.controlplane.adminToken.autoGenerate }}
 
   The admin token was auto-generated into Secret
@@ -40,6 +37,31 @@ Control Plane    : {{ include "redis-agent-memory.controlplaneFullname" . }}:{{ 
     kubectl get secret --namespace {{ .Release.Namespace }} {{ include "redis-agent-memory.controlplaneAdminTokenSecretName" . }} -o jsonpath="{.data.{{ .Values.controlplane.adminToken.secretKey }}}" | base64 -d
   Rotate by editing that Secret — the control plane reads the token on use, so
   no redeploy is needed.
+{{- end }}
+{{- if and (not .Values.controlplane.internalToken.existingSecret) .Values.controlplane.internalToken.autoGenerate }}
+
+  The internal validation token was auto-generated into Secret
+  "{{ include "redis-agent-memory.controlplaneInternalTokenSecretName" . }}". Retrieve it for Identity Service wiring with:
+    kubectl get secret --namespace {{ .Release.Namespace }} {{ include "redis-agent-memory.controlplaneInternalTokenSecretName" . }} -o jsonpath="{.data.{{ .Values.controlplane.internalToken.secretKey }}}" | base64 -d
+{{- end }}
+{{- if .Values.identityService.enabled }}
+
+Identity Service : {{ include "redis-agent-memory.identityServiceFullname" . }}:{{ .Values.identityService.service.port }} (suite API-key lifecycle and runtime introspection)
+  Products        :{{ range $product, $validation := .Values.identityService.productValidation.products }}{{- $enabled := true -}}{{- if hasKey $validation "enabled" }}{{- $enabled = $validation.enabled -}}{{- end }}{{ if $enabled }} {{ $product }}{{ end }}{{ end }}
+{{- if and (not .Values.identityService.controlToken.existingSecret) .Values.identityService.controlToken.autoGenerate }}
+
+  The Identity Service control token was auto-generated into Secret
+  "{{ include "redis-agent-memory.identityServiceControlTokenSecretName" . }}". Retrieve it with:
+    kubectl get secret --namespace {{ .Release.Namespace }} {{ include "redis-agent-memory.identityServiceControlTokenSecretName" . }} -o jsonpath="{.data.{{ .Values.identityService.controlToken.secretKey }}}" | base64 -d
+{{- end }}
+{{- range $i, $credential := .Values.identityService.runtime.serviceCredentials }}
+{{- if and (not $credential.existingSecret) $credential.autoGenerate }}
+{{- $credentialName := include "redis-agent-memory.identityServiceRuntimeCredentialName" (dict "credential" $credential) }}
+
+  The Identity Service runtime credential for "{{ $credential.subject }}" was auto-generated into Secret
+  "{{ include "redis-agent-memory.identityServiceRuntimeCredentialSecretName" (dict "root" $ "credential" $credential) }}". Retrieve it with:
+    kubectl get secret --namespace {{ $.Release.Namespace }} {{ include "redis-agent-memory.identityServiceRuntimeCredentialSecretName" (dict "root" $ "credential" $credential) }} -o jsonpath="{.data.{{ $credential.secretKey }}}" | base64 -d
+{{- end }}
 {{- end }}
 {{- end }}
 {{- if and .Values.controlplane.queueMonitor .Values.controlplane.queueMonitor.enabled }}

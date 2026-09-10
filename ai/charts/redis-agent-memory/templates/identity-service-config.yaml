@@ -1,0 +1,17 @@
+{{- if and .Values.identityService.enabled .Values.identityService.config.render (not .Values.identityService.config.existingSecret) }}
+{{- /*
+  Chart-rendered Identity Service config ConfigMap. Body is assembled from
+  identityService.configData plus chart-owned credential token_file paths.
+  Metadata Redis URLs are intentionally supplied through a Secret overlay.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "redis-agent-memory.identityServiceConfigName" . }}
+  labels:
+    {{- include "redis-agent-memory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: identity-service
+data:
+  {{ .Values.identityService.config.secretKey }}: |
+{{ include "redis-agent-memory.identityServiceConfig" . | indent 4 }}
+{{- end }}
