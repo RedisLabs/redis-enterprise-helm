@@ -87,6 +87,14 @@ jobs:
         with:
           version: v3.9.2
 
+      # cr package forces `helm dependency build`, which needs any external
+      # chart dependency's repository registered first -- same as resolving
+      # any third-party chart. Charts synced here (e.g. langcache,
+      # redis-agent-memory) can depend on other charts published to this
+      # same AI Helm repository (see redislabsdev/iris's MOD-18434).
+      - name: Add AI Helm repository
+        run: helm repo add redis-ai https://helm.redis.io/ai --force-update
+
       - name: Install chart releaser
         uses: helm/chart-releaser-action@v1
         with:
