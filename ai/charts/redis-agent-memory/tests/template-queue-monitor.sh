@@ -7,7 +7,7 @@
 # wiring, TLS env keys, and read-only defaults.
 #
 # Usage:
-#   ./deployment/redis-agent-memory/tests/template-queue-monitor.sh
+#   ./memory/helm/tests/template-queue-monitor.sh
 #
 # Expects:
 #   - helm >= 3.x on PATH
@@ -24,6 +24,12 @@ COMMON_ARGS=(
   --set license.existingSecret=license-test
   --set config.existingSecret=config-test
   --set config.secretKey=config.yaml
+  --set controlplane.image.tag=cp-0.0.0-test
+  --set controlplane.config.existingSecret=cp-config-test
+  # The Identity Service is enabled by default, and enabling it makes the image
+  # tag and the metadata Redis overlay Secret mandatory.
+  --set identityService.image.tag=ids-0.0.0-test
+  --set identityService.metadata.existingSecret=ids-metadata
 )
 
 QM_ARGS=(
@@ -65,8 +71,8 @@ echo "OK: queue monitor is fully off by default"
 
 echo "=== Case 2: enabled without ingress -> Deployment + Service, no Ingress ==="
 OUT="$(render "${QM_ARGS[@]}")"
-[ "$(count_kind "$OUT" Deployment)" = "3" ] \
-  || fail "expected 3 Deployments (server+worker+queue-monitor), got $(count_kind "$OUT" Deployment)"
+[ "$(count_kind "$OUT" Deployment)" = "5" ] \
+  || fail "expected 5 Deployments (server+worker+controlplane+identity-service+queue-monitor), got $(count_kind "$OUT" Deployment)"
 grep -qE "name: ${QM_NAME}([[:space:]]|$)" <<<"$OUT" \
   || fail "queue monitor Deployment/Service named ${QM_NAME} did not render"
 grep -q 'app.kubernetes.io/component: queue-monitor' <<<"$OUT" \

@@ -3,8 +3,10 @@
 # Holds everything identical across regions. Deploy one release per region,
 # combining this file with a small per-region file:
 #
-#   helm install ram-eu ../.. -f base-values.yaml -f region-eu.yaml --set image.tag=<RAM_VERSION>
-#   helm install ram-us ../.. -f base-values.yaml -f region-us.yaml --set image.tag=<RAM_VERSION>
+#   helm install ram-eu ../.. -f base-values.yaml -f region-eu.yaml \
+#     --set image.tag=<RAM_VERSION> --set controlplane.image.tag=<RAM_VERSION>
+#   helm install ram-us ../.. -f base-values.yaml -f region-us.yaml \
+#     --set image.tag=<RAM_VERSION> --set controlplane.image.tag=<RAM_VERSION>
 #
 # Helm deep-merges base + region, so each region file carries only its non-secret
 # deltas (region id, worker_regions, ingress host) — see region-*.yaml.
@@ -29,21 +31,31 @@ config:
 # region-<x>.yaml), since each region's Secret carries that region's own Redis
 # URLs. Nothing secret-related belongs in this shared base file.
 
-# Blocks common to data plane (and control plane, if enabled). Structure only.
+# Blocks common to the data plane and bundled control plane. Structure only.
 shared:
-  embedders_connection_details:
-    openai:
-      base_url: https://api.openai.com
-      credentials:
-        # api_key arrives via the shared secret overlay — not stored here.
-        type: static
+  databases:
+    "1":
+      name: default
 
 # Data-plane config body (snake_case). Region files override the region-identity
 # fields only; everything here is the stable, non-secret default.
 memory:
   default_extraction_strategy: instruct
+  # This starter assumes infrastructure-controlled access in each region.
+  # Before enabling ingress, use agent_key auth and configure worker identity.
   auth:
     method: none
+  embedders_connection_details:
+    openai:
+      base_url: https://api.openai.com
+      credentials:
+        # api_key arrives via the regional secret overlay — not stored here.
+        type: static
+  embedding:
+    provider: openai
+    models:
+      default_embedding_model: text-embedding-3-large
+      dimensions: 3072
   client_pool:
     enable: true
     max_size: 1000
@@ -63,18 +75,44 @@ memory:
         completed_retention: 1h
         requeue_without_retry_delay: 5s
         shutdown_timeout: 30s
-  metadata:
-    source: static
-    # stores is a MAP keyed by store id (NOT a list). The store's non-secret
-    # structure lives here; its `urls` arrive from the regional secret overlay,
-    # which the loader deep-merges into the same id at runtime. Helm also
-    # deep-merges maps, so a region file could set structure per id — but here
-    # only the urls differ per region, and those are in the overlay.
-    stores:
-      "00000000000000000000000000000001":
-        short_memory:
-          ttl_seconds: 86400
-        long_term_memory:
-          embedding_provider: openai
-          embedding_model: text-embedding-3-large
-          embedding_dimensions: 3072
+  dataplane_client:
+    auth:
+      disabled: true
+
+# On the Identity Service (no settings needed here, hence no stanza):
+#
+# IdS is the authority for agent keys and the chart runs it by default, so it
+# comes up in every region without this file asking for it. That holds even
+# though the starter sets `memory.auth.method: none` (infrastructure-controlled
+# access, see above) and nothing introspects yet — running IdS from the start is
+# what lets a region mint keys and flip its data plane to agent-key auth without
+# a second deployment step. Set `identityService.enabled: false` only to point
+# the region at an Identity Service this chart does not own, and then write
+# `memory.auth.agent_keys.introspection` yourself.
+#
+# Running it makes two inputs mandatory, and both are set elsewhere. The image
+# tag goes on the install command line, next to the RAM ones, because IdS is
+# versioned separately:
+#
+#   --set identityService.image.tag=<IDS_VERSION>
+#
+# The metadata Secret is per-region, for the same reason each region names its
+# own credentials Secret, so it lives in region-eu.yaml / region-us.yaml.
+
+controlplane:
+  image:
+    repository: redislabs/agent-memory-control-plane
+  config:
+    render: true
+  configData:
+    profile: prod
+    auth:
+      type: admin-token
+      admin_token:
+        token_file: /etc/controlplane-onprem/admin/token
+      internal_token:
+        token_file: /etc/controlplane-onprem/internal/token
+    license:
+      license_path: /etc/redis-agent-memory/license
+    embedding:
+      dimensions: 3072

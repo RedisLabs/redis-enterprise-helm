@@ -1,0 +1,11 @@
+{{- if .Values.identityService.enabled }}
+{{- include "redis-onprem.identityService.service" (dict
+  "root" .
+  "name" (include "redis-agent-memory.identityServiceFullname" .)
+  "component" "identity-service"
+  "labelsTemplate" "redis-agent-memory.labels"
+  "selectorLabelsTemplate" "redis-agent-memory.selectorLabels"
+  "type" .Values.identityService.service.type
+  "port" .Values.identityService.service.port
+) }}
+{{- end }}

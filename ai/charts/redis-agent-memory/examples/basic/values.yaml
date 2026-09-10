@@ -1,6 +1,6 @@
 # Redis Agent Memory — default deployment values.
 #
-# One server + one worker serving a static store. The chart renders the
+# One bundled control plane + server + worker deployment. The chart renders the
 # structural config into a ConfigMap; one pre-created Secret supplies the
 # credentials (Redis connection URLs + embedder/LLM API keys) through a mounted
 # overlay, so nothing secret lives in this file.
@@ -9,8 +9,21 @@
 #      kubectl create secret generic ram-license --from-file=license=./license
 #      kubectl create secret generic ram-secrets \
 #        --from-file=overlay.yaml=./secret-overlay.example.yaml
-# 2. Install:
-#      helm install ram ../.. -f values.yaml --set image.tag=<RAM_VERSION>
+# 2. Create the Identity Service metadata Secret. IdS keeps its agent-key
+#    records in its own overlay Secret rather than reading the data plane's, so
+#    give it the same URL you put under `metadata.urls` in
+#    secret-overlay.example.yaml. Put it in the environment first so the
+#    credential -- which lives inside the URL -- never lands in your shell
+#    history:
+#      read -rs RAM_IDS_METADATA_URL
+#      kubectl create secret generic ram-ids-metadata \
+#        --from-literal=metadata.yaml="metadata:
+#          urls: [$RAM_IDS_METADATA_URL]"
+# 3. Install. The Identity Service is versioned independently of RAM, so its
+#    tag is set separately:
+#      helm install ram ../.. -f values.yaml --set image.tag=<RAM_VERSION> \
+#        --set controlplane.image.tag=<RAM_VERSION> \
+#        --set identityService.image.tag=<IDS_VERSION>
 #
 # See secret-overlay.example.yaml in this directory for the overlay contents.
 
@@ -31,20 +44,31 @@ config:
 secrets:
   secretName: ram-secrets
 
-# Blocks shared by the data plane (and control plane, if enabled). Structure only.
+# Blocks shared by the data plane and bundled control plane. Structure only.
 shared:
+  databases:
+    "1":
+      name: default
+
+# Data-plane config body (snake_case). Structure only — no URLs, no API keys.
+memory:
+  default_extraction_strategy: instruct
+  # This starter keeps the Data Plane behind an infrastructure access boundary.
+  # Before exposing it, use agent_key auth and configure worker identity as
+  # described in the on-prem guide.
+  auth:
+    method: none
   embedders_connection_details:
     openai:
       base_url: https://api.openai.com
       credentials:
         # api_key arrives via the overlay — not stored here.
         type: static
-
-# Data-plane config body (snake_case). Structure only — no URLs, no API keys.
-memory:
-  default_extraction_strategy: instruct
-  auth:
-    method: none
+  embedding:
+    provider: openai
+    models:
+      default_embedding_model: text-embedding-3-large
+      dimensions: 3072
   background_jobs:
     redis:
       enabled: true
@@ -56,22 +80,46 @@ memory:
         - default
   request_region:
     default: default
+  dataplane_client:
+    base_url: http://ram-redis-agent-memory:9000
+    auth:
+      disabled: true
+
+# Suite-level API-key service. Enabled by default: it is what issues and
+# introspects the agent keys `memory.auth.method: agent_key` accepts. This
+# starter runs with `auth.method: none` behind an infrastructure boundary, so
+# nothing authenticates against IdS yet -- it is deployed so that turning
+# agent-key auth on later needs no re-plumbing. Set `enabled: false` to drop it
+# (and with it any agent-key authority).
+identityService:
+  image:
+    repository: redislabs/iris-identity-service
+    # tag is supplied at install time: --set identityService.image.tag=<IDS_VERSION>
   metadata:
-    source: static
-    # stores is a MAP keyed by store id. The store's structure lives here; its
-    # `urls` arrive from the overlay, merged into the same id at runtime.
-    stores:
-      "00000000000000000000000000000001":
-        short_memory:
-          ttl_seconds: 86400
-        long_term_memory:
-          embedding_provider: openai
-          embedding_model: text-embedding-3-large
-          embedding_dimensions: 3072
+    # Pre-created Secret holding the IdS metadata Redis connection (step 2).
+    existingSecret: ram-ids-metadata
+
+controlplane:
+  image:
+    repository: redislabs/agent-memory-control-plane
+  config:
+    render: true
+  configData:
+    profile: prod
+    auth:
+      type: admin-token
+      admin_token:
+        token_file: /etc/controlplane-onprem/admin/token
+      internal_token:
+        token_file: /etc/controlplane-onprem/internal/token
+    license:
+      license_path: /etc/redis-agent-memory/license
+    embedding:
+      dimensions: 3072
 
 # Expose the API through an ingress host (optional).
 ingress:
-  enabled: true
+  enabled: false
   hosts:
     - host: memory.example.com
       paths:

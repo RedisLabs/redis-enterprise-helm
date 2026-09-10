@@ -1,6 +1,8 @@
 # US region overrides. Merged on top of base-values.yaml.
 #
-#   helm install ram-us ../.. -f base-values.yaml -f region-us.yaml --set image.tag=<VER>
+#   helm install ram-us ../.. -f base-values.yaml -f region-us.yaml \
+#     --set image.tag=<VER> --set controlplane.image.tag=<VER> \
+#     --set identityService.image.tag=<IDS_VER>
 #
 # Same shape as region-eu.yaml with the US region id, worker_regions, and host.
 # US API keys and Redis connection strings live in ram-us-secrets — see
@@ -10,7 +12,24 @@ secrets:
   # in one overlay document, mounted and merged over the base config at runtime.
   secretName: ram-us-secrets
 
+identityService:
+  metadata:
+    # The Identity Service keeps its agent-key records in this region's metadata
+    # Redis, and reads the connection string from its own overlay Secret rather
+    # than from the data plane's. Use the same URL as `metadata.urls` in
+    # region-us.secret-overlay.example.yaml, under the key the chart mounts.
+    # Put it in the environment first so the credential -- which lives inside the
+    # URL -- never lands in your shell history:
+    #
+    #   read -rs RAM_US_IDS_METADATA_URL
+    #   kubectl create secret generic ram-us-ids-metadata \
+    #     --from-literal=metadata.yaml="metadata:
+    #       urls: [$RAM_US_IDS_METADATA_URL]"
+    existingSecret: ram-us-ids-metadata
+
 memory:
+  dataplane_client:
+    base_url: http://ram-us-redis-agent-memory:9000
   request_region:
     default: us1
   background_jobs:
@@ -20,7 +39,8 @@ memory:
         - us1
 
 ingress:
-  enabled: true
+  # Enable only after configuring Data Plane auth or an authenticated gateway.
+  enabled: false
   hosts:
     - host: memory-us.example.com
       paths:

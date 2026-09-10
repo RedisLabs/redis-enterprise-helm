@@ -1,150 +1,122 @@
-{{- if .Values.controlplane.enabled }}
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: {{ include "redis-agent-memory.controlplaneFullname" . }}
-  labels:
-    {{- include "redis-agent-memory.labels" . | nindent 4 }}
-    app.kubernetes.io/component: controlplane
-spec:
-  replicas: {{ .Values.controlplane.replicaCount }}
-  selector:
-    matchLabels:
-      {{- include "redis-agent-memory.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: controlplane
-  template:
-    metadata:
-      annotations:
-        {{- if .Values.controlplane.config.existingSecretChecksum }}
-        checksum/config: {{ .Values.controlplane.config.existingSecretChecksum | quote }}
-        {{- else if .Values.controlplane.config.render }}
-        checksum/config: {{ include "redis-agent-memory.controlplaneConfig" . | sha256sum | quote }}
-        {{- end }}
-        {{- if include "redis-agent-memory.overlaySecretNames" . | fromJsonArray }}
-        checksum/overlay: {{ include "redis-agent-memory.overlayChecksum" . | quote }}
-        {{- end }}
-        {{- if .Values.controlplane.adminToken.existingSecretChecksum }}
-        checksum/admin-token: {{ .Values.controlplane.adminToken.existingSecretChecksum | quote }}
-        {{- end }}
-        {{- if .Values.license.existingSecretChecksum }}
-        checksum/license: {{ .Values.license.existingSecretChecksum | quote }}
-        {{- end }}
-        {{- with .Values.controlplane.podAnnotations }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
-      labels:
-        {{- include "redis-agent-memory.labels" . | nindent 8 }}
-        app.kubernetes.io/component: controlplane
-        {{- with .Values.controlplane.podLabels }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
-    spec:
-      {{- with .Values.imagePullSecrets }}
-      imagePullSecrets:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      serviceAccountName: {{ include "redis-agent-memory.serviceAccountName" . }}
-      {{- with .Values.podSecurityContext }}
-      securityContext:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-
-      containers:
-        - name: controlplane
-          args:
-            - "--config"
-            - "/etc/ai/controlplane-onprem.config.yaml"
-          {{- include "redis-agent-memory.overlayConfigArgs" . | nindent 12 }}
-          {{- with .Values.securityContext }}
-          securityContext:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-          image: "{{ .Values.controlplane.image.repository }}:{{ .Values.controlplane.image.tag }}"
-          imagePullPolicy: {{ .Values.controlplane.image.pullPolicy }}
-          env:
-            # Pin the server's listen port to the chart's service port so the
-            # container port, probes, and Service always agree — independent of
-            # whether the mounted config secret sets server.port (which defaults
-            # to 9000 server-side and would otherwise drift from service.port).
-            - name: MEM_SERVER_PORT
-              value: {{ .Values.controlplane.service.port | quote }}
-            {{- with (include "redis-agent-memory.env" . | trim) }}
-            {{ . | nindent 12 }}
-            {{- end }}
-          ports:
-            - name: http
-              containerPort: {{ .Values.controlplane.service.port }}
-              protocol: TCP
-          livenessProbe:
-            httpGet:
-              path: /v1/health/live
-              port: http
-          readinessProbe:
-            httpGet:
-              path: /v1/health/ready
-              port: http
-          {{- with .Values.controlplane.resources }}
-          resources:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-          volumeMounts:
-            - name: config-volume
-              mountPath: /etc/ai
-              readOnly: true
-            - name: admin-token-volume
-              mountPath: /etc/controlplane-onprem/admin
-              readOnly: true
-            - name: license-volume
-              mountPath: {{ .Values.license.mountDir }}
-              readOnly: true
-          {{- include "redis-agent-memory.overlayVolumeMounts" . | nindent 12 }}
-          {{- include "redis-agent-memory.tlsVolumeMount" . | nindent 12 }}
-          {{- with .Values.controlplane.volumeMounts }}
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-
-      volumes:
-        - name: config-volume
-          {{- if .Values.controlplane.config.existingSecret }}
-          secret:
-            secretName: {{ include "redis-agent-memory.controlplaneConfigName" . }}
-            items:
-              - key: {{ .Values.controlplane.config.secretKey }}
-                path: controlplane-onprem.config.yaml
-          {{- else }}
-          configMap:
-            name: {{ include "redis-agent-memory.controlplaneConfigName" . }}
-            items:
-              - key: {{ .Values.controlplane.config.secretKey }}
-                path: controlplane-onprem.config.yaml
-          {{- end }}
-        - name: admin-token-volume
-          secret:
-            secretName: {{ include "redis-agent-memory.controlplaneAdminTokenSecretName" . }}
-            items:
-              - key: {{ .Values.controlplane.adminToken.secretKey }}
-                path: token
-        - name: license-volume
-          secret:
-            secretName: {{ include "redis-agent-memory.licenseSecretName" . }}
-            items:
-              - key: {{ .Values.license.secretKey }}
-                path: {{ .Values.license.fileName }}
-      {{- include "redis-agent-memory.overlayVolumes" . | nindent 8 }}
-      {{- include "redis-agent-memory.tlsVolume" . | nindent 8 }}
-      {{- with .Values.controlplane.volumes }}
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.controlplane.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.controlplane.affinity }}
-      affinity:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.controlplane.tolerations }}
-      tolerations:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+{{- define "redis-agent-memory.controlplaneAnnotations" -}}
+{{- if .Values.controlplane.config.existingSecretChecksum }}
+checksum/config: {{ .Values.controlplane.config.existingSecretChecksum | quote }}
+{{- else if .Values.controlplane.config.render }}
+checksum/config: {{ include "redis-agent-memory.controlplaneConfig" . | sha256sum | quote }}
 {{- end }}
+{{- if include "redis-agent-memory.overlaySecretNames" . | fromJsonArray }}
+checksum/overlay: {{ include "redis-agent-memory.overlayChecksum" . | quote }}
+{{- end }}
+{{- if .Values.controlplane.adminToken.existingSecretChecksum }}
+checksum/admin-token: {{ .Values.controlplane.adminToken.existingSecretChecksum | quote }}
+{{- end }}
+{{- if .Values.controlplane.internalToken.existingSecretChecksum }}
+checksum/internal-token: {{ .Values.controlplane.internalToken.existingSecretChecksum | quote }}
+{{- end }}
+{{- if .Values.license.existingSecretChecksum }}
+checksum/license: {{ .Values.license.existingSecretChecksum | quote }}
+{{- end }}
+{{- end }}
+
+{{- define "redis-agent-memory.controlplaneArgs" -}}
+- "--config"
+- "/etc/ai/controlplane-onprem.config.yaml"
+{{- include "redis-agent-memory.overlayConfigArgs" . }}
+{{- end }}
+
+{{- define "redis-agent-memory.controlplaneEnv" -}}
+- name: MEM_SERVER_PORT
+  value: {{ .Values.controlplane.service.port | quote }}
+{{- with (include "redis-agent-memory.env" . | trim) }}
+{{ . }}
+{{- end }}
+{{- end }}
+
+{{- define "redis-agent-memory.controlplaneVolumeMounts" -}}
+- name: config-volume
+  mountPath: /etc/ai
+  readOnly: true
+- name: admin-token-volume
+  mountPath: /etc/controlplane-onprem/admin
+  readOnly: true
+- name: internal-token-volume
+  mountPath: /etc/controlplane-onprem/internal
+  readOnly: true
+- name: license-volume
+  mountPath: {{ .Values.license.mountDir }}
+  readOnly: true
+{{ include "redis-agent-memory.overlayVolumeMounts" . }}
+{{ include "redis-agent-memory.tlsVolumeMount" . }}
+{{- with .Values.controlplane.volumeMounts }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "redis-agent-memory.controlplaneVolumes" -}}
+- name: config-volume
+  {{- if .Values.controlplane.config.existingSecret }}
+  secret:
+    secretName: {{ include "redis-agent-memory.controlplaneConfigName" . }}
+    items:
+      - key: {{ .Values.controlplane.config.secretKey }}
+        path: controlplane-onprem.config.yaml
+  {{- else }}
+  configMap:
+    name: {{ include "redis-agent-memory.controlplaneConfigName" . }}
+    items:
+      - key: {{ .Values.controlplane.config.secretKey }}
+        path: controlplane-onprem.config.yaml
+  {{- end }}
+- name: admin-token-volume
+  secret:
+    secretName: {{ include "redis-agent-memory.controlplaneAdminTokenSecretName" . }}
+    items:
+      - key: {{ .Values.controlplane.adminToken.secretKey }}
+        path: token
+- name: internal-token-volume
+  secret:
+    secretName: {{ include "redis-agent-memory.controlplaneInternalTokenSecretName" . }}
+    items:
+      - key: {{ .Values.controlplane.internalToken.secretKey }}
+        path: token
+- name: license-volume
+  secret:
+    secretName: {{ include "redis-agent-memory.licenseSecretName" . }}
+    items:
+      - key: {{ .Values.license.secretKey }}
+        path: {{ .Values.license.fileName }}
+{{ include "redis-agent-memory.overlayVolumes" . }}
+{{ include "redis-agent-memory.tlsVolume" . }}
+{{- with .Values.controlplane.volumes }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- include "redis-onprem.controlplane.deployment" (dict
+  "root" .
+  "name" (include "redis-agent-memory.controlplaneFullname" .)
+  "component" "controlplane"
+  "labelsTemplate" "redis-agent-memory.labels"
+  "selectorLabelsTemplate" "redis-agent-memory.selectorLabels"
+  "replicas" .Values.controlplane.replicaCount
+  "annotationsTemplate" "redis-agent-memory.controlplaneAnnotations"
+  "podAnnotations" .Values.controlplane.podAnnotations
+  "podLabels" .Values.controlplane.podLabels
+  "imagePullSecrets" .Values.imagePullSecrets
+  "serviceAccountName" (include "redis-agent-memory.serviceAccountName" .)
+  "podSecurityContext" .Values.podSecurityContext
+  "containerName" "controlplane"
+  "argsTemplate" "redis-agent-memory.controlplaneArgs"
+  "containerSecurityContext" .Values.securityContext
+  "image" .Values.controlplane.image
+  "envTemplate" "redis-agent-memory.controlplaneEnv"
+  "port" .Values.controlplane.service.port
+  "livenessProbe" (dict "httpGet" (dict "path" "/v1/health/live" "port" "http"))
+  "readinessProbe" (dict "httpGet" (dict "path" "/v1/health/ready" "port" "http"))
+  "resources" .Values.controlplane.resources
+  "volumeMountsTemplate" "redis-agent-memory.controlplaneVolumeMounts"
+  "volumesTemplate" "redis-agent-memory.controlplaneVolumes"
+  "nodeSelector" .Values.controlplane.nodeSelector
+  "affinity" .Values.controlplane.affinity
+  "tolerations" .Values.controlplane.tolerations
+) }}
