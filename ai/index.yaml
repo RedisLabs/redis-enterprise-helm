@@ -1,5 +1,21 @@
 apiVersion: v1
 entries:
+  langcache:
+  - apiVersion: v2
+    appVersion: 0.0.1
+    created: "2026-09-10T07:45:14.489824054Z"
+    dependencies:
+    - name: redis-iris-onprem-lib
+      repository: https://helm.redis.io/ai
+      version: 0.1.0
+    description: 'Canonical on-prem Helm chart for LangCache: Control Plane, Data
+      Plane, and (bundled or external) Identity Service.'
+    digest: 2c173888e48bfd97897246b9f94dfcda86870ce4ec7dfffb037223a61ebf059c
+    name: langcache
+    type: application
+    urls:
+    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/langcache-0.0.1/langcache-0.0.1.tgz
+    version: 0.0.1
   redis-agent-memory:
   - apiVersion: v2
     appVersion: 0.6.0
@@ -190,4 +206,4 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-iris-onprem-lib-0.1.0/redis-iris-onprem-lib-0.1.0.tgz
     version: 0.1.0
-generated: "2026-09-09T11:54:53.137637139Z"
+generated: "2026-09-10T07:45:14.489857611Z"
