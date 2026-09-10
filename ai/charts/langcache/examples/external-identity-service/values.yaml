@@ -1,0 +1,39 @@
+# LangCache joining a suite that already runs its own Identity Service (for
+# example, alongside Redis Agent Memory). Renders no Identity Service
+# workload of its own. See the chart README "Identity Service" > "External"
+# section — you must also ask that Identity Service's owner to configure its
+# product_validation.langcache against this release's Control Plane internal
+# Service and internalToken Secret.
+
+dataplane:
+  image:
+    repository: redislabs/iris-langcache-data
+    tag: "1.0.0"
+  license:
+    existingSecret: langcache-license
+  secrets:
+    secretName: dp-overlay
+  embedding:
+    provider: openai
+    endpoint:
+      baseURL: https://api.openai.com/v1
+    credentials:
+      type: static
+    models:
+      defaultEmbeddingModel: text-embedding-3-small
+      dimensions: 1536
+
+controlplane:
+  image:
+    repository: redislabs/iris-langcache-control
+    tag: "1.0.0"
+  secrets:
+    secretName: cp-overlay
+
+identityService:
+  mode: external
+  external:
+    baseURL: https://suite-identity-service.example.com
+    credential:
+      existingSecret: langcache-dp-ids-credential
+      secretKey: token

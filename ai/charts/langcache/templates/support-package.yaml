@@ -1,0 +1,480 @@
+{{- $supportPackage := default (dict) .Values.supportPackage -}}
+{{- $supportPackageEnabled := true -}}
+{{- if hasKey $supportPackage "enabled" -}}
+{{- $supportPackageEnabled = $supportPackage.enabled -}}
+{{- end -}}
+{{- if $supportPackageEnabled }}
+{{- $healthCheckImageRepository := "replicated/troubleshoot" -}}
+{{- $healthCheckImageTag := default "0.131.0" $supportPackage.healthCheckImage -}}
+{{- if contains ":" (default "" $supportPackage.healthCheckImage) -}}
+{{- $parts := splitList ":" $supportPackage.healthCheckImage -}}
+{{- $healthCheckImageRepository = first $parts -}}
+{{- $healthCheckImageTag = last $parts -}}
+{{- end -}}
+{{- $bundled := .Values.identityService.bundled -}}
+{{- $bundledMode := eq .Values.identityService.mode "bundled" -}}
+{{- $secretChecks := list -}}
+{{- $configMapChecks := list -}}
+{{- $httpChecks := list -}}
+{{- $registryImages := list
+  (printf "%s:%s" .Values.dataplane.image.repository .Values.dataplane.image.tag)
+  (printf "%s:%s" .Values.controlplane.image.repository .Values.controlplane.image.tag)
+-}}
+{{- $configValuesCollected := false -}}
+{{- if .Values.dataplane.config.existingSecret -}}
+{{- $secretChecks = append $secretChecks (dict "name" .Values.dataplane.config.existingSecret "key" .Values.dataplane.config.secretKey "label" "LangCache Data Plane config" "includeValue" true "severity" "fail") -}}
+{{- $configValuesCollected = true -}}
+{{- else if .Values.dataplane.config.render -}}
+{{- $configMapChecks = append $configMapChecks (dict "name" (include "langcache.dataplaneConfigName" .) "key" .Values.dataplane.config.secretKey "label" "LangCache Data Plane config") -}}
+{{- $configValuesCollected = true -}}
+{{- end -}}
+{{- $dpOverlayKey := "overlay.yaml" -}}
+{{- if .Values.dataplane.secrets -}}{{- $dpOverlayKey = default "overlay.yaml" .Values.dataplane.secrets.overlayKey -}}{{- end -}}
+{{- range $i, $name := (include "langcache.dataplaneOverlaySecretNames" . | fromJsonArray) -}}
+{{- $secretChecks = append $secretChecks (dict "name" $name "key" $dpOverlayKey "label" (printf "LangCache Data Plane config overlay %d" $i) "includeValue" true "severity" "fail") -}}
+{{- $configValuesCollected = true -}}
+{{- end -}}
+{{- if and .Values.tls .Values.tls.caCertSecret -}}
+{{- $secretChecks = append $secretChecks (dict "name" .Values.tls.caCertSecret "key" .Values.tls.caCertKey "label" "LangCache TLS CA certificate" "includeValue" false "severity" "fail") -}}
+{{- end -}}
+{{- if .Values.dataplane.license.existingSecret -}}
+{{- $secretChecks = append $secretChecks (dict "name" (include "langcache.licenseSecretName" .) "key" .Values.dataplane.license.secretKey "label" "LangCache license" "includeValue" false "severity" "fail") -}}
+{{- end -}}
+{{- if .Values.controlplane.config.existingSecret -}}
+{{- $secretChecks = append $secretChecks (dict "name" .Values.controlplane.config.existingSecret "key" .Values.controlplane.config.secretKey "label" "LangCache Control Plane config" "includeValue" true "severity" "fail") -}}
+{{- $configValuesCollected = true -}}
+{{- else if .Values.controlplane.config.render -}}
+{{- $configMapChecks = append $configMapChecks (dict "name" (include "langcache.controlplaneConfigName" .) "key" .Values.controlplane.config.secretKey "label" "LangCache Control Plane config") -}}
+{{- $configValuesCollected = true -}}
+{{- end -}}
+{{- $cpOverlayKey := "overlay.yaml" -}}
+{{- if .Values.controlplane.secrets -}}{{- $cpOverlayKey = default "overlay.yaml" .Values.controlplane.secrets.overlayKey -}}{{- end -}}
+{{- range $i, $name := (include "langcache.controlplaneOverlaySecretNames" . | fromJsonArray) -}}
+{{- $secretChecks = append $secretChecks (dict "name" $name "key" $cpOverlayKey "label" (printf "LangCache Control Plane config overlay %d" $i) "includeValue" true "severity" "fail") -}}
+{{- $configValuesCollected = true -}}
+{{- end -}}
+{{- if or .Values.controlplane.adminToken.existingSecret .Values.controlplane.adminToken.autoGenerate -}}
+{{- $secretChecks = append $secretChecks (dict "name" (include "langcache.controlplaneAdminTokenSecretName" .) "key" .Values.controlplane.adminToken.secretKey "label" "LangCache Control Plane admin token" "includeValue" false "severity" "fail") -}}
+{{- end -}}
+{{- if or .Values.controlplane.internalToken.existingSecret .Values.controlplane.internalToken.autoGenerate -}}
+{{- $secretChecks = append $secretChecks (dict "name" (include "langcache.controlplaneInternalTokenSecretName" .) "key" .Values.controlplane.internalToken.secretKey "label" "LangCache Control Plane internal token" "includeValue" false "severity" "fail") -}}
+{{- end -}}
+{{- if $bundledMode -}}
+{{- $registryImages = append $registryImages (printf "%s:%s" $bundled.image.repository $bundled.image.tag) -}}
+{{- if $bundled.config.existingSecret -}}
+{{- $secretChecks = append $secretChecks (dict "name" $bundled.config.existingSecret "key" $bundled.config.secretKey "label" "Iris Identity Service config" "includeValue" true "severity" "fail") -}}
+{{- $configValuesCollected = true -}}
+{{- else if $bundled.config.render -}}
+{{- $configMapChecks = append $configMapChecks (dict "name" (include "langcache.identityServiceConfigName" .) "key" $bundled.config.secretKey "label" "Iris Identity Service config") -}}
+{{- $configValuesCollected = true -}}
+{{- end -}}
+{{- if $bundled.metadata.existingSecret -}}
+{{- $secretChecks = append $secretChecks (dict "name" $bundled.metadata.existingSecret "key" $bundled.metadata.secretKey "label" "Iris Identity Service metadata config" "includeValue" true "severity" "fail") -}}
+{{- $configValuesCollected = true -}}
+{{- end -}}
+{{- if or $bundled.controlToken.existingSecret $bundled.controlToken.autoGenerate -}}
+{{- $secretChecks = append $secretChecks (dict "name" (include "langcache.identityServiceControlTokenSecretName" .) "key" $bundled.controlToken.secretKey "label" "Iris Identity Service control token" "includeValue" false "severity" "fail") -}}
+{{- end -}}
+{{- if or $bundled.runtime.dataplaneCredential.existingSecret $bundled.runtime.dataplaneCredential.autoGenerate -}}
+{{- $secretChecks = append $secretChecks (dict "name" (include "langcache.identityServiceDataplaneCredentialSecretName" .) "key" $bundled.runtime.dataplaneCredential.secretKey "label" "LangCache Data Plane's Identity Service runtime credential" "includeValue" false "severity" "fail") -}}
+{{- end -}}
+{{- else -}}
+{{- if .Values.identityService.external.credential.existingSecret -}}
+{{- $secretChecks = append $secretChecks (dict "name" .Values.identityService.external.credential.existingSecret "key" .Values.identityService.external.credential.secretKey "label" "LangCache Data Plane's external Identity Service runtime credential" "includeValue" false "severity" "fail") -}}
+{{- end -}}
+{{- end -}}
+{{- if and .Values.tests.enabled .Values.tests.smoke.enabled -}}
+{{- $registryImages = append $registryImages (printf "%s:%s" .Values.tests.smoke.image.repository .Values.tests.smoke.image.tag) -}}
+{{- if .Values.tests.smoke.apiKey.existingSecret -}}
+{{- $secretChecks = append $secretChecks (dict "name" .Values.tests.smoke.apiKey.existingSecret "key" .Values.tests.smoke.apiKey.secretKey "label" "LangCache smoke-test API key" "includeValue" false "severity" "warn") -}}
+{{- end -}}
+{{- end -}}
+{{- $registryImages = append $registryImages (printf "%s:%s" $healthCheckImageRepository $healthCheckImageTag) -}}
+{{- $timeout := "5s" -}}
+{{- $dataplaneBaseURL := printf "http://%s.%s.svc.cluster.local:%v" (include "langcache.fullname" .) .Release.Namespace .Values.dataplane.service.port -}}
+{{- $httpChecks = append $httpChecks (dict "collectorName" "langcache-dataplane-liveness" "checkName" "LangCache Data Plane liveness" "url" (printf "%s/health/liveness" $dataplaneBaseURL) "timeout" $timeout "severity" "fail") -}}
+{{- $httpChecks = append $httpChecks (dict "collectorName" "langcache-dataplane-readiness" "checkName" "LangCache Data Plane readiness" "url" (printf "%s/health/readiness" $dataplaneBaseURL) "timeout" $timeout "severity" "fail") -}}
+{{- $controlplaneBaseURL := printf "http://%s.%s.svc.cluster.local:%v" (include "langcache.controlplaneFullname" .) .Release.Namespace .Values.controlplane.service.port -}}
+{{- $httpChecks = append $httpChecks (dict "collectorName" "langcache-controlplane-liveness" "checkName" "LangCache Control Plane liveness" "url" (printf "%s/health/liveness" $controlplaneBaseURL) "timeout" $timeout "severity" "fail") -}}
+{{- $httpChecks = append $httpChecks (dict "collectorName" "langcache-controlplane-readiness" "checkName" "LangCache Control Plane readiness" "url" (printf "%s/health/readiness" $controlplaneBaseURL) "timeout" $timeout "severity" "fail") -}}
+{{- if $bundledMode -}}
+{{- $idsBaseURL := printf "http://%s.%s.svc.cluster.local:%v" (include "langcache.identityServiceFullname" .) .Release.Namespace $bundled.service.port -}}
+{{- $httpChecks = append $httpChecks (dict "collectorName" "iris-identity-service-live" "checkName" "Iris Identity Service live" "url" (printf "%s/v1/health/live" $idsBaseURL) "timeout" $timeout "severity" "fail") -}}
+{{- $httpChecks = append $httpChecks (dict "collectorName" "iris-identity-service-ready" "checkName" "Iris Identity Service ready" "url" (printf "%s/v1/health/ready" $idsBaseURL) "timeout" $timeout "severity" "fail") -}}
+{{- end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "langcache.fullname" . }}-support-bundle
+  labels:
+    {{- include "langcache.labels" . | nindent 4 }}
+    app.kubernetes.io/component: support-package
+    troubleshoot.sh/kind: support-bundle
+data:
+  support-bundle-spec: |-
+    apiVersion: troubleshoot.sh/v1beta2
+    kind: SupportBundle
+    metadata:
+      name: {{ include "langcache.fullname" . }}-support-bundle
+    spec:
+      collectors:
+        - clusterInfo: {}
+        - clusterResources:
+            namespaces:
+              - {{ .Release.Namespace | quote }}
+        - helm:
+            collectorName: langcache-helm-release
+            namespace: {{ .Release.Namespace | quote }}
+            releaseName: {{ .Release.Name | quote }}
+            collectValues: false
+        {{- range $secretChecks }}
+        - secret:
+            namespace: {{ $.Release.Namespace | quote }}
+            name: {{ .name | quote }}
+            key: {{ .key | quote }}
+            includeValue: {{ .includeValue }}
+        {{- end }}
+        {{- range $configMapChecks }}
+        - configMap:
+            namespace: {{ $.Release.Namespace | quote }}
+            name: {{ .name | quote }}
+            key: {{ .key | quote }}
+            includeValue: true
+        {{- end }}
+        {{- range $httpChecks }}
+        - runPod:
+            name: {{ .collectorName | quote }}
+            namespace: {{ $.Release.Namespace | quote }}
+            timeout: "30s"
+            podSpec:
+              restartPolicy: Never
+              automountServiceAccountToken: false
+              containers:
+                - name: check
+                  image: {{ printf "%s:%s" $healthCheckImageRepository $healthCheckImageTag | quote }}
+                  imagePullPolicy: IfNotPresent
+                  command: ["collect", "http"]
+                  args:
+                    - "--url"
+                    - {{ .url | quote }}
+                    - "--timeout"
+                    - {{ .timeout | quote }}
+        {{- end }}
+        - registryImages:
+            collectorName: langcache-registry-images
+            namespace: {{ .Release.Namespace | quote }}
+            images:
+              {{- range $image := ($registryImages | uniq) }}
+              - {{ $image | quote }}
+              {{- end }}
+        - nodeMetrics: {}
+        - data:
+            name: README.md
+            data: |-
+              LangCache support package.
+
+              This archive is generated by the customer from a namespace-scoped
+              Troubleshoot spec shipped with the LangCache Helm chart. Review the
+              archive before sharing it with Redis Support. It must not contain
+              raw Kubernetes Secret data, LICENSE data, Redis connection URLs,
+              admin/internal/runtime credentials, API-key material, prompts,
+              responses, vectors, or cache records.
+        - data:
+            name: langcache/manifest.json
+            data: |-
+              {
+                "package": "langcache-support-package",
+                "packageVersion": "v1",
+                "chartName": {{ .Chart.Name | quote }},
+                "chartVersion": {{ .Chart.Version | quote }},
+                "appVersion": {{ .Chart.AppVersion | quote }},
+                "releaseName": {{ .Release.Name | quote }},
+                "namespace": {{ .Release.Namespace | quote }},
+                "dataplaneDeployment": {{ include "langcache.fullname" . | quote }},
+                "controlplaneDeployment": {{ include "langcache.controlplaneFullname" . | quote }},
+                "identityServiceMode": {{ .Values.identityService.mode | quote }},
+                "identityServiceDeployment": {{ include "langcache.identityServiceFullname" . | quote }},
+                "securityProfile": {{ default "" .Values.security.profile | quote }},
+                "dataplaneImageRepository": {{ .Values.dataplane.image.repository | quote }},
+                "dataplaneImageTag": {{ .Values.dataplane.image.tag | quote }},
+                "controlplaneImageRepository": {{ .Values.controlplane.image.repository | quote }},
+                "controlplaneImageTag": {{ .Values.controlplane.image.tag | quote }},
+                "configValuesCollected": {{ $configValuesCollected }},
+                "httpHealthCollected": true,
+                "registryImagesCollected": true,
+                "nodeMetricsCollected": true,
+                "nodeResourcesAnalyzed": true
+              }
+        - logs:
+            selector:
+              - app.kubernetes.io/name={{ include "langcache.name" . }}
+              - app.kubernetes.io/instance={{ .Release.Name }}
+              - app.kubernetes.io/component=dataplane
+            namespace: {{ .Release.Namespace | quote }}
+            name: logs/dataplane
+            containerNames:
+              - {{ include "langcache.name" . }}
+            limits:
+              maxLines: 10000
+              maxBytes: 5000000
+            timestamps: true
+        - logs:
+            selector:
+              - app.kubernetes.io/name={{ include "langcache.name" . }}
+              - app.kubernetes.io/instance={{ .Release.Name }}
+              - app.kubernetes.io/component=controlplane
+            namespace: {{ .Release.Namespace | quote }}
+            name: logs/controlplane
+            containerNames:
+              - controlplane
+            limits:
+              maxLines: 10000
+              maxBytes: 5000000
+            timestamps: true
+        {{- if $bundledMode }}
+        - logs:
+            selector:
+              - app.kubernetes.io/name={{ include "langcache.name" . }}
+              - app.kubernetes.io/instance={{ .Release.Name }}
+              - app.kubernetes.io/component=identity-service
+            namespace: {{ .Release.Namespace | quote }}
+            name: logs/identity-service
+            containerNames:
+              - identity-service
+            limits:
+              maxLines: 10000
+              maxBytes: 5000000
+            timestamps: true
+        {{- end }}
+      analyzers:
+        {{- range $secretChecks }}
+        - secret:
+            checkName: {{ printf "%s Secret key" .label | quote }}
+            secretName: {{ .name | quote }}
+            namespace: {{ $.Release.Namespace | quote }}
+            key: {{ .key | quote }}
+            outcomes:
+              - {{ .severity }}:
+                  message: {{ printf "%s Secret %q is missing key %q." .label .name .key | quote }}
+              - pass:
+                  message: {{ printf "%s Secret key exists." .label | quote }}
+        {{- end }}
+        {{- range $configMapChecks }}
+        - configMap:
+            checkName: {{ printf "%s ConfigMap key" .label | quote }}
+            configMapName: {{ .name | quote }}
+            namespace: {{ $.Release.Namespace | quote }}
+            key: {{ .key | quote }}
+            outcomes:
+              - fail:
+                  message: {{ printf "%s ConfigMap %q is missing key %q." .label .name .key | quote }}
+              - pass:
+                  message: {{ printf "%s ConfigMap key exists." .label | quote }}
+        {{- end }}
+        {{- range $httpChecks }}
+        - textAnalyze:
+            checkName: {{ .checkName | quote }}
+            collectorName: {{ .collectorName | quote }}
+            fileName: "*.log"
+            regex: '"status": *200|status: *200'
+            outcomes:
+              - pass:
+                  when: "true"
+                  message: {{ printf "%s endpoint returned HTTP 200." .checkName | quote }}
+              - {{ .severity }}:
+                  when: "false"
+                  message: {{ printf "%s endpoint returned a non-200 status code." .checkName | quote }}
+        {{- end }}
+        - registryImages:
+            checkName: LangCache image registry availability
+            collectorName: langcache-registry-images
+            outcomes:
+              - fail:
+                  when: "missing > 0"
+                  message: One or more LangCache images are missing from the registry.
+              - warn:
+                  when: "errors > 0"
+                  message: One or more LangCache images could not be checked in the registry.
+              - pass:
+                  message: All LangCache images were found in the registry.
+        - textAnalyze:
+            checkName: LangCache node metrics collection
+            fileName: "node-metrics/*.json"
+            regex: "."
+            outcomes:
+              - pass:
+                  when: "true"
+                  message: LangCache node metrics were collected.
+              - fail:
+                  when: "false"
+                  message: LangCache node metrics files were collected but empty.
+        - nodeResources:
+            checkName: LangCache default minimum cluster CPU
+            outcomes:
+              - fail:
+                  when: "sum(cpuAllocatable) < 1500m"
+                  message: The cluster has less than 1.5 CPU allocatable for the default minimum LangCache footprint of two Data Plane pods and one Control Plane pod.
+              - pass:
+                  message: Cluster allocatable CPU can fit the default minimum LangCache footprint.
+        - nodeResources:
+            checkName: LangCache default minimum cluster memory
+            outcomes:
+              - fail:
+                  when: "sum(memoryAllocatable) < 2560Mi"
+                  message: The cluster has less than 2.5Gi allocatable memory for the default minimum LangCache footprint of two Data Plane pods and one Control Plane pod.
+              - pass:
+                  message: Cluster allocatable memory can fit the default minimum LangCache footprint.
+        - nodeResources:
+            checkName: LangCache recommended node spread
+            outcomes:
+              - warn:
+                  when: "count() < 2"
+                  message: A single-node cluster can run LangCache, but production deployments should provide node redundancy for Data Plane replicas.
+              - pass:
+                  message: Cluster has more than one node for LangCache replica spread.
+        - deploymentStatus:
+            name: {{ include "langcache.fullname" . | quote }}
+            namespace: {{ .Release.Namespace | quote }}
+            outcomes:
+              - fail:
+                  when: absent
+                  message: LangCache Data Plane Deployment is missing.
+              - fail:
+                  when: "< 1"
+                  message: LangCache Data Plane has no ready replicas.
+              - pass:
+                  message: LangCache Data Plane has at least one ready replica.
+        - deploymentStatus:
+            name: {{ include "langcache.controlplaneFullname" . | quote }}
+            namespace: {{ .Release.Namespace | quote }}
+            outcomes:
+              - fail:
+                  when: absent
+                  message: LangCache Control Plane Deployment is missing.
+              - fail:
+                  when: "< 1"
+                  message: LangCache Control Plane has no ready replicas.
+              - pass:
+                  message: LangCache Control Plane has at least one ready replica.
+        {{- if $bundledMode }}
+        - deploymentStatus:
+            name: {{ include "langcache.identityServiceFullname" . | quote }}
+            namespace: {{ .Release.Namespace | quote }}
+            outcomes:
+              - fail:
+                  when: absent
+                  message: Iris Identity Service Deployment is missing.
+              - fail:
+                  when: "< 1"
+                  message: Iris Identity Service has no ready replicas.
+              - pass:
+                  message: Iris Identity Service has at least one ready replica.
+        {{- end }}
+        - clusterPodStatuses:
+            namespaces:
+              - {{ .Release.Namespace | quote }}
+            outcomes:
+              - fail:
+                  when: "== CrashLoopBackOff"
+                  message: A LangCache namespace pod is in CrashLoopBackOff.
+              - fail:
+                  when: "== ImagePullBackOff"
+                  message: A LangCache namespace pod cannot pull its image.
+              - fail:
+                  when: "== Pending"
+                  message: A LangCache namespace pod is pending.
+              - fail:
+                  when: "!= Healthy"
+                  message: A LangCache namespace pod is unhealthy.
+              - pass:
+                  message: LangCache namespace pods are healthy.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "langcache.fullname" . }}-support-redactors
+  labels:
+    {{- include "langcache.labels" . | nindent 4 }}
+    app.kubernetes.io/component: support-package
+    troubleshoot.sh/kind: support-bundle
+data:
+  redactor-spec: |-
+    apiVersion: troubleshoot.sh/v1beta2
+    kind: Redactor
+    metadata:
+      name: {{ include "langcache.fullname" . }}-support-redactors
+    spec:
+      redactors:
+        - name: langcache-redis-url-query-parameters
+          removals:
+            regex:
+              - redactor: '(?i)(redis(?:s)?://[^\s"''<>?#]+\?)(?P<mask>[^"''\s,}\]\\]+)'
+        - name: langcache-redis-url-credentials
+          removals:
+            regex:
+              - redactor: '(?i)(redis(?:s)?://)(?P<mask>[^@\s/?#]+)(@)'
+        - name: langcache-api-keys-and-tokens
+          removals:
+            regex:
+              - redactor: '(?i)(["'']?api[_-]?key["'']?\s*[:=]\s*["'']?)(?P<mask>[^"'',}\s\\]+)'
+              - redactor: '(?i)(["'']?authorization["'']?\s*[:=]\s*["'']?(?:bearer|basic)\s+)(?P<mask>[A-Za-z0-9._~+/\-=]+)'
+              - redactor: '(?i)(["'']?(?:admin[_-]?token|access[_-]?token|refresh[_-]?token|shared[_-]?secret|password|credential)["'']?\s*[:=]\s*["'']?)(?P<mask>[^"'',}\s\\]+)'
+        - name: langcache-sensitive-field-values
+          removals:
+            regex:
+              - redactor: '(?i)(["'']?[A-Za-z0-9_.-]*(?:api[_-]?key|access[_-]?key|secret[_-]?access[_-]?key|shared[_-]?secret|secret|token|password|credential|private[_-]?key)[A-Za-z0-9_.-]*["'']?[ \t]*[:=][ \t]*")(?P<mask>[^"]*)(")'
+              - redactor: '(?i)(["'']?[A-Za-z0-9_.-]*(?:api[_-]?key|access[_-]?key|secret[_-]?access[_-]?key|shared[_-]?secret|secret|token|password|credential|private[_-]?key)[A-Za-z0-9_.-]*["'']?[ \t]*[:=][ \t]*'')(?P<mask>[^'']*)('')'
+              - redactor: '(?im)^([ \t]*[A-Za-z0-9_.-]*(?:api[_-]?key|access[_-]?key|secret[_-]?access[_-]?key|shared[_-]?secret|secret|token|password|credential|private[_-]?key)[A-Za-z0-9_.-]*[ \t]*:[ \t]*)(?P<mask>[A-Za-z0-9._~+/%=:@-]+)'
+              - redactor: '(?i)(["'']?[A-Za-z0-9_.-]*(?:api[_-]?key|access[_-]?key|secret[_-]?access[_-]?key|shared[_-]?secret|secret|token|password|credential|private[_-]?key)[A-Za-z0-9_.-]*["'']?[ \t]*=[ \t]*)(?P<mask>[A-Za-z0-9._~+/%=:@-]+)'
+        - name: langcache-cache-content-fields
+          removals:
+            regex:
+              - redactor: '(?i)(["'']?(?:prompt|response|entries|attributes|vector|vectors|payload|request|body|response_body)["'']?[ \t]*[:=][ \t]*")(?P<mask>(?:\\.|[^"\\])*)(")'
+              - redactor: '(?i)(["'']?(?:prompt|response|entries|attributes|vector|vectors|payload|request|body|response_body)["'']?[ \t]*[:=][ \t]*'')(?P<mask>(?:\\.|[^''\\])*)('')'
+              - redactor: '(?i)(["'']?(?:prompt|response|entries|attributes|vector|vectors|payload|request|body|response_body)["'']?[ \t]*=[ \t]*)(?P<mask>[A-Za-z0-9._~+/%=:@-]+)'
+        - name: langcache-private-keys-and-cert-material
+          removals:
+            regex:
+              - redactor: '(-----BEGIN [^-]*PRIVATE KEY-----)(?P<mask>[\s\S]*?)(-----END [^-]*PRIVATE KEY-----)'
+        - name: langcache-sensitive-yaml-paths
+          removals:
+            yamlPath:
+              - auth.admin_token
+              - auth.internal_token
+              - auth.agent_keys.introspection.credential
+              - auth.control.token
+              - runtime.service_credentials.*.token
+              - product_validation.*.credential.token
+              - embedding.credentials.api_key
+              - "*.embedding.credentials.api_key"
+              - headers
+              - "*.headers"
+              - license
+              - license.*
+              - "*.license"
+              - "*.api_key"
+              - prompt
+              - response
+              - entries
+              - attributes
+              - vector
+              - vectors
+              - payload
+              - request
+              - body
+              - response_body
+              - "*.prompt"
+              - "*.response"
+              - "*.entries"
+              - "*.attributes"
+              - "*.vector"
+              - "*.vectors"
+              - "*.payload"
+              - "*.request"
+              - "*.body"
+              - "*.response_body"
+              - "*.token"
+              - "*.password"
+              - "*.secret"
+              - "*.private_key"
+{{- end }}

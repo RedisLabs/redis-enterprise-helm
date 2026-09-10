@@ -1,0 +1,19 @@
+{{- if and .Values.dataplane.config.render (not .Values.dataplane.config.existingSecret) }}
+{{- /*
+  Chart-rendered Data Plane config ConfigMap. Contains STRUCTURE ONLY — no
+  Redis connection URLs, no embedding credential. Those arrive via the
+  mounted overlay Secret(s) (dataplane.secrets.secretName plus any
+  additionalSecrets) and are deep-merged over this config by the loader at
+  runtime, so a ConfigMap (not a Secret) is the honest carrier here.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "langcache.dataplaneConfigName" . }}
+  labels:
+    {{- include "langcache.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dataplane
+data:
+  {{ .Values.dataplane.config.secretKey }}: |
+{{ include "langcache.dataplaneConfig" . | indent 4 }}
+{{- end }}

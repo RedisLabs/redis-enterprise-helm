@@ -1,0 +1,11 @@
+{{- include "redis-onprem.tests.rbac" (dict
+  "root" .
+  "enabled" .Values.tests.enabled
+  "name" (include "langcache.fullname" .)
+  "labelsTemplate" "langcache.labels"
+  "serviceAccountName" (include "langcache.serviceAccountName" .)
+  "resourceNames" (concat
+    (list (include "langcache.fullname" .) (include "langcache.controlplaneFullname" .))
+    (ternary (list (include "langcache.identityServiceFullname" .)) (list) (eq .Values.identityService.mode "bundled"))
+  )
+) }}
