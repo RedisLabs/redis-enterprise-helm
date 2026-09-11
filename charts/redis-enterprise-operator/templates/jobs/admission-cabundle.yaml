@@ -1,0 +1,211 @@
+{{- if and (not .Values.admission.setCABundle) .Values.admission.reconcileCABundle }}
+{{- $webhookName := ternary (printf "redis-enterprise-admission-%s" .Release.Namespace) "redis-enterprise-admission" .Values.admission.limitToNamespace }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: redis-enterprise-admission-cabundle
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: redis-enterprise
+  annotations:
+    {{- include "redis-enterprise-operator.annotations" . | nindent 4 }}
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: redis-enterprise-admission-cabundle
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: redis-enterprise
+  annotations:
+    {{- include "redis-enterprise-operator.annotations" . | nindent 4 }}
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch", "patch"]
+- apiGroups: ["apps"]
+  resources: ["replicasets"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: redis-enterprise-admission-cabundle
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: redis-enterprise
+  annotations:
+    {{- include "redis-enterprise-operator.annotations" . | nindent 4 }}
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+subjects:
+- kind: ServiceAccount
+  name: redis-enterprise-admission-cabundle
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: redis-enterprise-admission-cabundle
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: redis-enterprise-admission-cabundle-{{ .Release.Namespace }}
+  labels:
+    app: redis-enterprise
+  annotations:
+    {{- include "redis-enterprise-operator.annotations" . | nindent 4 }}
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+rules:
+- apiGroups: ["admissionregistration.k8s.io"]
+  resources: ["validatingwebhookconfigurations"]
+  verbs: ["get", "patch"]
+  resourceNames: ["{{ $webhookName }}"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: redis-enterprise-admission-cabundle-{{ .Release.Namespace }}
+  labels:
+    app: redis-enterprise
+  annotations:
+    {{- include "redis-enterprise-operator.annotations" . | nindent 4 }}
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+subjects:
+- kind: ServiceAccount
+  name: redis-enterprise-admission-cabundle
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: redis-enterprise-admission-cabundle-{{ .Release.Namespace }}
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: redis-enterprise-admission-cabundle
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: redis-enterprise
+  annotations:
+    {{- include "redis-enterprise-operator.annotations" . | nindent 4 }}
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+spec:
+  backoffLimit: 5
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        app: redis-enterprise
+    spec:
+      serviceAccountName: redis-enterprise-admission-cabundle
+      restartPolicy: OnFailure
+      {{- with .Values.operator.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      imagePullSecrets:
+      {{- range .Values.imagePullSecrets }}
+      - name: {{ . }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: "RuntimeDefault"
+      containers:
+      - name: reconcile
+        image: {{ .Values.admission.reconcileImage | quote }}
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          limits:
+            cpu: 100m
+            memory: 128Mi
+        env:
+        - name: HOME
+          value: /tmp
+        - name: NS
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: WEBHOOK
+          value: {{ $webhookName | quote }}
+        - name: DEPLOY
+          value: redis-enterprise-operator
+        - name: SECRET
+          value: admission-tls
+        command:
+        - /bin/sh
+        - -eu
+        - -c
+        - |
+          sc() { kubectl -n "$NS" get secret "$SECRET" -o jsonpath='{.data.cert}' 2>/dev/null || true; }
+          wh() { kubectl get validatingwebhookconfiguration "$WEBHOOK" -o jsonpath='{.webhooks[0].clientConfig.caBundle}' 2>/dev/null || true; }
+          wait_cert() {
+            i=0
+            while [ "$i" -lt 36 ]; do
+              [ -n "$(sc)" ] && return 0
+              i=$((i + 1)); sleep 5
+            done
+            return 1
+          }
+
+          if [ -z "$(sc)" ]; then
+            echo "admission-tls has no cert; waiting for the operator"
+            wait_cert || true
+          fi
+          if [ -z "$(sc)" ]; then
+            echo "admission-tls still missing; restarting operator once"
+            kubectl -n "$NS" rollout restart deploy "$DEPLOY"
+            kubectl -n "$NS" rollout status deploy "$DEPLOY" --timeout=180s
+            wait_cert || true
+          fi
+          CERT="$(sc)"
+          if [ -z "$CERT" ]; then
+            echo "ERROR: operator did not create secret $SECRET in namespace $NS" >&2
+            exit 1
+          fi
+          if [ "$(wh)" = "$CERT" ]; then
+            echo "caBundle already in sync with serving cert; nothing to do"
+            exit 0
+          fi
+          echo "reconciling webhook caBundle from $SECRET"
+          kubectl patch validatingwebhookconfiguration "$WEBHOOK" --type=json \
+            -p="[{\"op\":\"replace\",\"path\":\"/webhooks/0/clientConfig/caBundle\",\"value\":\"$CERT\"}]"
+          if [ "$(wh)" != "$CERT" ]; then
+            echo "ERROR: webhook caBundle does not match serving cert after patch" >&2
+            exit 1
+          fi
+          echo "OK: caBundle reconciled with operator serving cert"
+{{- end }}
