@@ -1,0 +1,183 @@
+name: Release Radar Chart
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published Radar release tag to publish or redeploy
+        required: true
+        type: string
+
+concurrency:
+  group: release-radar-chart
+  cancel-in-progress: false
+
+jobs:
+  publish-index:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.event.release.tag_name, 'radar-')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      package: ${{ steps.release.outputs.package }}
+      sha256: ${{ steps.release.outputs.sha256 }}
+    env:
+      RELEASE_TAG: >-
+        ${{ github.event_name == 'release' &&
+            github.event.release.tag_name ||
+            inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.9.2
+
+      - name: Verify published Radar release
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$RELEASE_TAG" =~ ^radar-([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "Expected a Radar release tag such as radar-2026.9.5, got: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          version="${BASH_REMATCH[1]}"
+          package="radar-${version}.tgz"
+          release_json="$RUNNER_TEMP/radar-release.json"
+          archive="$RUNNER_TEMP/$package"
+          package_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${package}"
+
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" > "$release_json"
+          jq -e --arg package "$package" '
+            .draft == false and
+            .prerelease == false and
+            (.assets | length == 1) and
+            .assets[0].name == $package and
+            .assets[0].state == "uploaded"
+          ' "$release_json" >/dev/null
+
+          checksum_line="$(jq -r '.body // ""' "$release_json")"
+          if [[ ! "$checksum_line" =~ ^Qualified\ Radar\ chart\.\ SHA-256:\ ([a-f0-9]{64})$ ]]; then
+            echo "Release notes do not contain the qualified Radar chart checksum." >&2
+            exit 1
+          fi
+          expected_sha256="${BASH_REMATCH[1]}"
+
+          jq -e --arg digest "sha256:${expected_sha256}" \
+            '.assets[0].digest == $digest' "$release_json" >/dev/null
+
+          curl --disable --fail --silent --show-error --location \
+            --proto '=https' --proto-redir '=https' \
+            --retry 4 --retry-delay 2 --retry-max-time 60 \
+            --connect-timeout 15 --max-time 120 \
+            --output "$archive" "$package_url"
+
+          actual_sha256="$(sha256sum "$archive" | awk '{print $1}')"
+          if [ "$actual_sha256" != "$expected_sha256" ]; then
+            echo "Downloaded chart checksum does not match the qualified release." >&2
+            exit 1
+          fi
+
+          chart_name="$(helm show chart "$archive" | awk '$1 == "name:" { print $2; exit }')"
+          chart_version="$(helm show chart "$archive" | awk '$1 == "version:" { print $2; exit }')"
+          if [ "$chart_name" != "radar" ] || [ "$chart_version" != "$version" ]; then
+            echo "Chart metadata does not match release ${RELEASE_TAG}." >&2
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "package=$package" >> "$GITHUB_OUTPUT"
+          echo "sha256=$actual_sha256" >> "$GITHUB_OUTPUT"
+          echo "url=$package_url" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout Helm index
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          fetch-depth: 0
+
+      - name: Update Radar Helm index
+        env:
+          PACKAGE: ${{ steps.release.outputs.package }}
+          PACKAGE_SHA256: ${{ steps.release.outputs.sha256 }}
+          PACKAGE_URL: ${{ steps.release.outputs.url }}
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          index_path="radar/index.yaml"
+          if [ -s "$index_path" ] &&
+            grep -qF "version: ${VERSION}" "$index_path" &&
+            grep -qF "digest: ${PACKAGE_SHA256}" "$index_path" &&
+            grep -qF "$PACKAGE_URL" "$index_path"; then
+            echo "Radar ${VERSION} is already present in the Helm index."
+            exit 0
+          fi
+
+          index_source="$(mktemp -d "$RUNNER_TEMP/radar-index-source.XXXXXX")"
+          cp "$RUNNER_TEMP/$PACKAGE" "$index_source/$PACKAGE"
+          mkdir -p "$(dirname "$index_path")"
+
+          if [ -s "$index_path" ]; then
+            helm repo index "$index_source" \
+              --url "${PACKAGE_URL%/*}" \
+              --merge "$index_path"
+          else
+            helm repo index "$index_source" --url "${PACKAGE_URL%/*}"
+          fi
+          cp "$index_source/index.yaml" "$index_path"
+
+          grep -qF "version: ${VERSION}" "$index_path"
+          grep -qF "digest: ${PACKAGE_SHA256}" "$index_path"
+          grep -qF "$PACKAGE_URL" "$index_path"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$index_path"
+
+          if git diff --cached --quiet; then
+            echo "Radar Helm index is already current."
+            exit 0
+          fi
+
+          git commit -m "chore: publish radar chart ${VERSION}"
+          git pull --rebase origin gh-pages
+          git push origin HEAD:gh-pages
+
+  deploy:
+    needs: publish-index
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: read
+      id-token: write
+      pages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          fetch-depth: 0
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
