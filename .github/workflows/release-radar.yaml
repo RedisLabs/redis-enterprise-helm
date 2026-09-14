@@ -1,8 +1,8 @@
 name: Release Radar Chart
 
 on:
-  release:
-    types: [published]
+  repository_dispatch:
+    types: [radar-release-published]
   workflow_dispatch:
     inputs:
       tag:
@@ -16,22 +16,16 @@ concurrency:
 
 jobs:
   publish-index:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      startsWith(github.event.release.tag_name, 'radar-')
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    outputs:
-      version: ${{ steps.release.outputs.version }}
-      package: ${{ steps.release.outputs.package }}
-      sha256: ${{ steps.release.outputs.sha256 }}
     env:
       RELEASE_TAG: >-
-        ${{ github.event_name == 'release' &&
-            github.event.release.tag_name ||
+        ${{ github.event_name == 'repository_dispatch' &&
+            github.event.client_payload.tag ||
             inputs.tag }}
       GH_TOKEN: ${{ github.token }}
+      RADAR_RELEASE_PUBLISHER: redis-ci-bot[bot]
     steps:
       - name: Set up Helm
         uses: azure/setup-helm@v4
@@ -44,7 +38,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ ! "$RELEASE_TAG" =~ ^radar-([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+          if [ "$GITHUB_EVENT_NAME" = "repository_dispatch" ] &&
+            [ "$GITHUB_ACTOR" != "$RADAR_RELEASE_PUBLISHER" ]; then
+            echo "Radar release dispatch must come from ${RADAR_RELEASE_PUBLISHER}." >&2
+            exit 1
+          fi
+
+          if [[ ! "$RELEASE_TAG" =~ ^radar-([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?)$ ]]; then
             echo "Expected a Radar release tag such as radar-2026.9.5, got: $RELEASE_TAG" >&2
             exit 1
           fi
@@ -56,23 +56,26 @@ jobs:
           package_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${package}"
 
           gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" > "$release_json"
-          jq -e --arg package "$package" '
+          jq -e \
+            --arg package "$package" \
+            --arg publisher "$RADAR_RELEASE_PUBLISHER" '
             .draft == false and
             .prerelease == false and
             (.assets | length == 1) and
             .assets[0].name == $package and
-            .assets[0].state == "uploaded"
+            .assets[0].state == "uploaded" and
+            .author.login == $publisher and
+            .author.type == "Bot" and
+            .assets[0].uploader.login == $publisher and
+            (.target_commitish | test("^[a-f0-9]{40}$"))
           ' "$release_json" >/dev/null
 
-          checksum_line="$(jq -r '.body // ""' "$release_json")"
-          if [[ ! "$checksum_line" =~ ^Qualified\ Radar\ chart\.\ SHA-256:\ ([a-f0-9]{64})$ ]]; then
-            echo "Release notes do not contain the qualified Radar chart checksum." >&2
+          asset_digest="$(jq -r '.assets[0].digest // ""' "$release_json")"
+          if [[ ! "$asset_digest" =~ ^sha256:([a-f0-9]{64})$ ]]; then
+            echo "Radar release asset has no valid GitHub SHA-256 digest." >&2
             exit 1
           fi
           expected_sha256="${BASH_REMATCH[1]}"
-
-          jq -e --arg digest "sha256:${expected_sha256}" \
-            '.assets[0].digest == $digest' "$release_json" >/dev/null
 
           curl --disable --fail --silent --show-error --location \
             --proto '=https' --proto-redir '=https' \
@@ -97,12 +100,22 @@ jobs:
           echo "package=$package" >> "$GITHUB_OUTPUT"
           echo "sha256=$actual_sha256" >> "$GITHUB_OUTPUT"
           echo "url=$package_url" >> "$GITHUB_OUTPUT"
+          echo "target=$(jq -r '.target_commitish' "$release_json")" >> "$GITHUB_OUTPUT"
 
       - name: Checkout Helm index
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           fetch-depth: 0
+
+      - name: Verify release target
+        env:
+          RELEASE_TARGET: ${{ steps.release.outputs.target }}
+        run: |
+          if ! git merge-base --is-ancestor "$RELEASE_TARGET" HEAD; then
+            echo "Radar release target is not part of gh-pages history." >&2
+            exit 1
+          fi
 
       - name: Update Radar Helm index
         env:
@@ -115,12 +128,40 @@ jobs:
           set -euo pipefail
 
           index_path="radar/index.yaml"
-          if [ -s "$index_path" ] &&
-            grep -qF "version: ${VERSION}" "$index_path" &&
-            grep -qF "digest: ${PACKAGE_SHA256}" "$index_path" &&
-            grep -qF "$PACKAGE_URL" "$index_path"; then
-            echo "Radar ${VERSION} is already present in the Helm index."
-            exit 0
+          index_entry() {
+            awk -v version="$VERSION" '
+              function emit() {
+                if (index(entry, "\n    version: " version "\n")) {
+                  matches++
+                  printf "%s", entry
+                }
+              }
+              /^  - / {
+                emit()
+                entry = $0 "\n"
+                next
+              }
+              { entry = entry $0 "\n" }
+              END {
+                emit()
+                if (matches > 1) {
+                  exit 2
+                }
+              }
+            ' "$index_path"
+          }
+
+          if [ -s "$index_path" ]; then
+            existing_entry="$(index_entry)"
+            if [ -n "$existing_entry" ]; then
+              if grep -qF "digest: ${PACKAGE_SHA256}" <<< "$existing_entry" &&
+                grep -qF "$PACKAGE_URL" <<< "$existing_entry"; then
+                echo "Radar ${VERSION} is already present in the Helm index."
+                exit 0
+              fi
+              echo "Radar ${VERSION} already exists with different package identity." >&2
+              exit 1
+            fi
           fi
 
           index_source="$(mktemp -d "$RUNNER_TEMP/radar-index-source.XXXXXX")"
@@ -136,18 +177,13 @@ jobs:
           fi
           cp "$index_source/index.yaml" "$index_path"
 
-          grep -qF "version: ${VERSION}" "$index_path"
-          grep -qF "digest: ${PACKAGE_SHA256}" "$index_path"
-          grep -qF "$PACKAGE_URL" "$index_path"
+          generated_entry="$(index_entry)"
+          grep -qF "digest: ${PACKAGE_SHA256}" <<< "$generated_entry"
+          grep -qF "$PACKAGE_URL" <<< "$generated_entry"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "$index_path"
-
-          if git diff --cached --quiet; then
-            echo "Radar Helm index is already current."
-            exit 0
-          fi
 
           git commit -m "chore: publish radar chart ${VERSION}"
           git pull --rebase origin gh-pages
