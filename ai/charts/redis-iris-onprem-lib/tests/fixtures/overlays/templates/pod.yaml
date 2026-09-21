@@ -1,0 +1,23 @@
+{{- $names := include "redis-onprem.overlaySecretNames" .Values.secrets -}}
+{{- $options := dict "names" $names "volumePrefix" "fixture-overlay" "mountBase" "/etc/fixture/overlays" "key" (.Values.key | default "config.yaml") "path" (.Values.path | default "overlay.yaml") -}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: overlay-fixture
+  annotations:
+    checksum/overlays: {{ include "redis-onprem.overlayChecksum" $names | quote }}
+spec:
+  containers:
+    - name: fixture
+      image: fixture:latest
+      args:
+        - serve
+        {{- include "redis-onprem.overlayConfigArgs" $options | nindent 8 }}
+      {{- if ne $names "[]" }}
+      volumeMounts:
+        {{- include "redis-onprem.overlayVolumeMounts" $options | nindent 8 }}
+      {{- end }}
+  {{- if ne $names "[]" }}
+  volumes:
+    {{- include "redis-onprem.overlayVolumes" $options | nindent 4 }}
+  {{- end }}
