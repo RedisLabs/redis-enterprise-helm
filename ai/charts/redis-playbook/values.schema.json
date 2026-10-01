@@ -1,0 +1,424 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "tenantId",
+    "security",
+    "license",
+    "storage",
+    "inference",
+    "controlplane",
+    "dataplane",
+    "identityService",
+    "tests"
+  ],
+  "properties": {
+    "tenantId": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "security": {
+      "type": "object",
+      "required": [
+        "profile"
+      ],
+      "properties": {
+        "profile": {
+          "type": "string",
+          "enum": [
+            "",
+            "fips"
+          ]
+        }
+      }
+    },
+    "tls": {
+      "type": "object",
+      "required": [
+        "caCertSecret",
+        "caCertSecretChecksum"
+      ],
+      "properties": {
+        "caCertSecret": {
+          "type": "string"
+        },
+        "caCertSecretChecksum": {
+          "type": "string"
+        }
+      }
+    },
+    "license": {
+      "$ref": "#/definitions/secretReference"
+    },
+    "storage": {
+      "type": "object",
+      "required": [
+        "existingSecret",
+        "playbookKey",
+        "identityServiceKey",
+        "existingSecretChecksum",
+        "keyPrefix",
+        "maxPlaybooksPerTenant"
+      ],
+      "properties": {
+        "existingSecret": {
+          "type": "string"
+        },
+        "playbookKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "identityServiceKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "existingSecretChecksum": {
+          "type": "string"
+        },
+        "keyPrefix": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^*?\\[\\]{}[:space:]]+$"
+        },
+        "maxPlaybooksPerTenant": {"type": "integer", "minimum": 1}
+      }
+    },
+    "inference": {
+      "type": "object",
+      "required": [
+        "existingSecret",
+        "secretKey",
+        "existingSecretChecksum",
+        "models"
+      ],
+      "properties": {
+        "existingSecret": {
+          "type": "string"
+        },
+        "secretKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "existingSecretChecksum": {
+          "type": "string"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "provider",
+              "model",
+              "dimensions"
+            ],
+            "properties": {
+              "provider": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "dimensions": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4096
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "controlplane": {
+      "type": "object",
+      "required": [
+        "replicaCount",
+        "image",
+        "service",
+        "adminToken",
+        "internalToken"
+      ],
+      "properties": {
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "image": {
+          "$ref": "#/definitions/image"
+        },
+        "service": {
+          "$ref": "#/definitions/service"
+        },
+        "config": {
+          "type": "object",
+          "description": "Bring-your-own control-plane config. When existingSecret is set the chart renders no control-plane ConfigMap and mounts that Secret instead.",
+          "properties": {
+            "existingSecret": {
+              "type": "string"
+            },
+            "secretKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "existingSecretChecksum": {
+              "type": "string"
+            }
+          }
+        },
+        "adminToken": {
+          "$ref": "#/definitions/credentialReference"
+        },
+        "internalToken": {
+          "$ref": "#/definitions/credentialReference"
+        }
+      }
+    },
+    "dataplane": {
+      "type": "object",
+      "required": [
+        "replicaCount",
+        "image",
+        "service",
+        "identityServiceBaseURL",
+        "oidc"
+      ],
+      "properties": {
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "image": {
+          "$ref": "#/definitions/image"
+        },
+        "service": {
+          "$ref": "#/definitions/service"
+        },
+        "identityServiceBaseURL": {
+          "type": "string",
+          "pattern": "^(|https?://[^[:space:]]+)$"
+        },
+        "oidc": {
+          "type": "object",
+          "required": [
+            "enabled",
+            "issuer",
+            "jwksURI",
+            "tenantIDClaim",
+            "staticTenantID",
+            "roleClaims",
+            "allowInsecureTransport"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "issuer": {
+              "type": "string",
+              "pattern": "^(|https?://[^[:space:]]+)$"
+            },
+            "jwksURI": {
+              "type": "string",
+              "pattern": "^(|https?://[^[:space:]]+)$"
+            },
+            "tenantIDClaim": {
+              "type": "string"
+            },
+            "staticTenantID": {
+              "type": "string"
+            },
+            "roleClaims": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "allowInsecureTransport": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "identityService": {
+      "type": "object",
+      "required": [
+        "replicaCount",
+        "image",
+        "service",
+        "playbookControlPlaneBaseURL",
+        "controlToken",
+        "runtimeToken",
+        "runtimeCache"
+      ],
+      "properties": {
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "image": {
+          "$ref": "#/definitions/image"
+        },
+        "service": {
+          "$ref": "#/definitions/service"
+        },
+        "playbookControlPlaneBaseURL": {
+          "type": "string",
+          "pattern": "^(|https?://[^[:space:]]+)$"
+        },
+        "controlToken": {
+          "$ref": "#/definitions/credentialReference"
+        },
+        "runtimeToken": {
+          "$ref": "#/definitions/credentialReference"
+        },
+        "runtimeCache": {
+          "type": "object",
+          "required": [
+            "softTTLSeconds",
+            "hardTTLSeconds"
+          ],
+          "properties": {
+            "softTTLSeconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "hardTTLSeconds": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "apiKeyTenant": {
+          "type": "object",
+          "description": "Single-tenant compatibility for agent-key grants. Backfills only grants missing a tenant; a grant naming a different tenant is still rejected.",
+          "properties": {
+            "singleTenantID": {
+              "type": "string"
+            },
+            "allowTenantlessGrants": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "tests": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "securityProfileImage"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "securityProfileImage": {
+          "$ref": "#/definitions/image"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "definitions": {
+    "secretReference": {
+      "type": "object",
+      "required": [
+        "existingSecret",
+        "secretKey",
+        "existingSecretChecksum"
+      ],
+      "properties": {
+        "existingSecret": {
+          "type": "string"
+        },
+        "secretKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "existingSecretChecksum": {
+          "type": "string"
+        }
+      }
+    },
+    "credentialReference": {
+      "type": "object",
+      "required": [
+        "existingSecret",
+        "secretKey",
+        "autoGenerate",
+        "existingSecretChecksum"
+      ],
+      "properties": {
+        "existingSecret": {
+          "type": "string"
+        },
+        "secretKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "autoGenerate": {
+          "type": "boolean"
+        },
+        "existingSecretChecksum": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "image": {
+      "type": "object",
+      "required": [
+        "repository",
+        "tag",
+        "pullPolicy"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "required": [
+        "type",
+        "port"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "ClusterIP",
+            "NodePort",
+            "LoadBalancer"
+          ]
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
+    }
+  }
+}

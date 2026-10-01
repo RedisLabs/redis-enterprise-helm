@@ -1,0 +1,37 @@
+{{- if .Values.tests.enabled }}
+{{ include "redis-onprem.securityProfileTest" (dict
+  "root" .
+  "enabled" true
+  "name" (include "redis-playbook.controlplaneSecurityTestName" .)
+  "labelsTemplate" "redis-playbook.labels"
+  "serviceAccountName" (include "redis-playbook.testServiceAccountName" .)
+  "deploymentName" (include "redis-playbook.controlplaneName" .)
+  "securityProfile" .Values.security.profile
+  "image" (printf "%s:%s" .Values.tests.securityProfileImage.repository .Values.tests.securityProfileImage.tag)
+  "imagePullPolicy" .Values.tests.securityProfileImage.pullPolicy
+) }}
+---
+{{ include "redis-onprem.securityProfileTest" (dict
+  "root" .
+  "enabled" true
+  "name" (include "redis-playbook.dataplaneSecurityTestName" .)
+  "labelsTemplate" "redis-playbook.labels"
+  "serviceAccountName" (include "redis-playbook.testServiceAccountName" .)
+  "deploymentName" (include "redis-playbook.dataplaneName" .)
+  "securityProfile" .Values.security.profile
+  "image" (printf "%s:%s" .Values.tests.securityProfileImage.repository .Values.tests.securityProfileImage.tag)
+  "imagePullPolicy" .Values.tests.securityProfileImage.pullPolicy
+) }}
+---
+{{ include "redis-onprem.securityProfileTest" (dict
+  "root" .
+  "enabled" true
+  "name" (include "redis-playbook.identityServiceSecurityTestName" .)
+  "labelsTemplate" "redis-playbook.labels"
+  "serviceAccountName" (include "redis-playbook.testServiceAccountName" .)
+  "deploymentName" (include "redis-playbook.identityServiceName" .)
+  "securityProfile" .Values.security.profile
+  "image" (printf "%s:%s" .Values.tests.securityProfileImage.repository .Values.tests.securityProfileImage.tag)
+  "imagePullPolicy" .Values.tests.securityProfileImage.pullPolicy
+) }}
+{{- end }}

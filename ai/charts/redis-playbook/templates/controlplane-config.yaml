@@ -1,0 +1,45 @@
+{{- /*
+  Chart-rendered Control Plane config ConfigMap.
+
+  Skipped entirely when controlplane.config.existingSecret is set, so an
+  operator can supply the whole control-plane config themselves -- the only way
+  to reach settings this chart does not render, auth.delegated_auth among them
+  (chart wiring for that is MOD-18391). langcache/helm and memory/helm have had
+  this switch; Playbook rendered auth: unconditionally and so had no escape
+  hatch at all.
+*/}}
+{{- if not .Values.controlplane.config.existingSecret }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "redis-playbook.controlplaneName" . }}-config
+  labels:
+    {{- include "redis-playbook.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controlplane
+data:
+  playbook-controlplane.yaml: |
+    profile: prod
+    tenant_id: {{ .Values.tenantId | quote }}
+    server:
+      host: 0.0.0.0
+      port: {{ .Values.controlplane.service.port }}
+      timeout: 30s
+      read_timeout: 30s
+      write_timeout: 35s
+    auth:
+      type: admin-token
+      admin_token:
+        token_file: /etc/playbook/credentials/admin/token
+      internal_token:
+        token_file: /etc/playbook/credentials/internal/token
+    license:
+      license_path: /etc/playbook/license/{{ .Values.license.secretKey }}
+    storage:
+      key_prefix: {{ .Values.storage.keyPrefix | quote }}
+      max_playbooks_per_tenant: {{ .Values.storage.maxPlaybooksPerTenant }}
+    inference:
+      models:
+        {{- toYaml .Values.inference.models | nindent 8 }}
+    opentelemetry:
+      enable_tracing: false
+{{- end }}

@@ -1,0 +1,121 @@
+{{- define "redis-playbook.controlplaneAnnotations" -}}
+{{- if .Values.controlplane.config.existingSecret }}
+checksum/config: {{ .Values.controlplane.config.existingSecretChecksum | quote }}
+{{- else }}
+checksum/config: {{ toJson (dict "tenantId" .Values.tenantId "service" .Values.controlplane.service "keyPrefix" .Values.storage.keyPrefix "models" .Values.inference.models) | sha256sum | quote }}
+{{- end }}
+{{- with .Values.storage.existingSecretChecksum }}
+checksum/storage-secret: {{ . | quote }}
+{{- end }}
+{{- with .Values.controlplane.adminToken.existingSecretChecksum }}
+checksum/admin-token: {{ . | quote }}
+{{- end }}
+{{- with .Values.controlplane.internalToken.existingSecretChecksum }}
+checksum/internal-token: {{ . | quote }}
+{{- end }}
+{{- with .Values.license.existingSecretChecksum }}
+checksum/license: {{ . | quote }}
+{{- end }}
+{{- if and .Values.tls.caCertSecret .Values.tls.caCertSecretChecksum }}
+checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
+{{- end }}
+{{- end }}
+
+{{- define "redis-playbook.controlplaneArgs" -}}
+- --config
+- /etc/playbook/config/playbook-controlplane.yaml
+- --config
+- /etc/playbook/storage/storage.yaml
+{{- end }}
+
+{{- define "redis-playbook.controlplaneEnv" -}}
+{{ include "redis-playbook.commonEnv" . }}
+{{- end }}
+
+{{- define "redis-playbook.controlplaneVolumeMounts" -}}
+- name: config
+  mountPath: /etc/playbook/config
+  readOnly: true
+- name: storage
+  mountPath: /etc/playbook/storage
+  readOnly: true
+- name: admin-token
+  mountPath: /etc/playbook/credentials/admin
+  readOnly: true
+- name: internal-token
+  mountPath: /etc/playbook/credentials/internal
+  readOnly: true
+- name: license
+  mountPath: /etc/playbook/license
+  readOnly: true
+{{ include "redis-playbook.commonTLSMount" . }}
+{{- end }}
+
+{{- define "redis-playbook.controlplaneVolumes" -}}
+- name: config
+  {{- if .Values.controlplane.config.existingSecret }}
+  secret:
+    secretName: {{ .Values.controlplane.config.existingSecret }}
+    items:
+      - key: {{ .Values.controlplane.config.secretKey }}
+        path: playbook-controlplane.yaml
+  {{- else }}
+  configMap:
+    name: {{ include "redis-playbook.controlplaneName" . }}-config
+  {{- end }}
+- name: storage
+  secret:
+    secretName: {{ required "storage.existingSecret is required" .Values.storage.existingSecret }}
+    items:
+      - key: {{ .Values.storage.playbookKey }}
+        path: storage.yaml
+- name: admin-token
+  secret:
+    secretName: {{ include "redis-playbook.controlplaneAdminTokenSecretName" . }}
+    items:
+      - key: {{ .Values.controlplane.adminToken.secretKey }}
+        path: token
+- name: internal-token
+  secret:
+    secretName: {{ include "redis-playbook.controlplaneInternalTokenSecretName" . }}
+    items:
+      - key: {{ .Values.controlplane.internalToken.secretKey }}
+        path: token
+- name: license
+  secret:
+    secretName: {{ required "license.existingSecret is required" .Values.license.existingSecret }}
+    items:
+      - key: {{ .Values.license.secretKey }}
+        path: {{ .Values.license.secretKey }}
+{{ include "redis-playbook.commonTLSVolume" . }}
+{{- end }}
+
+{{- include "redis-onprem.controlplane.deployment" (dict
+  "root" .
+  "name" (include "redis-playbook.controlplaneName" .)
+  "component" "controlplane"
+  "labelsTemplate" "redis-playbook.labels"
+  "selectorLabelsTemplate" "redis-playbook.selectorLabels"
+  "replicas" .Values.controlplane.replicaCount
+  "annotationsTemplate" "redis-playbook.controlplaneAnnotations"
+  "podAnnotations" .Values.controlplane.podAnnotations
+  "podLabels" .Values.controlplane.podLabels
+  "imagePullSecrets" .Values.imagePullSecrets
+  "serviceAccountName" (include "redis-playbook.serviceAccountName" .)
+  "automountServiceAccountToken" false
+  "podSecurityContext" .Values.podSecurityContext
+  "containerName" "controlplane"
+  "argsTemplate" "redis-playbook.controlplaneArgs"
+  "containerSecurityContext" .Values.securityContext
+  "image" .Values.controlplane.image
+  "envTemplate" "redis-playbook.controlplaneEnv"
+  "port" .Values.controlplane.service.port
+  "livenessProbe" (dict "httpGet" (dict "path" "/v1/health/live" "port" "http") "initialDelaySeconds" 5 "periodSeconds" 10)
+  "readinessProbe" (dict "httpGet" (dict "path" "/v1/health/ready" "port" "http") "initialDelaySeconds" 3 "periodSeconds" 5)
+  "resources" .Values.controlplane.resources
+  "volumeMountsTemplate" "redis-playbook.controlplaneVolumeMounts"
+  "volumesTemplate" "redis-playbook.controlplaneVolumes"
+  "nodeSelector" .Values.controlplane.nodeSelector
+  "affinity" .Values.controlplane.affinity
+  "tolerations" .Values.controlplane.tolerations
+) }}

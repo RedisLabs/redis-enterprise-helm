@@ -1,0 +1,113 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "redis-playbook.dataplaneName" . }}-config
+  labels:
+    {{- include "redis-playbook.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dataplane
+data:
+  playbook-dataplane.yaml: |
+    profile: prod
+    tenant_id: {{ .Values.tenantId | quote }}
+    server:
+      host: 0.0.0.0
+      port: {{ .Values.dataplane.service.port }}
+      timeout: 30s
+      read_timeout: 30s
+      write_timeout: 35s
+    auth:
+      method: agent_key
+      agent_keys:
+        enabled: true
+        product: playbook
+        introspection:
+          base_url: {{ include "redis-playbook.identityServiceBaseURL" . | quote }}
+          product: playbook
+          {{- if hasPrefix "http://" (include "redis-playbook.identityServiceBaseURL" .) }}
+          allow_insecure_transport: true
+          {{- end }}
+          credential:
+            token_file: /etc/playbook/credentials/identity-runtime/token
+      {{- if .Values.dataplane.oidc.enabled }}
+      oidc:
+        enabled: true
+        issuer: {{ .Values.dataplane.oidc.issuer | quote }}
+        audience:
+          {{- /* Keep in sync with playbook/dataplane/internal/infrastructure.onPremDataPlaneAudience. */}}
+          - api://playbook-dp
+        jwks_uri: {{ .Values.dataplane.oidc.jwksURI | quote }}
+        {{- with (trim .Values.dataplane.oidc.tenantIDClaim) }}
+        tenant_id_claim: {{ . | quote }}
+        {{- end }}
+        {{- with (trim .Values.dataplane.oidc.staticTenantID) }}
+        static_tenant_id: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.dataplane.oidc.roleClaims }}
+        role_claims:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- if .Values.dataplane.oidc.allowInsecureTransport }}
+        allow_insecure_transport: true
+        {{- end }}
+      {{- end }}
+    license:
+      license_path: /etc/playbook/license/{{ .Values.license.secretKey }}
+    storage:
+      key_prefix: {{ .Values.storage.keyPrefix | quote }}
+      max_playbooks_per_tenant: {{ .Values.storage.maxPlaybooksPerTenant }}
+    inference:
+      models:
+        {{- toYaml .Values.inference.models | nindent 8 }}
+    opentelemetry:
+      enable_tracing: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "redis-playbook.identityServiceName" . }}-config
+  labels:
+    {{- include "redis-playbook.labels" . | nindent 4 }}
+    app.kubernetes.io/component: identity-service
+data:
+  identity-service.yaml: |
+    profile: prod
+    server:
+      host: 0.0.0.0
+      port: {{ .Values.identityService.service.port }}
+      timeout: 30s
+      read_timeout: 30s
+      write_timeout: 35s
+    auth:
+      type: static-credential
+      control:
+        token_file: /etc/identity-service/credentials/control/token
+    api_keys:
+      max_rotate_grace_seconds: 604800
+    runtime:
+      service_credentials:
+        - subject: playbook-dataplane
+          token_file: /etc/identity-service/credentials/runtime/token
+          allowed_operations:
+            - api-key-introspect
+          allowed_products:
+            - playbook
+      cache:
+        soft_ttl_seconds: {{ .Values.identityService.runtimeCache.softTTLSeconds }}
+        hard_ttl_seconds: {{ .Values.identityService.runtimeCache.hardTTLSeconds }}
+{{- $apiKeyTenant := default (dict) .Values.identityService.apiKeyTenant }}
+{{- $singleTenantID := trim (default "" $apiKeyTenant.singleTenantID) }}
+{{- if and $apiKeyTenant.allowTenantlessGrants (not $singleTenantID) }}
+{{- fail "identityService.apiKeyTenant.allowTenantlessGrants requires singleTenantID; Identity Service refuses to start without it" }}
+{{- end }}
+{{- if $singleTenantID }}
+      api_key_tenant:
+        single_tenant_id: {{ $singleTenantID | quote }}
+        allow_tenantless_grants: {{ default false $apiKeyTenant.allowTenantlessGrants }}
+{{- end }}
+    product_validation:
+      playbook:
+        base_url: {{ include "redis-playbook.controlplaneBaseURL" . | quote }}
+        credential:
+          token_file: /etc/identity-service/credentials/product-validation/token
+    opentelemetry:
+      enable_tracing: false
