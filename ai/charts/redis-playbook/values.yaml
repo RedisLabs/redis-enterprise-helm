@@ -1,0 +1,192 @@
+nameOverride: ""
+fullnameOverride: ""
+
+tenantId: ""
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+security:
+  # Empty selects the default Go crypto runtime. Set fips only with rediss://
+  # storage URLs and an HTTPS Identity Service endpoint.
+  profile: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+
+tls:
+  # Optional Secret containing additional CA certificates. Every container
+  # receives it at /etc/ssl/custom and SSL_CERT_DIR points at that directory.
+  caCertSecret: ""
+  caCertSecretChecksum: ""
+
+license:
+  existingSecret: ""
+  secretKey: license
+  existingSecretChecksum: ""
+
+storage:
+  # This Secret must already exist. playbookKey must contain storage.metadata
+  # and storage.content URLs; identityServiceKey must contain metadata.urls.
+  existingSecret: ""
+  playbookKey: playbook-storage.yaml
+  identityServiceKey: identity-service-metadata.yaml
+  existingSecretChecksum: ""
+  keyPrefix: iris:playbook
+  # Maximum Playbooks in this service's tenant inventory. The list API is unpaginated.
+  maxPlaybooksPerTenant: 128
+
+inference:
+  # Optional Secret containing a complete `inference.models` overlay for the
+  # data plane. It is required when any configured provider is not `noop`.
+  # The control plane receives only the public vector-space identities below.
+  existingSecret: ""
+  secretKey: inference.yaml
+  existingSecretChecksum: ""
+  # Required at install time. Choose the same provider/model/dimensions in the
+  # private overlay. Development fixtures explicitly opt into the noop provider.
+  models: []
+
+controlplane:
+  replicaCount: 1
+  image:
+    repository: "redislabs/iris-agent-playbook-control"
+    # Must be set explicitly at install or upgrade time.
+    tag: "0.1.0-alpha.2"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 9200
+  # Bring-your-own control-plane config. When existingSecret is set the chart
+  # renders no control-plane ConfigMap and mounts that Secret instead, so an
+  # operator can supply settings the chart does not render -- auth.delegated_auth
+  # among them, until MOD-18391 wires it. Set existingSecretChecksum to roll the
+  # Deployment when the Secret's contents change.
+  config:
+    existingSecret: ""
+    secretKey: playbook-controlplane.yaml
+    existingSecretChecksum: ""
+  adminToken:
+    # BYO existingSecret takes precedence. Otherwise the chart creates a
+    # stable random token Secret and preserves it across Helm upgrades.
+    existingSecret: ""
+    secretKey: token
+    autoGenerate: true
+    existingSecretChecksum: ""
+  internalToken:
+    existingSecret: ""
+    secretKey: token
+    autoGenerate: true
+    existingSecretChecksum: ""
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+dataplane:
+  replicaCount: 1
+  image:
+    repository: "redislabs/iris-agent-playbook-data"
+    # Must be set explicitly at install or upgrade time.
+    tag: "0.1.0-alpha.2"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 9201
+  # Defaults to the chart's in-cluster IdS service for the default profile.
+  # FIPS requires an explicit HTTPS endpoint (for example a service-mesh URL).
+  identityServiceBaseURL: ""
+  # Optional direct validation of corporate IdP access tokens. Agent keys stay
+  # enabled as the fallback credential tier. Federated callers fail closed
+  # unless the token resolves to a tenant and its subject has a Playbook grant.
+  # The data plane does not yet compare that resolved tenant with tenantId; use
+  # tenantId as staticTenantID until tenant-claim enforcement lands.
+  oidc:
+    enabled: false
+    issuer: ""
+    jwksURI: ""
+    # Set exactly one tenant source; chart validation rejects configurations with both.
+    tenantIDClaim: ""
+    staticTenantID: ""
+    # Empty uses the shared defaults: roles and groups. Playbook currently
+    # authorizes federated callers by resource grant, so these claims do not
+    # independently grant access.
+    roleClaims: []
+    allowInsecureTransport: false
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+identityService:
+  replicaCount: 1
+  image:
+    repository: "redislabs/iris-identity-service"
+    # Must be set explicitly at install or upgrade time.
+    tag: "0.8.0"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 9200
+  # Defaults to the chart's in-cluster Playbook control-plane service for the
+  # default profile. FIPS requires an explicit HTTPS endpoint.
+  playbookControlPlaneBaseURL: ""
+  controlToken:
+    existingSecret: ""
+    secretKey: token
+    autoGenerate: true
+    existingSecretChecksum: ""
+  runtimeToken:
+    existingSecret: ""
+    secretKey: token
+    autoGenerate: true
+    existingSecretChecksum: ""
+  runtimeCache:
+    softTTLSeconds: 180
+    hardTTLSeconds: 300
+  # Single-tenant compatibility for agent-key grants. Leave singleTenantID empty
+  # (default) for strict enforcement: every grant must already carry a tenant.
+  # Setting it backfills only grants missing one; a grant naming a different
+  # tenant is still rejected. Use the deployment's own tenantId — a key minted
+  # without a tenant is accepted by the control plane and then refused at
+  # introspection, so a deployment whose clients omit it needs this.
+  apiKeyTenant:
+    singleTenantID: ""
+    allowTenantlessGrants: false
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+tests:
+  # Enable the health checks and shared security-profile assertions for
+  # `helm test`. The default omits all test Pods and their read-only RBAC.
+  enabled: false
+  securityProfileImage:
+    repository: alpine/k8s
+    tag: "1.35.4"
+    pullPolicy: IfNotPresent

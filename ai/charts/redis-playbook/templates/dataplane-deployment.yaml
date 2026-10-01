@@ -1,0 +1,117 @@
+{{- define "redis-playbook.dataplaneAnnotations" -}}
+checksum/config: {{ toJson (dict "tenantId" .Values.tenantId "service" .Values.dataplane.service "oidc" .Values.dataplane.oidc "keyPrefix" .Values.storage.keyPrefix "models" .Values.inference.models "identityServiceBaseURL" (include "redis-playbook.identityServiceBaseURL" .) "security" .Values.security) | sha256sum | quote }}
+{{- with .Values.storage.existingSecretChecksum }}
+checksum/storage-secret: {{ . | quote }}
+{{- end }}
+{{- if and .Values.inference.existingSecret .Values.inference.existingSecretChecksum }}
+checksum/inference-secret: {{ .Values.inference.existingSecretChecksum | quote }}
+{{- end }}
+{{- with .Values.identityService.runtimeToken.existingSecretChecksum }}
+checksum/identity-runtime-token: {{ . | quote }}
+{{- end }}
+{{- with .Values.license.existingSecretChecksum }}
+checksum/license: {{ . | quote }}
+{{- end }}
+{{- if and .Values.tls.caCertSecret .Values.tls.caCertSecretChecksum }}
+checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
+{{- end }}
+{{- end }}
+
+{{- define "redis-playbook.dataplaneArgs" -}}
+- --config
+- /etc/playbook/config/playbook-dataplane.yaml
+- --config
+- /etc/playbook/storage/storage.yaml
+{{- if .Values.inference.existingSecret }}
+- --config
+- /etc/playbook/inference/{{ .Values.inference.secretKey }}
+{{- end }}
+{{- end }}
+
+{{- define "redis-playbook.dataplaneEnv" -}}
+{{ include "redis-playbook.commonEnv" . }}
+{{- end }}
+
+{{- define "redis-playbook.dataplaneVolumeMounts" -}}
+- name: config
+  mountPath: /etc/playbook/config
+  readOnly: true
+- name: storage
+  mountPath: /etc/playbook/storage
+  readOnly: true
+{{- if .Values.inference.existingSecret }}
+- name: inference
+  mountPath: /etc/playbook/inference
+  readOnly: true
+{{- end }}
+- name: identity-runtime-token
+  mountPath: /etc/playbook/credentials/identity-runtime
+  readOnly: true
+- name: license
+  mountPath: /etc/playbook/license
+  readOnly: true
+{{ include "redis-playbook.commonTLSMount" . }}
+{{- end }}
+
+{{- define "redis-playbook.dataplaneVolumes" -}}
+- name: config
+  configMap:
+    name: {{ include "redis-playbook.dataplaneName" . }}-config
+- name: storage
+  secret:
+    secretName: {{ required "storage.existingSecret is required" .Values.storage.existingSecret }}
+    items:
+      - key: {{ .Values.storage.playbookKey }}
+        path: storage.yaml
+{{- if .Values.inference.existingSecret }}
+- name: inference
+  secret:
+    secretName: {{ .Values.inference.existingSecret }}
+    items:
+      - key: {{ .Values.inference.secretKey }}
+        path: {{ .Values.inference.secretKey }}
+{{- end }}
+- name: identity-runtime-token
+  secret:
+    secretName: {{ include "redis-playbook.identityServiceRuntimeTokenSecretName" . }}
+    items:
+      - key: {{ .Values.identityService.runtimeToken.secretKey }}
+        path: token
+- name: license
+  secret:
+    secretName: {{ required "license.existingSecret is required" .Values.license.existingSecret }}
+    items:
+      - key: {{ .Values.license.secretKey }}
+        path: {{ .Values.license.secretKey }}
+{{ include "redis-playbook.commonTLSVolume" . }}
+{{- end }}
+
+{{- include "redis-onprem.dataplane.deployment" (dict
+  "root" .
+  "name" (include "redis-playbook.dataplaneName" .)
+  "component" "dataplane"
+  "labelsTemplate" "redis-playbook.labels"
+  "selectorLabelsTemplate" "redis-playbook.selectorLabels"
+  "replicas" .Values.dataplane.replicaCount
+  "annotationsTemplate" "redis-playbook.dataplaneAnnotations"
+  "podAnnotations" .Values.dataplane.podAnnotations
+  "podLabels" .Values.dataplane.podLabels
+  "imagePullSecrets" .Values.imagePullSecrets
+  "serviceAccountName" (include "redis-playbook.serviceAccountName" .)
+  "automountServiceAccountToken" false
+  "podSecurityContext" .Values.podSecurityContext
+  "containerName" "dataplane"
+  "argsTemplate" "redis-playbook.dataplaneArgs"
+  "containerSecurityContext" .Values.securityContext
+  "image" .Values.dataplane.image
+  "envTemplate" "redis-playbook.dataplaneEnv"
+  "port" .Values.dataplane.service.port
+  "livenessProbe" (dict "httpGet" (dict "path" "/v1/health/live" "port" "http") "initialDelaySeconds" 5 "periodSeconds" 10)
+  "readinessProbe" (dict "httpGet" (dict "path" "/v1/health/ready" "port" "http") "initialDelaySeconds" 3 "periodSeconds" 5)
+  "resources" .Values.dataplane.resources
+  "volumeMountsTemplate" "redis-playbook.dataplaneVolumeMounts"
+  "volumesTemplate" "redis-playbook.dataplaneVolumes"
+  "nodeSelector" .Values.dataplane.nodeSelector
+  "affinity" .Values.dataplane.affinity
+  "tolerations" .Values.dataplane.tolerations
+) }}

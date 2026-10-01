@@ -1,0 +1,43 @@
+tenantId: acme
+
+# Enables the health and shared security-profile checks run by `helm test`.
+tests:
+  enabled: true
+
+controlplane:
+  image:
+    repository: registry.example.com/redis/playbook-controlplane-onprem
+    tag: 1.0.0
+  adminToken:
+    existingSecret: playbook-controlplane-admin
+  internalToken:
+    existingSecret: playbook-controlplane-internal
+
+dataplane:
+  image:
+    repository: registry.example.com/redis/playbook-dataplane-onprem
+    tag: 1.0.0
+
+identityService:
+  image:
+    repository: registry.example.com/redis/iris-identity-service
+    tag: 1.0.0
+  controlToken:
+    existingSecret: playbook-identity-control
+  runtimeToken:
+    existingSecret: playbook-identity-runtime
+
+license:
+  existingSecret: playbook-license
+
+storage:
+  existingSecret: playbook-storage
+
+# Illustrative external-provider configuration, not a supported-model promise.
+# Keep this identity identical to prerequisites.example.yaml's private overlay.
+inference:
+  existingSecret: playbook-inference
+  models:
+    - provider: openai
+      model: text-embedding-3-small
+      dimensions: 1536
