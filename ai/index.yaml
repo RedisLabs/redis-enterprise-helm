@@ -238,6 +238,15 @@ entries:
     version: 0.3.0
   redis-iris-onprem-lib:
   - apiVersion: v2
+    created: "2026-10-02T10:15:15.112046153Z"
+    description: Internal Helm library for Redis AI on-prem workloads.
+    digest: 0425873c8a76ba768ee0b832ccf2a65c644e3533c43f90ec3946e9a60e537aa5
+    name: redis-iris-onprem-lib
+    type: library
+    urls:
+    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-iris-onprem-lib-0.3.0/redis-iris-onprem-lib-0.3.0.tgz
+    version: 0.3.0
+  - apiVersion: v2
     created: "2026-09-21T15:02:47.035647569Z"
     description: Internal Helm library for Redis AI on-prem workloads.
     digest: e65580508b42f603e1cec6875afac1a18454abac51532c9803fbe04588d3a6b6
@@ -276,4 +285,4 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-playbook-0.1.0-alpha.2/redis-playbook-0.1.0-alpha.2.tgz
     version: 0.1.0-alpha.2
-generated: "2026-10-01T18:10:18.401826026Z"
+generated: "2026-10-02T10:15:15.112090192Z"
