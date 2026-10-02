@@ -70,6 +70,14 @@ assert_order() { # <rendered> <first> <second> <description>
   fi
 }
 
+assert_delegated_auth_fails() { # <description> <helm flags...>
+  local description=$1
+  shift
+  if helm template fixture "$fixture" "$@" >/dev/null 2>&1; then
+    fail "$description"
+  fi
+}
+
 fixture=$(mktemp -d)
 trap 'rm -rf "$fixture"' EXIT
 cp -R common/helm/lib/onprem/tests/fixtures/overlays/. "$fixture/"
@@ -82,6 +90,64 @@ out=$(helm template fixture "$fixture")
 assert_absent "$out" "volumeMounts:" "empty overlays must not mount anything"
 assert_absent "$out" '"--config"' "empty overlays must not add arguments"
 assert_absent "$out" "volumes:" "empty overlays must not add volumes"
+assert_absent "$out" "auth-introspect" "disabled delegated auth must render nothing"
+
+echo "== Library source: delegated auth credential, mounts and config =="
+DELEGATED_AUTH_BASE=(
+  --set delegatedAuth.enabled=true
+  --set delegatedAuth.baseURL=https://identity.example.test
+  --set 'delegatedAuth.audience={api://fixture-cp}'
+  --set delegatedAuth.credential.secretKey=token
+  --set delegatedAuth.credential.autoGenerate=true
+)
+out=$(helm template fixture "$fixture" "${DELEGATED_AUTH_BASE[@]}")
+assert_contains "$out" 'name: "fixture-auth-introspect"' "delegated auth generates its dedicated Secret"
+assert_contains "$out" '"helm.sh/resource-policy": keep' "delegated auth preserves its generated credential"
+assert_contains "$out" 'mountPath: /etc/iris/credentials/identity-service-auth-introspect' "delegated auth uses the shared mount path"
+assert_contains "$out" 'base_url: https://identity.example.test' "delegated auth renders the IdS base URL"
+assert_contains "$out" 'product: fixture' "delegated auth renders the product"
+assert_contains "$out" 'api://fixture-cp' "delegated auth renders the CP audience"
+assert_contains "$out" 'subject: fixture-controlplane' "delegated auth renders the service subject"
+assert_contains "$out" 'auth-introspect' "delegated auth limits the IdS operation"
+
+assert_delegated_auth_fails "delegated auth without a base URL must fail" \
+  "${DELEGATED_AUTH_BASE[@]}" --set delegatedAuth.baseURL=
+assert_delegated_auth_fails "delegated auth without an audience must fail" \
+  "${DELEGATED_AUTH_BASE[@]}" --set delegatedAuth.audience=
+assert_delegated_auth_fails "delegated auth without a credential key must fail" \
+  "${DELEGATED_AUTH_BASE[@]}" --set delegatedAuth.credential.secretKey=
+assert_delegated_auth_fails "delegated auth without a credential source must fail" \
+  "${DELEGATED_AUTH_BASE[@]}" --set delegatedAuth.credential.autoGenerate=false
+
+out=$(helm template fixture "$fixture" \
+  --set delegatedAuth.enabled=true \
+  --set delegatedAuth.external=true \
+  --set delegatedAuth.baseURL=https://identity.example.test \
+  --set 'delegatedAuth.audience={api://fixture-cp}' \
+  --set delegatedAuth.credential.existingSecret=external-auth-introspect \
+  --set delegatedAuth.credential.secretKey=credential)
+assert_contains "$out" 'secretName: "external-auth-introspect"' "external IdS mode mounts the operator-managed Secret"
+assert_contains "$out" 'key: "credential"' "external IdS mode selects the configured Secret key"
+assert_absent "$out" 'kind: Secret' "external IdS mode must not render an owned credential Secret"
+
+if helm template fixture "$fixture" \
+  --set delegatedAuth.enabled=true \
+  --set delegatedAuth.external=true \
+  --set delegatedAuth.baseURL=https://identity.example.test \
+  --set 'delegatedAuth.audience={api://fixture-cp}' \
+  --set delegatedAuth.credential.secretKey=token >/dev/null 2>&1; then
+  fail "external IdS mode without an existing credential Secret must fail"
+fi
+
+if helm template fixture "$fixture" \
+  --set delegatedAuth.enabled=true \
+  --set delegatedAuth.baseURL=https://identity.example.test \
+  --set 'delegatedAuth.audience={api://fixture-cp}' \
+  --set delegatedAuth.credential.existingSecret=shared-token \
+  --set delegatedAuth.credential.secretKey=token \
+  --set 'delegatedAuth.reservedSecretRefs={shared-token/token}' >/dev/null 2>&1; then
+  fail "delegated auth must reject reuse of a reserved credential"
+fi
 
 out=$(helm template fixture "$fixture" --set secrets.secretName=primary --set 'secrets.additionalSecrets={second,third}')
 assert_contains "$out" 'secretName: "primary"' "source library renders the primary Secret"
