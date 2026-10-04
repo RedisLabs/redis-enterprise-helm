@@ -4,6 +4,27 @@ entries:
   - annotations:
       charts.openshift.io/name: Redis Radar
     apiVersion: v2
+    appVersion: 2026.10.1
+    created: "2026-10-04T09:15:59.225337107Z"
+    description: Redis Radar — Redis fleet management platform for monitoring and
+      managing Redis Enterprise, Redis Cloud, and OSS Redis clusters.
+    digest: 313da56fc4a74460c3629f5ba037ca30fcecf1100944489500946a9d7a80494d
+    keywords:
+    - redis
+    - monitoring
+    - fleet-management
+    - redis-enterprise
+    maintainers:
+    - name: Redis
+      url: https://redis.com/company/contact/
+    name: radar
+    type: application
+    urls:
+    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/radar-2026.10.1/radar-2026.10.1.tgz
+    version: 2026.10.1
+  - annotations:
+      charts.openshift.io/name: Redis Radar
+    apiVersion: v2
     appVersion: 2026.9.5
     created: "2026-09-10T08:15:22.794574867Z"
     description: Redis Radar — Redis fleet management platform for monitoring and
@@ -45,4 +66,4 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/radar-2026.9.2/radar-2026.9.2.tgz
     version: 2026.9.2
-generated: "2026-09-10T08:15:22.789634722Z"
+generated: "2026-10-04T09:15:59.221074874Z"
