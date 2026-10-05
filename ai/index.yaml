@@ -264,25 +264,4 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-iris-onprem-lib-0.1.0/redis-iris-onprem-lib-0.1.0.tgz
     version: 0.1.0
-  redis-playbook:
-  - apiVersion: v2
-    appVersion: 0.1.0-alpha.2
-    created: "2026-10-01T18:10:18.401785616Z"
-    dependencies:
-    - name: redis-iris-onprem-lib
-      repository: https://helm.redis.io/ai
-      version: 0.1.0
-    description: Redis Playbook on-prem control plane, data plane, and Identity Service
-    digest: 5b934614d2c3ea34b8dba85147ef216f886702b5f0e0229787b6f74e9f4c2040
-    home: https://github.com/Redislabsdev/iris
-    keywords:
-    - redis
-    - playbook
-    - ai
-    - on-prem
-    name: redis-playbook
-    type: application
-    urls:
-    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-playbook-0.1.0-alpha.2/redis-playbook-0.1.0-alpha.2.tgz
-    version: 0.1.0-alpha.2
 generated: "2026-10-02T10:15:15.112090192Z"
