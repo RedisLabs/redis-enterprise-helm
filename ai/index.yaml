@@ -131,6 +131,27 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-memory-0.1.0/redis-agent-memory-0.1.0.tgz
     version: 0.1.0
+  redis-agent-playbook:
+  - apiVersion: v2
+    appVersion: 0.1.0-alpha.3
+    created: "2026-10-07T13:26:14.795315124Z"
+    dependencies:
+    - name: redis-iris-onprem-lib
+      repository: https://helm.redis.io/ai
+      version: 0.3.0
+    description: Redis Playbook on-prem control plane, data plane, and Identity Service
+    digest: 5f8bec21df1bf95fe9d3fbb6cb63ca453d3e938d30191e90bf363bdb8359cfc7
+    home: https://github.com/Redislabsdev/iris
+    keywords:
+    - redis
+    - playbook
+    - ai
+    - on-prem
+    name: redis-agent-playbook
+    type: application
+    urls:
+    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-playbook-0.1.0-alpha.3/redis-agent-playbook-0.1.0-alpha.3.tgz
+    version: 0.1.0-alpha.3
   redis-context-retriever:
   - apiVersion: v2
     appVersion: 0.4.2
@@ -264,4 +285,4 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-iris-onprem-lib-0.1.0/redis-iris-onprem-lib-0.1.0.tgz
     version: 0.1.0
-generated: "2026-10-02T10:15:15.112090192Z"
+generated: "2026-10-07T13:26:14.795341874Z"
