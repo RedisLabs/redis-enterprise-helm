@@ -1,0 +1,6 @@
+.DS_Store
+.git/
+.gitignore
+tests/template-render.sh
+tests/values-test.yaml
+tests/kind-smoke.sh

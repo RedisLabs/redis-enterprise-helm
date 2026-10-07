@@ -1,0 +1,23 @@
+{{- if .Values.tests.enabled }}
+{{ include "redis-onprem.serviceAccount" (dict
+  "root" .
+  "create" true
+  "name" (include "redis-agent-playbook.testServiceAccountName" .)
+  "labelsTemplate" "redis-agent-playbook.labels"
+  "annotations" (dict)
+  "automount" true
+) }}
+---
+{{ include "redis-onprem.tests.rbac" (dict
+  "root" .
+  "enabled" true
+  "name" (include "redis-agent-playbook.testRBACName" .)
+  "labelsTemplate" "redis-agent-playbook.labels"
+  "serviceAccountName" (include "redis-agent-playbook.testServiceAccountName" .)
+  "resourceNames" (list
+    (include "redis-agent-playbook.controlplaneName" .)
+    (include "redis-agent-playbook.dataplaneName" .)
+    (include "redis-agent-playbook.identityServiceName" .)
+  )
+) }}
+{{- end }}

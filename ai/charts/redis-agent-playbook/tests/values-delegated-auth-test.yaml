@@ -1,0 +1,15 @@
+# Overlay on values-test.yaml for browser authentication, including Helm 3 release lint.
+controlplane:
+  delegatedAuth:
+    enabled: true
+    audience: [api://playbook-cp]
+
+dataplane:
+  identityServiceBaseURL: https://identity.example.test
+  oidc:
+    enabled: true
+    issuer: https://issuer.example.test
+    jwksURI: https://issuer.example.test/jwks
+    staticTenantID: test-tenant
+    roleMappings:
+      playbook-admins: product_admin
