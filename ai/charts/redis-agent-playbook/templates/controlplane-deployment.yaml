@@ -1,0 +1,131 @@
+{{- define "redis-agent-playbook.controlplaneAnnotations" -}}
+{{- if .Values.controlplane.config.existingSecret }}
+checksum/config: {{ .Values.controlplane.config.existingSecretChecksum | quote }}
+{{- else }}
+{{- $config := dict "tenantId" .Values.tenantId "service" .Values.controlplane.service "keyPrefix" .Values.storage.keyPrefix "models" .Values.inference.models }}
+{{- if .Values.controlplane.delegatedAuth.enabled }}
+{{- $_ := set $config "delegatedAuth" .Values.controlplane.delegatedAuth }}
+{{- $_ := set $config "identityServiceBaseURL" (include "redis-agent-playbook.identityServiceBaseURL" .) }}
+{{- end }}
+checksum/config: {{ toJson $config | sha256sum | quote }}
+{{- end }}
+{{- with .Values.storage.existingSecretChecksum }}
+checksum/storage-secret: {{ . | quote }}
+{{- end }}
+{{- with .Values.controlplane.adminToken.existingSecretChecksum }}
+checksum/admin-token: {{ . | quote }}
+{{- end }}
+{{- with .Values.controlplane.internalToken.existingSecretChecksum }}
+checksum/internal-token: {{ . | quote }}
+{{- end }}
+{{- if and .Values.controlplane.delegatedAuth.enabled .Values.controlplane.delegatedAuth.credential.existingSecretChecksum }}
+checksum/auth-introspect-token: {{ .Values.controlplane.delegatedAuth.credential.existingSecretChecksum | quote }}
+{{- end }}
+{{- with .Values.license.existingSecretChecksum }}
+checksum/license: {{ . | quote }}
+{{- end }}
+{{- if and .Values.tls.caCertSecret .Values.tls.caCertSecretChecksum }}
+checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
+{{- end }}
+{{- end }}
+
+{{- define "redis-agent-playbook.controlplaneArgs" -}}
+- --config
+- /etc/playbook/config/playbook-controlplane.yaml
+- --config
+- /etc/playbook/storage/storage.yaml
+{{- end }}
+
+{{- define "redis-agent-playbook.controlplaneEnv" -}}
+{{ include "redis-agent-playbook.commonEnv" . }}
+{{- end }}
+
+{{- define "redis-agent-playbook.controlplaneVolumeMounts" -}}
+- name: config
+  mountPath: /etc/playbook/config
+  readOnly: true
+- name: storage
+  mountPath: /etc/playbook/storage
+  readOnly: true
+- name: admin-token
+  mountPath: /etc/playbook/credentials/admin
+  readOnly: true
+- name: internal-token
+  mountPath: /etc/playbook/credentials/internal
+  readOnly: true
+{{ include "redis-onprem.delegatedAuth.volumeMount" (include "redis-agent-playbook.delegatedAuthOptions" . | fromJson) }}
+- name: license
+  mountPath: /etc/playbook/license
+  readOnly: true
+{{ include "redis-agent-playbook.commonTLSMount" . }}
+{{- end }}
+
+{{- define "redis-agent-playbook.controlplaneVolumes" -}}
+- name: config
+  {{- if .Values.controlplane.config.existingSecret }}
+  secret:
+    secretName: {{ .Values.controlplane.config.existingSecret }}
+    items:
+      - key: {{ .Values.controlplane.config.secretKey }}
+        path: playbook-controlplane.yaml
+  {{- else }}
+  configMap:
+    name: {{ include "redis-agent-playbook.controlplaneName" . }}-config
+  {{- end }}
+- name: storage
+  secret:
+    secretName: {{ required "storage.existingSecret is required" .Values.storage.existingSecret }}
+    items:
+      - key: {{ .Values.storage.playbookKey }}
+        path: storage.yaml
+- name: admin-token
+  secret:
+    secretName: {{ include "redis-agent-playbook.controlplaneAdminTokenSecretName" . }}
+    items:
+      - key: {{ .Values.controlplane.adminToken.secretKey }}
+        path: token
+- name: internal-token
+  secret:
+    secretName: {{ include "redis-agent-playbook.controlplaneInternalTokenSecretName" . }}
+    items:
+      - key: {{ .Values.controlplane.internalToken.secretKey }}
+        path: token
+{{ include "redis-onprem.delegatedAuth.volume" (include "redis-agent-playbook.delegatedAuthOptions" . | fromJson) }}
+- name: license
+  secret:
+    secretName: {{ required "license.existingSecret is required" .Values.license.existingSecret }}
+    items:
+      - key: {{ .Values.license.secretKey }}
+        path: {{ .Values.license.secretKey }}
+{{ include "redis-agent-playbook.commonTLSVolume" . }}
+{{- end }}
+
+{{- include "redis-onprem.controlplane.deployment" (dict
+  "root" .
+  "name" (include "redis-agent-playbook.controlplaneName" .)
+  "component" "controlplane"
+  "labelsTemplate" "redis-agent-playbook.labels"
+  "selectorLabelsTemplate" "redis-agent-playbook.selectorLabels"
+  "replicas" .Values.controlplane.replicaCount
+  "annotationsTemplate" "redis-agent-playbook.controlplaneAnnotations"
+  "podAnnotations" .Values.controlplane.podAnnotations
+  "podLabels" .Values.controlplane.podLabels
+  "imagePullSecrets" .Values.imagePullSecrets
+  "serviceAccountName" (include "redis-agent-playbook.serviceAccountName" .)
+  "automountServiceAccountToken" false
+  "podSecurityContext" .Values.podSecurityContext
+  "containerName" "controlplane"
+  "argsTemplate" "redis-agent-playbook.controlplaneArgs"
+  "containerSecurityContext" .Values.securityContext
+  "image" .Values.controlplane.image
+  "envTemplate" "redis-agent-playbook.controlplaneEnv"
+  "port" .Values.controlplane.service.port
+  "livenessProbe" (dict "httpGet" (dict "path" "/v1/health/live" "port" "http") "initialDelaySeconds" 5 "periodSeconds" 10)
+  "readinessProbe" (dict "httpGet" (dict "path" "/v1/health/ready" "port" "http") "initialDelaySeconds" 3 "periodSeconds" 5)
+  "resources" .Values.controlplane.resources
+  "volumeMountsTemplate" "redis-agent-playbook.controlplaneVolumeMounts"
+  "volumesTemplate" "redis-agent-playbook.controlplaneVolumes"
+  "nodeSelector" .Values.controlplane.nodeSelector
+  "affinity" .Values.controlplane.affinity
+  "tolerations" .Values.controlplane.tolerations
+) }}

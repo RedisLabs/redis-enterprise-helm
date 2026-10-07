@@ -1,0 +1,196 @@
+# Reference policies for redis-agent-playbook. Do not apply this file until every
+# <placeholder> is replaced. The chart intentionally does not guess caller,
+# Redis, DNS, ingress-controller, or service-mesh identities.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: <release-name>-playbook-default-deny
+  namespace: <namespace>
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis-agent-playbook
+      app.kubernetes.io/instance: <release-name>
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# CP ingress: IdS grant validation, the UI gateway, and approved administrators.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: <release-name>-playbook-controlplane
+  namespace: <namespace>
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis-agent-playbook
+      app.kubernetes.io/instance: <release-name>
+      app.kubernetes.io/component: controlplane
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis-agent-playbook
+              app.kubernetes.io/instance: <release-name>
+              app.kubernetes.io/component: identity-service
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: <admin-caller-namespace>
+          podSelector:
+            matchLabels:
+              <admin-caller-label-key>: <admin-caller-label-value>
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: <ui-gateway-namespace>
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ui
+              app.kubernetes.io/instance: <ui-release-name>
+      ports:
+        - {protocol: TCP, port: 9200}
+  egress:
+    # Required when auth.delegated_auth is configured for operator JWTs.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis-agent-playbook
+              app.kubernetes.io/instance: <release-name>
+              app.kubernetes.io/component: identity-service
+      ports:
+        - {protocol: TCP, port: 9200}
+    - to:
+        - ipBlock: {cidr: <metadata-redis-cidr>}
+        - ipBlock: {cidr: <content-redis-cidr>}
+      ports:
+        - {protocol: TCP, port: <redis-port>}
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+# DP ingress: UI gateway and approved API/MCP callers. Egress reaches IdS plus both Redis
+# deployments and the configured inference provider. Under FIPS, replace the IdS
+# pod rule with the mesh/gateway identity that owns dataplane.identityServiceBaseURL
+# when needed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: <release-name>-playbook-dataplane
+  namespace: <namespace>
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis-agent-playbook
+      app.kubernetes.io/instance: <release-name>
+      app.kubernetes.io/component: dataplane
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: <api-caller-namespace>
+          podSelector:
+            matchLabels:
+              <api-caller-label-key>: <api-caller-label-value>
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: <ui-gateway-namespace>
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ui
+              app.kubernetes.io/instance: <ui-release-name>
+      ports:
+        - {protocol: TCP, port: 9201}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis-agent-playbook
+              app.kubernetes.io/instance: <release-name>
+              app.kubernetes.io/component: identity-service
+      ports:
+        - {protocol: TCP, port: 9200}
+    # Resolve this against the provider's published ranges or an approved egress
+    # proxy. Standard NetworkPolicy does not provide DNS-name allowlisting.
+    - to:
+        - ipBlock: {cidr: <inference-egress-cidr>}
+      ports:
+        - {protocol: TCP, port: <inference-port>}
+    # Required when dataplane.oidc.enabled=true. Resolve the IdP/JWKS host
+    # against published ranges or route it through an approved egress proxy.
+    - to:
+        - ipBlock: {cidr: <idp-jwks-egress-cidr>}
+      ports:
+        - {protocol: TCP, port: <idp-port>}
+    - to:
+        - ipBlock: {cidr: <metadata-redis-cidr>}
+        - ipBlock: {cidr: <content-redis-cidr>}
+      ports:
+        - {protocol: TCP, port: <redis-port>}
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+# IdS ingress is split by credential: operators reach Control, CP and DP reach
+# Runtime. Kubernetes NetworkPolicy cannot distinguish HTTP routes, so all
+# sources reach the port while the service enforces distinct credentials.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: <release-name>-playbook-identity-service
+  namespace: <namespace>
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis-agent-playbook
+      app.kubernetes.io/instance: <release-name>
+      app.kubernetes.io/component: identity-service
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis-agent-playbook
+              app.kubernetes.io/instance: <release-name>
+              app.kubernetes.io/component: dataplane
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis-agent-playbook
+              app.kubernetes.io/instance: <release-name>
+              app.kubernetes.io/component: controlplane
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: <identity-admin-namespace>
+          podSelector:
+            matchLabels:
+              <identity-admin-label-key>: <identity-admin-label-value>
+      ports:
+        - {protocol: TCP, port: 9200}
+  egress:
+    # Required for IdS runtime.oidc JWKS refresh.
+    - to:
+        - ipBlock: {cidr: <idp-jwks-egress-cidr>}
+      ports:
+        - {protocol: TCP, port: <idp-port>}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis-agent-playbook
+              app.kubernetes.io/instance: <release-name>
+              app.kubernetes.io/component: controlplane
+      ports:
+        - {protocol: TCP, port: 9200}
+    - to:
+        - ipBlock: {cidr: <metadata-redis-cidr>}
+      ports:
+        - {protocol: TCP, port: <redis-port>}
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}

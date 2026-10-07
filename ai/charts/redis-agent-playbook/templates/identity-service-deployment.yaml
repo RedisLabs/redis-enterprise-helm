@@ -1,0 +1,133 @@
+{{- define "redis-agent-playbook.identityServiceAnnotations" -}}
+{{- if .Values.identityService.config.existingSecret }}
+checksum/config: {{ .Values.identityService.config.existingSecretChecksum | quote }}
+{{- else }}
+{{- $config := dict "service" .Values.identityService.service "runtimeCache" .Values.identityService.runtimeCache "controlplaneURL" (include "redis-agent-playbook.controlplaneBaseURL" .) "security" .Values.security }}
+{{- if .Values.controlplane.delegatedAuth.enabled }}
+{{- $_ := set $config "delegatedAuth" .Values.controlplane.delegatedAuth }}
+{{- $_ := set $config "oidc" .Values.dataplane.oidc }}
+{{- end }}
+checksum/config: {{ toJson $config | sha256sum | quote }}
+{{- end }}
+{{- with .Values.storage.existingSecretChecksum }}
+checksum/storage-secret: {{ . | quote }}
+{{- end }}
+{{- with .Values.identityService.controlToken.existingSecretChecksum }}
+checksum/control-token: {{ . | quote }}
+{{- end }}
+{{- with .Values.identityService.runtimeToken.existingSecretChecksum }}
+checksum/runtime-token: {{ . | quote }}
+{{- end }}
+{{- if and .Values.controlplane.delegatedAuth.enabled .Values.controlplane.delegatedAuth.credential.existingSecretChecksum }}
+checksum/auth-introspect-token: {{ .Values.controlplane.delegatedAuth.credential.existingSecretChecksum | quote }}
+{{- end }}
+{{- with .Values.controlplane.internalToken.existingSecretChecksum }}
+checksum/product-validation-token: {{ . | quote }}
+{{- end }}
+{{- if and .Values.tls.caCertSecret .Values.tls.caCertSecretChecksum }}
+checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
+{{- end }}
+{{- end }}
+
+{{- define "redis-agent-playbook.identityServiceArgs" -}}
+- --config
+- /etc/identity-service/config/identity-service.yaml
+- --config
+- /etc/identity-service/metadata/metadata.yaml
+{{- end }}
+
+{{- define "redis-agent-playbook.identityServiceEnv" -}}
+- name: IDS_SECURITY_PROFILE
+  value: {{ .Values.security.profile | quote }}
+{{ include "redis-agent-playbook.commonEnv" . }}
+{{- end }}
+
+{{- define "redis-agent-playbook.identityServiceVolumeMounts" -}}
+- name: config
+  mountPath: /etc/identity-service/config
+  readOnly: true
+- name: metadata
+  mountPath: /etc/identity-service/metadata
+  readOnly: true
+- name: control-token
+  mountPath: /etc/identity-service/credentials/control
+  readOnly: true
+- name: runtime-token
+  mountPath: /etc/identity-service/credentials/runtime
+  readOnly: true
+- name: product-validation-token
+  mountPath: /etc/identity-service/credentials/product-validation
+  readOnly: true
+{{ include "redis-onprem.delegatedAuth.volumeMount" (include "redis-agent-playbook.delegatedAuthOptions" . | fromJson) }}
+{{ include "redis-agent-playbook.commonTLSMount" . }}
+{{- end }}
+
+{{- define "redis-agent-playbook.identityServiceVolumes" -}}
+- name: config
+  {{- if .Values.identityService.config.existingSecret }}
+  secret:
+    secretName: {{ .Values.identityService.config.existingSecret }}
+    items:
+      - key: {{ .Values.identityService.config.secretKey }}
+        path: identity-service.yaml
+  {{- else }}
+  configMap:
+    name: {{ include "redis-agent-playbook.identityServiceName" . }}-config
+  {{- end }}
+- name: metadata
+  secret:
+    secretName: {{ required "storage.existingSecret is required" .Values.storage.existingSecret }}
+    items:
+      - key: {{ .Values.storage.identityServiceKey }}
+        path: metadata.yaml
+- name: control-token
+  secret:
+    secretName: {{ include "redis-agent-playbook.identityServiceControlTokenSecretName" . }}
+    items:
+      - key: {{ .Values.identityService.controlToken.secretKey }}
+        path: token
+- name: runtime-token
+  secret:
+    secretName: {{ include "redis-agent-playbook.identityServiceRuntimeTokenSecretName" . }}
+    items:
+      - key: {{ .Values.identityService.runtimeToken.secretKey }}
+        path: token
+- name: product-validation-token
+  secret:
+    secretName: {{ include "redis-agent-playbook.controlplaneInternalTokenSecretName" . }}
+    items:
+      - key: {{ .Values.controlplane.internalToken.secretKey }}
+        path: token
+{{ include "redis-onprem.delegatedAuth.volume" (include "redis-agent-playbook.delegatedAuthOptions" . | fromJson) }}
+{{ include "redis-agent-playbook.commonTLSVolume" . }}
+{{- end }}
+
+{{- include "redis-onprem.identityService.deployment" (dict
+  "root" .
+  "name" (include "redis-agent-playbook.identityServiceName" .)
+  "component" "identity-service"
+  "labelsTemplate" "redis-agent-playbook.labels"
+  "selectorLabelsTemplate" "redis-agent-playbook.selectorLabels"
+  "replicas" .Values.identityService.replicaCount
+  "annotationsTemplate" "redis-agent-playbook.identityServiceAnnotations"
+  "podAnnotations" .Values.identityService.podAnnotations
+  "podLabels" .Values.identityService.podLabels
+  "imagePullSecrets" .Values.imagePullSecrets
+  "serviceAccountName" (include "redis-agent-playbook.serviceAccountName" .)
+  "automountServiceAccountToken" false
+  "podSecurityContext" .Values.podSecurityContext
+  "containerName" "identity-service"
+  "argsTemplate" "redis-agent-playbook.identityServiceArgs"
+  "containerSecurityContext" .Values.securityContext
+  "image" .Values.identityService.image
+  "envTemplate" "redis-agent-playbook.identityServiceEnv"
+  "port" .Values.identityService.service.port
+  "livenessProbe" (dict "httpGet" (dict "path" "/v1/health/live" "port" "http") "initialDelaySeconds" 5 "periodSeconds" 10)
+  "readinessProbe" (dict "httpGet" (dict "path" "/v1/health/ready" "port" "http") "initialDelaySeconds" 3 "periodSeconds" 5)
+  "resources" .Values.identityService.resources
+  "volumeMountsTemplate" "redis-agent-playbook.identityServiceVolumeMounts"
+  "volumesTemplate" "redis-agent-playbook.identityServiceVolumes"
+  "nodeSelector" .Values.identityService.nodeSelector
+  "affinity" .Values.identityService.affinity
+  "tolerations" .Values.identityService.tolerations
+) }}

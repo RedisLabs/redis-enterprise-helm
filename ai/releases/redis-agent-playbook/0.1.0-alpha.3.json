@@ -1,0 +1,100 @@
+{
+  "product": "redis-agent-playbook",
+  "deployment": "on-prem",
+  "version": "0.1.0-alpha.3",
+  "release": true,
+  "commit": "fd9d2eeae5affb9ae7e50b88e77c5278b2205ca9",
+  "identityService": {
+    "version": "0.9.0",
+    "minimumCompatibleSourceCommit": "346dc9e0ca814b185bb3d872dff1add88036ea7f",
+    "sourceCommit": "fd9d2eeae5affb9ae7e50b88e77c5278b2205ca9",
+    "localCandidate": {
+      "tag": "0.9.0",
+      "imageId": "sha256:5856ff991b13e0b61ab869f3f4ad8c061f053ee75f68d46e3b4acf0aeb355dae",
+      "archiveSha256": "sha256:4a8f0863225bda9ce206db0ed1a5c3d7f886a278113fe439096775efce02030d"
+    },
+    "publication": {
+      "status": "published",
+      "repository": "redislabs/iris-identity-service",
+      "intendedTag": "0.9.0",
+      "tag": "0.9.0",
+      "digest": "sha256:f192bbc543b55891aaa4d24efc36119bd0d0b01c053e4dbeb7bd48df637b3637",
+      "component": "identityService",
+      "commit": "fd9d2eeae5affb9ae7e50b88e77c5278b2205ca9",
+      "image": "docker.io/redislabs/iris-identity-service:0.9.0",
+      "reference": "docker.io/redislabs/iris-identity-service@sha256:f192bbc543b55891aaa4d24efc36119bd0d0b01c053e4dbeb7bd48df637b3637"
+    }
+  },
+  "components": {
+    "controlplane": {
+      "candidateImage": "docker.io/redislabs/iris-agent-playbook-control:0.1.0-alpha.3",
+      "localImage": "playbook-controlplane-onprem:0.1.0-alpha.3",
+      "artifact": "images/oci-playbook-cp-onprem.tar.gz",
+      "registryDirectory": "registry/playbook-cp-onprem",
+      "registryDigest": "sha256:ec03d3e4b739f8609c7fbeb1ab8d7242cc47972e298f97a55dccf3cbc652f322",
+      "imageId": "sha256:54df5b5eef29e375d0b623a5b65ee3957d73ecf76aaef1f2c2fa3d4ef9f8932e",
+      "archiveSha256": "sha256:67fffd8250b731e058b82ee35f580468847e685f456f031c730e1fc403341c62",
+      "os": "linux",
+      "architecture": "amd64",
+      "publication": {
+        "status": "published",
+        "component": "controlplane",
+        "commit": "fd9d2eeae5affb9ae7e50b88e77c5278b2205ca9",
+        "image": "docker.io/redislabs/iris-agent-playbook-control:0.1.0-alpha.3",
+        "digest": "sha256:ec03d3e4b739f8609c7fbeb1ab8d7242cc47972e298f97a55dccf3cbc652f322",
+        "reference": "docker.io/redislabs/iris-agent-playbook-control@sha256:ec03d3e4b739f8609c7fbeb1ab8d7242cc47972e298f97a55dccf3cbc652f322"
+      }
+    },
+    "dataplane": {
+      "candidateImage": "docker.io/redislabs/iris-agent-playbook-data:0.1.0-alpha.3",
+      "localImage": "playbook-dataplane-onprem:0.1.0-alpha.3",
+      "artifact": "images/oci-playbook-dp.tar.gz",
+      "registryDirectory": "registry/playbook-dp",
+      "registryDigest": "sha256:8ed7b5b696b283ba72f7c8053e3f728ea62125e8fb1e40c3c4701ba4f8a34194",
+      "imageId": "sha256:cec9e154743b37149942f79317def80f56de15147a87d892fe8ebf203f6d76f4",
+      "archiveSha256": "sha256:fc0093a47a86f88e055ec55470d27c29a4a1bf018283771090e28c038bb2b001",
+      "os": "linux",
+      "architecture": "amd64",
+      "publication": {
+        "status": "published",
+        "component": "dataplane",
+        "commit": "fd9d2eeae5affb9ae7e50b88e77c5278b2205ca9",
+        "image": "docker.io/redislabs/iris-agent-playbook-data:0.1.0-alpha.3",
+        "digest": "sha256:8ed7b5b696b283ba72f7c8053e3f728ea62125e8fb1e40c3c4701ba4f8a34194",
+        "reference": "docker.io/redislabs/iris-agent-playbook-data@sha256:8ed7b5b696b283ba72f7c8053e3f728ea62125e8fb1e40c3c4701ba4f8a34194"
+      }
+    },
+    "identityService": {
+      "candidateImage": "docker.io/redislabs/iris-identity-service:0.9.0",
+      "localImage": "iris-identity-service:0.9.0",
+      "artifact": "images/oci-identity-service.tar.gz",
+      "registryDirectory": "registry/identity-service",
+      "registryDigest": "sha256:f192bbc543b55891aaa4d24efc36119bd0d0b01c053e4dbeb7bd48df637b3637",
+      "imageId": "sha256:5856ff991b13e0b61ab869f3f4ad8c061f053ee75f68d46e3b4acf0aeb355dae",
+      "archiveSha256": "sha256:4a8f0863225bda9ce206db0ed1a5c3d7f886a278113fe439096775efce02030d",
+      "os": "linux",
+      "architecture": "amd64",
+      "publication": {
+        "status": "published",
+        "component": "identityService",
+        "commit": "fd9d2eeae5affb9ae7e50b88e77c5278b2205ca9",
+        "image": "docker.io/redislabs/iris-identity-service:0.9.0",
+        "digest": "sha256:f192bbc543b55891aaa4d24efc36119bd0d0b01c053e4dbeb7bd48df637b3637",
+        "reference": "docker.io/redislabs/iris-identity-service@sha256:f192bbc543b55891aaa4d24efc36119bd0d0b01c053e4dbeb7bd48df637b3637"
+      }
+    }
+  },
+  "chart": "chart/redis-agent-playbook-0.1.0-alpha.3.tgz",
+  "imageValues": "playbook-images.values.json",
+  "sbom": "sbom/",
+  "openapi": [
+    "openapi/playbook-controlplane.openapi.json",
+    "openapi/playbook-dataplane.openapi.json",
+    "openapi/playbook-grant-validation.openapi.json"
+  ],
+  "publication": {
+    "status": "published",
+    "sourceRun": "https://github.com/redislabsdev/iris/actions/runs/37605895438",
+    "chartSha256": "sha256:fc3b2428d0c24c288af0e8911b113ed412a067f69b0f4ec0f696764f5eac8840"
+  }
+}

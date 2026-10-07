@@ -1,0 +1,13 @@
+name: Release Redis Agent Playbook Chart
+
+on:
+  workflow_dispatch:
+
+jobs:
+  call-release-workflow:
+    uses: ./.github/workflows/release-chart-reusable.yaml
+    with:
+      chart_name: redis-agent-playbook
+      chart_path: ai/charts/redis-agent-playbook
+      tag_prefix: redis-agent-playbook
+    secrets: inherit
