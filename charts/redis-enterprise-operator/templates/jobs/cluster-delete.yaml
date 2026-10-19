@@ -35,6 +35,7 @@ spec:
         - -deletePVCs={{ .Values.cluster.deletePVCsOnUninstall }}
         securityContext:
           allowPrivilegeEscalation: false
+          runAsNonRoot: true
           capabilities:
             drop: ["ALL"]
         resources:

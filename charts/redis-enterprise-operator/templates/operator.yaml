@@ -98,6 +98,7 @@ spec:
                             - ALL
                     privileged: false
                     readOnlyRootFilesystem: true
+                    runAsNonRoot: true
                 - command:
                     - operator-root
                     - admission
@@ -156,6 +157,7 @@ spec:
                             - ALL
                     privileged: false
                     readOnlyRootFilesystem: true
+                    runAsNonRoot: true
             securityContext:
               seccompProfile:
                 type: RuntimeDefault
