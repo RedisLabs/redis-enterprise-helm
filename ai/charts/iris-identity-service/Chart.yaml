@@ -1,0 +1,11 @@
+apiVersion: v2
+appVersion: 0.10.0
+dependencies:
+- name: redis-iris-onprem-lib
+  repository: https://helm.redis.io/ai
+  version: 0.3.0
+description: Helm chart to deploy the standalone Iris Identity Service for on-premises
+  deployment.
+name: iris-identity-service
+type: application
+version: 0.10.0

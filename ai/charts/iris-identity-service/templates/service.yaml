@@ -1,0 +1,9 @@
+{{- include "redis-onprem.identityService.service" (dict
+  "root" .
+  "name" (include "iris-identity-service.fullname" .)
+  "component" "identity-service"
+  "labelsTemplate" "iris-identity-service.labels"
+  "selectorLabelsTemplate" "iris-identity-service.selectorLabels"
+  "type" .Values.service.type
+  "port" .Values.service.port
+) }}

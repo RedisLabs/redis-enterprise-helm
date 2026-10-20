@@ -1,0 +1,13 @@
+name: Release Iris Identity Service Chart
+
+on:
+  workflow_dispatch:
+
+jobs:
+  call-release-workflow:
+    uses: ./.github/workflows/release-chart-reusable.yaml
+    with:
+      chart_name: iris-identity-service
+      chart_path: ai/charts/iris-identity-service
+      tag_prefix: iris-identity-service
+    secrets: inherit

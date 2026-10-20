@@ -1,0 +1,27 @@
+{{- $fullname := include "iris-identity-service.fullname" . -}}
+{{- $r := include "iris-identity-service.resolved" . | fromJson -}}
+{{- $control := $r.control -}}
+Iris Identity Service is reachable in-cluster at:
+
+  http://{{ $fullname }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+
+Retrieve the Control API admin token:
+
+  kubectl get secret {{ $control.secret }} -n {{ .Release.Namespace }} -o jsonpath="{.data.{{ $control.key | replace "." "\\." }}}" | base64 -d
+{{- range $r.credentials }}
+{{- if .generated }}
+
+Retrieve the generated runtime credential {{ .name }}:
+
+  kubectl get secret {{ .secret }} -n {{ $.Release.Namespace }} -o jsonpath="{.data.{{ .key | replace "." "\\." }}}" | base64 -d
+{{- end }}
+{{- end }}
+
+Reach it from your workstation:
+
+  kubectl port-forward svc/{{ $fullname }} -n {{ .Release.Namespace }} {{ .Values.service.port }}
+  curl http://127.0.0.1:{{ .Values.service.port }}/v1/health/ready
+
+Check health in-cluster:
+
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}

@@ -1,0 +1,59 @@
+{{- include "iris-identity-service.validate" . }}
+{{- $r := include "iris-identity-service.resolved" . | fromJson }}
+{{- /*
+  Each generated token comes from exactly one lookup-or-generate call, shared by
+  its Secret and its checksum annotation. A second call would yield a different
+  random value on first install and restart the pod on the first upgrade.
+*/}}
+{{- $checksums := dict }}
+{{- with $r.metadata.checksum }}{{- $_ := set $checksums "checksum/metadata" . }}{{- end }}
+{{- if $r.control.generated }}
+{{- $token := include "redis-onprem.lookupOrGenerateSecretToken" (dict "namespace" .Release.Namespace "name" $r.control.secret "key" $r.control.key) }}
+{{- $_ := set $checksums "checksum/control-token" ($token | sha256sum) }}
+{{ include "iris-identity-service.generatedSecret" (dict "root" . "name" $r.control.secret "key" $r.control.key "token" $token) }}
+---
+{{- else if $r.control.checksum }}
+{{- $_ := set $checksums "checksum/control-token" $r.control.checksum }}
+{{- end }}
+{{- range $r.credentials }}
+{{- if .generated }}
+{{- $token := include "redis-onprem.lookupOrGenerateSecretToken" (dict "namespace" $.Release.Namespace "name" .secret "key" .key) }}
+{{- $_ := set $checksums (printf "checksum/runtime-%s" .name) ($token | sha256sum) }}
+{{ include "iris-identity-service.generatedSecret" (dict "root" $ "name" .secret "key" .key "token" $token) }}
+---
+{{- else if .checksum }}
+{{- $_ := set $checksums (printf "checksum/runtime-%s" .name) .checksum }}
+{{- end }}
+{{- end }}
+{{- range $product, $v := $r.validators }}
+{{- with $v.checksum }}{{- $_ := set $checksums (printf "checksum/product-validation-%s" $product) . }}{{- end }}
+{{- end }}
+{{ include "redis-onprem.identityService.deployment" (dict
+  "root" .
+  "name" (include "iris-identity-service.fullname" .)
+  "component" "identity-service"
+  "labelsTemplate" "iris-identity-service.labels"
+  "selectorLabelsTemplate" "iris-identity-service.selectorLabels"
+  "replicas" .Values.replicaCount
+  "annotationsTemplate" "iris-identity-service.podAnnotations"
+  "podAnnotations" (mergeOverwrite (deepCopy (default (dict) .Values.podAnnotations)) $checksums)
+  "podLabels" .Values.podLabels
+  "serviceAccountName" (include "iris-identity-service.fullname" .)
+  "automountServiceAccountToken" false
+  "imagePullSecrets" (include "iris-identity-service.imagePullSecrets" . | fromJsonArray)
+  "podSecurityContext" .Values.podSecurityContext
+  "containerName" "identity-service"
+  "argsTemplate" "iris-identity-service.args"
+  "containerSecurityContext" .Values.securityContext
+  "image" (dict "repository" .Values.image.repository "tag" (default .Chart.AppVersion .Values.image.tag) "pullPolicy" .Values.image.pullPolicy)
+  "envTemplate" "iris-identity-service.env"
+  "port" .Values.service.port
+  "livenessProbe" .Values.livenessProbe
+  "readinessProbe" .Values.readinessProbe
+  "resources" .Values.resources
+  "volumeMountsTemplate" "iris-identity-service.volumeMounts"
+  "volumesTemplate" "iris-identity-service.volumes"
+  "nodeSelector" .Values.nodeSelector
+  "affinity" .Values.affinity
+  "tolerations" .Values.tolerations
+) }}
