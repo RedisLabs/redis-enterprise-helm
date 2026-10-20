@@ -1,0 +1,199 @@
+# Standalone Iris Identity Service, installed as its own release. The chart
+# never deploys Redis: point metadata.existingSecret at a Secret holding the
+# metadata Redis config. Every value is used as written.
+
+nameOverride: ""
+fullnameOverride: ""
+
+replicaCount: 1
+
+image:
+  repository: redislabs/iris-identity-service
+  # Empty uses .Chart.AppVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# Empty falls back to global.imagePullSecrets.
+imagePullSecrets: []
+
+# A Secret with a PEM CA bundle that IdS trusts for outbound TLS (metadata
+# rediss://, product validators), in addition to the system CAs. Mounted at
+# /etc/ssl/custom with SSL_CERT_DIR set. An empty caCertSecret falls back to
+# global.tls.caCertSecret.
+tls:
+  caCertSecret: ""
+  caCertKey: ca.crt
+
+service:
+  type: ClusterIP
+  # Also rendered as the service's server.port.
+  port: 9200
+
+security:
+  # "" or "fips". Empty falls back to global.security.profile.
+  profile: ""
+
+# Extra non-secret IdS config, merged underneath the rendered config. Keys the
+# chart renders (server.port, auth.type, runtime.cache,
+# runtime.unscoped_grants_product, runtime.api_key_tenant, api_keys,
+# subject_grants) always win. Use it for binary settings the chart does not own,
+# such as runtime.oidc or opentelemetry. Use controlAuth or configData.auth for
+# operator policy, never both. Credential wiring (auth.control,
+# runtime.service_credentials and product_validation) must use the dedicated
+# values, not configData: rendering fails otherwise.
+configData: {}
+
+# Ordered policy Secret overlays, loaded after metadata and before the
+# chart-managed credential wiring. Each Secret's overlayKey holds an IdS config
+# overlay. Change checksum (or restart) after editing a Secret's contents.
+secrets:
+  secretName: ""
+  additionalSecrets: []
+  overlayKey: overlay.yaml
+  checksum: ""
+
+# Required. A Secret whose secretKey holds an IdS config overlay such as:
+#   metadata:
+#     urls: ["redis://metadata-db:6379"]
+metadata:
+  existingSecret: ""
+  secretKey: metadata.yaml
+  existingSecretChecksum: ""
+
+# Control API admin token. IdS alone reads it, so the chart generates it once
+# (lookup-or-generate, kept across upgrades and uninstalls) unless
+# existingSecret names a Secret you own.
+control:
+  existingSecret: ""
+  secretKey: token
+  autoGenerate: true
+  existingSecretChecksum: ""
+
+runtime:
+  cache:
+    softTtlSeconds: 180
+    hardTtlSeconds: 300
+  # Product that owns grants stored before grants carried an explicit product.
+  # When set, it must name an enabled productValidation product.
+  unscopedGrantsProduct: ""
+  # Tenant policy for agent-key grants. singleTenantID is the installation's
+  # one tenant, for example "default": a grant that names no tenant gets it,
+  # and a grant naming another tenant is rejected. Empty means strict: every
+  # grant must name its tenant, and controlAuth.oidc (or configData.auth.oidc)
+  # must then be enabled with tenant_id_claim or static_tenant_id, or rendering
+  # fails.
+  apiKeyTenant:
+    singleTenantID: ""
+  # At least one is required. No product defaults. Each entry:
+  #   name: memory-dp                     # ^[a-z0-9-]{0,43}[a-z0-9]$, unique; mount directory name
+  #   subject: memory-dp
+  #   allowedOperations: [api-key-introspect]   # api-key-introspect|auth-introspect|auth-me|subject-grant-lookup
+  #   allowedProducts: [memory]           # memory|langcache|context|playbook|lens|context-gateway
+  #   existingSecret: memory-dp-credential  # shared with the data plane; owned by automation
+  #   secretKey: token
+  #   autoGenerate: false                 # development only: generate <fullname>-runtime-<name>
+  #   generatedSecretName: ""             # with autoGenerate only: name the generated Secret
+  #   existingSecretChecksum: ""
+  serviceCredentials: []
+
+productValidation:
+  # At least one enabled product is required. No product defaults. Each entry:
+  #   memory:
+  #     enabled: true
+  #     baseURL: http://redis-agent-memory-controlplane:9100   # absolute http(s)
+  #     credential:                # the control plane's internal-token Secret
+  #       existingSecret: memory-internal-token
+  #       secretKey: token
+  #       existingSecretChecksum: ""
+  products: {}
+
+apiKeys:
+  maxRotateGraceSeconds: 604800
+
+# Optional operator login to IdS Control with your IdP's JWTs. oidc is copied
+# as is (snake_case) into auth.oidc; roleBindings into auth.role_bindings and
+# requires oidc.enabled. An enabled oidc needs a tenant source:
+# runtime.apiKeyTenant.singleTenantID (stamped in as static_tenant_id), or
+# tenant_id_claim or static_tenant_id. Empty renders nothing.
+#   oidc:
+#     enabled: true
+#     issuer: https://idp.example.com
+#     jwks_uri: https://idp.example.com/jwks
+#     audience: [api://identity-service]
+#     tenant_id_claim: tid
+#   roleBindings:
+#     - {claim_value: memory-admins, scope: product, product: memory, role: product_admin}
+# workloadIdentity (MOD-19110) lets a workload, such as the Playbook control
+# plane, call IdS Control with its own projected ServiceAccount JWT instead of
+# the control token. A subject without a tenant gets
+# runtime.apiKeyTenant.singleTenantID, e.g.:
+#   workloadIdentity:
+#     enabled: true
+#     issuer: https://kubernetes.default.svc.cluster.local
+#     jwks_uri: https://kubernetes.default.svc/openid/v1/jwks
+#     audience: [api://memory-identity-control]
+#     subjects:
+#       - subject: system:serviceaccount:playbook:redis-agent-playbook-controlplane
+#         roles: [subject_grant_admin]
+controlAuth:
+  oidc: {}
+  roleBindings: []
+  workloadIdentity: {}
+
+# Service-subject grants this IdS may hold. Empty allows none. Each entry must
+# stay within the product's declared capability, or IdS refuses to start.
+#   allowed:
+#     - {product: memory, resourceType: mem-store, actions: [read]}
+subjectGrants:
+  allowed: []
+
+serviceAccount:
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+livenessProbe:
+  httpGet:
+    path: /v1/health/live
+    port: http
+  initialDelaySeconds: 5
+readinessProbe:
+  httpGet:
+    path: /v1/health/ready
+    port: http
+  initialDelaySeconds: 5
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Extra pod volumes and container volumeMounts, appended to the chart's own.
+volumes: []
+volumeMounts: []
+
+nodeSelector: {}
+affinity: {}
+tolerations: []
+
+tests:
+  image: curlimages/curl:8.17.0

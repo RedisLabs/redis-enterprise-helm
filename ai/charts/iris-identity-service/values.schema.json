@@ -1,0 +1,238 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "iris-identity-service values",
+  "type": "object",
+  "additionalProperties": false,
+  "definitions": {
+    "product": { "type": "string", "enum": ["memory", "langcache", "context", "playbook", "lens", "context-gateway"] },
+    "operation": { "type": "string", "enum": ["api-key-introspect", "auth-introspect", "auth-me", "subject-grant-lookup"] },
+    "secretRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingSecret": { "type": "string" },
+        "secretKey": { "type": "string", "minLength": 1 },
+        "existingSecretChecksum": { "type": "string" }
+      }
+    }
+  },
+  "properties": {
+    "global": {
+      "type": "object",
+      "description": "Shared Iris globals. Only imagePullSecrets, security.profile and tls.caCertSecret are read, as fallbacks."
+    },
+    "redis-iris-onprem-lib": {
+      "type": "object",
+      "description": "Injected by Helm for the library dependency; not read."
+    },
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "replicaCount": { "type": "integer", "minimum": 0 },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string", "minLength": 1 } } }
+    },
+    "tls": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "caCertSecret": { "type": "string" },
+        "caCertKey": { "type": "string", "minLength": 1 }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profile": { "type": "string", "enum": ["", "fips"] }
+      }
+    },
+    "configData": {
+      "type": "object",
+      "description": "Extra non-secret IdS config merged underneath the rendered config; chart-owned keys win, and auth.control, runtime.service_credentials and product_validation are rejected."
+    },
+    "secrets": {
+      "type": "object",
+      "description": "Ordered policy Secret overlays. Update checksum or restart after Secret content changes.",
+      "additionalProperties": false,
+      "properties": {
+        "secretName": { "type": "string" },
+        "additionalSecrets": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "overlayKey": { "type": "string", "minLength": 1 },
+        "checksum": { "type": "string" }
+      }
+    },
+    "metadata": { "$ref": "#/definitions/secretRef" },
+    "control": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingSecret": { "type": "string" },
+        "secretKey": { "type": "string", "minLength": 1 },
+        "autoGenerate": { "type": "boolean" },
+        "existingSecretChecksum": { "type": "string" }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cache": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "softTtlSeconds": { "type": "integer", "minimum": 0 },
+            "hardTtlSeconds": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "unscopedGrantsProduct": {
+          "anyOf": [{ "const": "" }, { "$ref": "#/definitions/product" }],
+          "description": "Must name an enabled productValidation product when set."
+        },
+        "apiKeyTenant": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "singleTenantID": { "type": "string" }
+          }
+        },
+        "serviceCredentials": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "subject", "allowedOperations", "allowedProducts"],
+            "properties": {
+              "name": { "type": "string", "pattern": "^[a-z0-9-]{0,43}[a-z0-9]$" },
+              "subject": { "type": "string", "minLength": 1 },
+              "allowedOperations": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/operation" } },
+              "allowedProducts": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/product" } },
+              "existingSecret": { "type": "string" },
+              "secretKey": { "type": "string", "minLength": 1 },
+              "autoGenerate": { "type": "boolean" },
+              "generatedSecretName": { "type": "string" },
+              "existingSecretChecksum": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "productValidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "products": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/definitions/product" },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": { "type": "boolean" },
+              "baseURL": { "type": "string", "description": "Absolute http(s) without userinfo, query or fragment." },
+              "credential": { "$ref": "#/definitions/secretRef" }
+            }
+          }
+        }
+      }
+    },
+    "apiKeys": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxRotateGraceSeconds": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "controlAuth": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional operator login to IdS Control. Empty renders nothing.",
+      "properties": {
+        "oidc": { "type": "object", "description": "Copied as is into auth.oidc; the binary validates its fields." },
+        "roleBindings": {
+          "type": "array",
+          "description": "Rendered as auth.role_bindings; requires oidc.enabled.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["claim_value", "scope", "role"],
+            "properties": {
+              "claim_value": { "type": "string", "minLength": 1 },
+              "issuer": { "type": "string" },
+              "scope": { "type": "string", "enum": ["global", "product"] },
+              "product": { "$ref": "#/definitions/product" },
+              "role": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "workloadIdentity": {
+          "type": "object",
+          "description": "Copied into auth.workload_identity (MOD-19110): workloads call IdS Control with their own ServiceAccount JWT. A subject without a tenant gets runtime.apiKeyTenant.singleTenantID; the binary validates the fields."
+        }
+      }
+    },
+    "subjectGrants": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowed": {
+          "type": "array",
+          "description": "Rendered as subject_grants.allowed. The binary checks resource types and actions against each product's capability.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["product", "resourceType", "actions"],
+            "properties": {
+              "product": { "$ref": "#/definitions/product" },
+              "resourceType": { "type": "string", "minLength": 1 },
+              "actions": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+            }
+          }
+        }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "annotations": { "type": "object" }
+      }
+    },
+    "podAnnotations": { "type": "object" },
+    "podLabels": { "type": "object" },
+    "podSecurityContext": { "type": "object" },
+    "securityContext": { "type": "object" },
+    "livenessProbe": { "type": "object" },
+    "readinessProbe": { "type": "object" },
+    "resources": { "type": "object" },
+    "nodeSelector": { "type": "object" },
+    "affinity": { "type": "object" },
+    "tolerations": { "type": "array" },
+    "volumes": { "type": "array" },
+    "volumeMounts": { "type": "array" },
+    "tests": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}
