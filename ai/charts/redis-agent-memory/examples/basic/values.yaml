@@ -9,23 +9,24 @@
 #      kubectl create secret generic ram-license --from-file=license=./license
 #      kubectl create secret generic ram-secrets \
 #        --from-file=overlay.yaml=./secret-overlay.example.yaml
-# 2. Create the Identity Service metadata Secret. IdS keeps its agent-key
-#    records in its own overlay Secret rather than reading the data plane's, so
-#    give it the same URL you put under `metadata.urls` in
-#    secret-overlay.example.yaml. Put it in the environment first so the
-#    credential -- which lives inside the URL -- never lands in your shell
-#    history:
-#      read -rs RAM_IDS_METADATA_URL
-#      kubectl create secret generic ram-ids-metadata \
-#        --from-literal=metadata.yaml="metadata:
-#          urls: [$RAM_IDS_METADATA_URL]"
-# 3. Install. The Identity Service is versioned independently of RAM, so its
-#    tag is set separately:
+# 2. Create the two Secrets this release shares with the Identity Service
+#    release, then install that release as `iris-identity-service` with the
+#    memory-dp credential, the memory validator and singleTenantID default
+#    (see "Connecting to the Identity Service" in the chart README):
+#      kubectl create secret generic memory-dp-credential \
+#        --from-literal=token="$(openssl rand -hex 32)"
+#      kubectl create secret generic memory-internal-token \
+#        --from-literal=token="$(openssl rand -hex 32)"
+# 3. Install:
 #      helm install ram ../.. -f values.yaml --set image.tag=<RAM_VERSION> \
-#        --set controlplane.image.tag=<RAM_VERSION> \
-#        --set identityService.image.tag=<IDS_VERSION>
+#        --set controlplane.image.tag=<RAM_VERSION>
 #
 # See secret-overlay.example.yaml in this directory for the overlay contents.
+
+# Every agent key carries a tenant (MOD-19463). This single-tenant quick start
+# uses "default"; set the Identity Service release's
+# runtime.apiKeyTenant.singleTenantID to the same value.
+tenantId: default
 
 image:
   repository: redislabs/agent-memory
@@ -53,9 +54,21 @@ shared:
 # Data-plane config body (snake_case). Structure only — no URLs, no API keys.
 memory:
   default_extraction_strategy: instruct
+  ownership:
+    # Leave false until stored owner_id values match Principal.UserID.
+    # See docs/runbooks/ram-enforce-ownership-transition.md.
+    enabled: false
+  namespace_features:
+    api: true
+    routing:
+      policy_api: true
+      automatic: true
+      admission: true
   # This starter keeps the Data Plane behind an infrastructure access boundary.
-  # Before exposing it, use agent_key auth and configure worker identity as
-  # described in the on-prem guide.
+  # The data plane accepts auth.method none only with profile dev. Before you
+  # expose it or keep data in it, use agent_key auth, remove profile dev, and
+  # configure worker identity as described in the on-prem guide.
+  profile: dev
   auth:
     method: none
   embedders_connection_details:
@@ -85,23 +98,26 @@ memory:
     auth:
       disabled: true
 
-# Suite-level API-key service. Enabled by default: it is what issues and
-# introspects the agent keys `memory.auth.method: agent_key` accepts. This
-# starter runs with `auth.method: none` behind an infrastructure boundary, so
-# nothing authenticates against IdS yet -- it is deployed so that turning
-# agent-key auth on later needs no re-plumbing. Set `enabled: false` to drop it
-# (and with it any agent-key authority).
+# Connection to the Identity Service release (installed first, same
+# namespace) through the two shared Secrets from step 2: the data plane's
+# memory-dp credential, registered on the Identity Service release, and the
+# control plane's internal token, which the release's memory validator
+# presents. This starter runs with `auth.method: none` and `profile: dev`, so
+# nothing introspects yet; wiring the connection now means turning agent-key
+# auth on needs no re-plumbing. The in-cluster Service speaks http, hence
+# allowInsecureTransport (refused under fips).
+dataplane:
+  identityServiceBaseURL: http://iris-identity-service:9200
 identityService:
-  image:
-    repository: redislabs/iris-identity-service
-    # tag is supplied at install time: --set identityService.image.tag=<IDS_VERSION>
-  metadata:
-    # Pre-created Secret holding the IdS metadata Redis connection (step 2).
-    existingSecret: ram-ids-metadata
+  allowInsecureTransport: true
+  credential:
+    existingSecret: memory-dp-credential
 
 controlplane:
   image:
     repository: redislabs/agent-memory-control-plane
+  internalToken:
+    existingSecret: memory-internal-token
   config:
     render: true
   configData:

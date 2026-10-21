@@ -102,7 +102,7 @@ checksum/license: {{ .Values.license.existingSecretChecksum | quote }}
   "annotationsTemplate" "redis-agent-memory.controlplaneAnnotations"
   "podAnnotations" .Values.controlplane.podAnnotations
   "podLabels" .Values.controlplane.podLabels
-  "imagePullSecrets" .Values.imagePullSecrets
+  "imagePullSecrets" (include "redis-agent-memory.imagePullSecrets" . | fromJsonArray)
   "serviceAccountName" (include "redis-agent-memory.serviceAccountName" .)
   "podSecurityContext" .Values.podSecurityContext
   "containerName" "controlplane"

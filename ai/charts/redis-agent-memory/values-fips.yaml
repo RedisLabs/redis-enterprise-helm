@@ -13,10 +13,10 @@
 #
 # Selecting this overlay:
 #
-#   1. Sets security.profile=fips so every application container starts with
-#      GODEBUG=fips140=on. See the chart README and
-#      memory/helm/README.md for the exact effects and
-#      the conservative compliance wording we use.
+#   1. Sets global.security.profile=fips, so every application container
+#      starts with GODEBUG=fips140=on. Set the same global.security.profile on
+#      the Identity Service release. See memory/helm/README.md for the exact
+#      effects and the conservative compliance wording we use.
 #
 #   2. Does NOT automatically rewrite your config Secret. The config file
 #      you mount through config.existingSecret must also:
@@ -32,13 +32,24 @@
 #      rules is violated while security.profile=fips, so catching this at
 #      install time rather than config-bake time is the intended workflow.
 #
-#   3. Requires a TLS Identity Service endpoint when identityService.enabled=true.
-#      The chart's default introspection base_url is the in-cluster http://
-#      address, which this profile forbids, so it refuses to render until you
-#      set memory.auth.agent_keys.introspection.base_url to an https:// URL.
+#   3. Requires TLS on the data plane's Identity Service hop. The chart
+#      refuses identityService.allowInsecureTransport=true and any http://
+#      dataplane.identityServiceBaseURL, so set the connection in your main
+#      values file with an https:// URL, for example:
+#        dataplane:
+#          identityServiceBaseURL: https://identity-service.example.com
+#        identityService:
+#          credential:
+#            existingSecret: memory-dp-credential
+#        controlplane:
+#          internalToken:
+#            existingSecret: memory-internal-token
+#      The Identity Service release's memory validator must also call the
+#      control plane over https:// (it refuses to start otherwise).
 #
 # This file intentionally only sets the security toggle. Keep your resource
 # sizing, autoscaling, ingress, and image config in your main values file.
 
-security:
-  profile: fips
+global:
+  security:
+    profile: fips

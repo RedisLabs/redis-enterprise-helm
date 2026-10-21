@@ -9,6 +9,14 @@
 #     changed the rendered selector labels.
 #   - caller namespace/pod labels with the workloads that are allowed to call
 #     the Redis Agent Memory API.
+#   - <identity-service-namespace> and <identity-service-release-name> with the
+#     separate Identity Service release this chart connects to (this chart
+#     deploys none).
+#
+# Egress is not restricted here. If you add an egress policy for the RAM
+# server pods, it must allow them to reach the external Identity Service
+# release (dataplane.identityServiceBaseURL, port 9200 by default) for API-key
+# introspection, plus DNS, Redis and model providers.
 #
 # This policy assumes the chart defaults:
 #   app.kubernetes.io/name=redis-agent-memory
@@ -75,7 +83,7 @@ spec:
 ---
 # Bundled control-plane ingress.
 # The admin store API listens on 9100. Restrict it to approved admin clients
-# only — it provisions and deletes stores. The control plane itself reaches OUT
+# and the external Identity Service release's grant-validation requests. The control plane itself reaches OUT
 # to the metadata Redis and the shared store database; egress is not restricted
 # by this reference policy (add an egress policy if your environment requires
 # it, allowing the control-plane pods to reach those Redis endpoints).
@@ -93,6 +101,32 @@ spec:
   policyTypes:
     - Ingress
   ingress:
+    # Allow the external Identity Service release's grant validator.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: <identity-service-namespace>
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: iris-identity-service
+              app.kubernetes.io/instance: <identity-service-release-name>
+      ports:
+        - protocol: TCP
+          port: 9100
+    # Playbook live store discovery (MOD-19110): the Playbook control plane
+    # lists stores with its own JWT. Remove this rule without that connection.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: <playbook-namespace>
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis-agent-playbook
+              app.kubernetes.io/instance: <playbook-release-name>
+              app.kubernetes.io/component: controlplane
+      ports:
+        - protocol: TCP
+          port: 9100
     # Allow approved admin clients only (e.g. an operator bastion, a GitOps
     # runner, or the ingress/gateway fronting the admin API). Replace these
     # labels with the workloads permitted to manage stores.

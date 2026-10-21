@@ -1,0 +1,43 @@
+# Nonsecret example: create the referenced Secrets before installing.
+# Identity settings for Memory's own control plane (operator OIDC) and the
+# connection to the Identity Service release. The Identity Service release
+# carries its own control auth, runtime OIDC policy, memory validator and
+# memory-dp credential; see "Connecting to the Identity Service" in the chart README.
+fullnameOverride: identity-example
+tenantId: default
+image:
+  tag: SET_RELEASE_VERSION
+license:
+  existingSecret: memory-license
+config:
+  existingSecret: memory-dp-config
+controlplane:
+  image:
+    tag: SET_RELEASE_VERSION
+  internalToken:
+    existingSecret: memory-internal-token
+  config:
+    render: true
+  configData:
+    metadata:
+      urls: [redis://metadata:6379]
+    databases:
+      "1":
+        urls: [redis://content:6379]
+    auth:
+      admin_token:
+        token_file: /etc/controlplane-onprem/admin/token
+      oidc:
+        enabled: true
+        issuer: https://idp.example.com
+        jwks_uri: https://idp.example.com/jwks
+        audience: [api://redis-iris]
+        static_tenant_id: default
+        role_claims: [groups]
+        role_mappings:
+          memory-readers: viewer
+dataplane:
+  identityServiceBaseURL: https://identity-service.example.com
+identityService:
+  credential:
+    existingSecret: memory-dp-credential
