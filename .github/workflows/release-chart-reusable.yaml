@@ -56,10 +56,24 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Detected version for ${{ inputs.chart_name }}: $VERSION"
 
+      # The tag is pushed before packaging, so a run that failed later already
+      # left it behind. Reuse it only when it points at this commit, so a
+      # re-run resumes packaging, upload and index publication; a tag on any
+      # other commit is a conflict and stops the release.
       - name: Create and push release tag
         run: |
           VERSION="${{ steps.extract-version.outputs.version }}"
           TAG_NAME="${{ inputs.tag_prefix }}-$VERSION"
+
+          git fetch --force origin "refs/tags/$TAG_NAME:refs/tags/$TAG_NAME" 2>/dev/null || true
+          if existing=$(git rev-parse -q --verify "refs/tags/$TAG_NAME^{commit}"); then
+            if [ "$existing" != "$GITHUB_SHA" ]; then
+              echo "::error::Tag $TAG_NAME already points at $existing, not $GITHUB_SHA"
+              exit 1
+            fi
+            echo "Reusing existing tag $TAG_NAME at $GITHUB_SHA"
+            exit 0
+          fi
 
           git tag "$TAG_NAME"
           git push origin "$TAG_NAME"
