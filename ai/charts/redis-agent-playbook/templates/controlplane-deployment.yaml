@@ -3,10 +3,18 @@
 checksum/config: {{ .Values.controlplane.config.existingSecretChecksum | quote }}
 {{- else }}
 {{- $config := dict "tenantId" .Values.tenantId "service" .Values.controlplane.service "keyPrefix" .Values.storage.keyPrefix "models" .Values.inference.models }}
-{{- if .Values.controlplane.delegatedAuth.enabled }}
-{{- $_ := set $config "delegatedAuth" .Values.controlplane.delegatedAuth }}
-{{- $_ := set $config "identityServiceBaseURL" (include "redis-agent-playbook.identityServiceBaseURL" .) }}
+{{- if .Values.controlplane.oidc.enabled }}
+{{- $_ := set $config "oidc" (dict "controlplane" .Values.controlplane.oidc "dataplane" .Values.dataplane.oidc) }}
 {{- end }}
+{{- /* Keep grant administration configured when the extraction gate is off. */}}
+{{- if or .Values.extraction.enabled .Values.extraction.connection.enabled }}
+{{- $_ := set $config "extraction" .Values.extraction }}
+{{- if .Values.extraction.connection.enabled }}
+{{- $_ := set $config "workerEnabled" .Values.worker.enabled }}
+{{- $_ := set $config "identityService" (dict "baseURL" .Values.dataplane.identityServiceBaseURL "allowInsecureTransport" .Values.identityService.allowInsecureTransport) }}
+{{- end }}
+{{- end }}
+{{- $_ := set $config "tracing" (dict "enabled" .Values.tracing.enabled "endpoint" .Values.tracing.otlpGRPCEndpoint) }}
 checksum/config: {{ toJson $config | sha256sum | quote }}
 {{- end }}
 {{- with .Values.storage.existingSecretChecksum }}
@@ -18,13 +26,10 @@ checksum/admin-token: {{ . | quote }}
 {{- with .Values.controlplane.internalToken.existingSecretChecksum }}
 checksum/internal-token: {{ . | quote }}
 {{- end }}
-{{- if and .Values.controlplane.delegatedAuth.enabled .Values.controlplane.delegatedAuth.credential.existingSecretChecksum }}
-checksum/auth-introspect-token: {{ .Values.controlplane.delegatedAuth.credential.existingSecretChecksum | quote }}
-{{- end }}
 {{- with .Values.license.existingSecretChecksum }}
 checksum/license: {{ . | quote }}
 {{- end }}
-{{- if and .Values.tls.caCertSecret .Values.tls.caCertSecretChecksum }}
+{{- if and (include "redis-agent-playbook.tlsCaCertSecret" .) (default (dict) .Values.tls).caCertSecretChecksum }}
 checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
 {{- end }}
 {{- end }}
@@ -53,10 +58,22 @@ checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
 - name: internal-token
   mountPath: /etc/playbook/credentials/internal
   readOnly: true
-{{ include "redis-onprem.delegatedAuth.volumeMount" (include "redis-agent-playbook.delegatedAuthOptions" . | fromJson) }}
 - name: license
   mountPath: /etc/playbook/license
   readOnly: true
+{{- if .Values.extraction.connection.enabled }}
+- name: extraction-ids-control
+  mountPath: /etc/playbook/credentials/extraction-ids-control
+  readOnly: true
+- name: extraction-destination-ids-control
+  mountPath: /etc/playbook/credentials/extraction-destination-ids-control
+  readOnly: true
+{{- if .Values.extraction.connection.ramControlPlaneBaseURL }}
+- name: extraction-ram-cp
+  mountPath: /etc/playbook/credentials/extraction-ram-cp
+  readOnly: true
+{{- end }}
+{{- end }}
 {{ include "redis-agent-playbook.commonTLSMount" . }}
 {{- end }}
 
@@ -90,13 +107,38 @@ checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
     items:
       - key: {{ .Values.controlplane.internalToken.secretKey }}
         path: token
-{{ include "redis-onprem.delegatedAuth.volume" (include "redis-agent-playbook.delegatedAuthOptions" . | fromJson) }}
 - name: license
   secret:
     secretName: {{ required "license.existingSecret is required" .Values.license.existingSecret }}
     items:
       - key: {{ .Values.license.secretKey }}
         path: {{ .Values.license.secretKey }}
+{{- if .Values.extraction.connection.enabled }}
+{{- /* Projected ServiceAccount JWTs, not the Control token (MOD-19110). */}}
+- name: extraction-ids-control
+  projected:
+    sources:
+      - serviceAccountToken:
+          audience: {{ .Values.extraction.connection.sourceControlAudience | quote }}
+          expirationSeconds: {{ .Values.extraction.connection.controlTokenExpirationSeconds }}
+          path: token
+- name: extraction-destination-ids-control
+  projected:
+    sources:
+      - serviceAccountToken:
+          audience: {{ .Values.extraction.connection.destinationControlAudience | quote }}
+          expirationSeconds: {{ .Values.extraction.connection.controlTokenExpirationSeconds }}
+          path: token
+{{- if .Values.extraction.connection.ramControlPlaneBaseURL }}
+- name: extraction-ram-cp
+  projected:
+    sources:
+      - serviceAccountToken:
+          audience: {{ .Values.extraction.connection.ramControlPlaneAudience | quote }}
+          expirationSeconds: {{ .Values.extraction.connection.controlTokenExpirationSeconds }}
+          path: token
+{{- end }}
+{{- end }}
 {{ include "redis-agent-playbook.commonTLSVolume" . }}
 {{- end }}
 
@@ -110,8 +152,8 @@ checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
   "annotationsTemplate" "redis-agent-playbook.controlplaneAnnotations"
   "podAnnotations" .Values.controlplane.podAnnotations
   "podLabels" .Values.controlplane.podLabels
-  "imagePullSecrets" .Values.imagePullSecrets
-  "serviceAccountName" (include "redis-agent-playbook.serviceAccountName" .)
+  "imagePullSecrets" (include "redis-agent-playbook.imagePullSecrets" . | fromJsonArray)
+  "serviceAccountName" (include "redis-agent-playbook.controlplaneServiceAccountName" .)
   "automountServiceAccountToken" false
   "podSecurityContext" .Values.podSecurityContext
   "containerName" "controlplane"
@@ -120,8 +162,8 @@ checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
   "image" .Values.controlplane.image
   "envTemplate" "redis-agent-playbook.controlplaneEnv"
   "port" .Values.controlplane.service.port
-  "livenessProbe" (dict "httpGet" (dict "path" "/v1/health/live" "port" "http") "initialDelaySeconds" 5 "periodSeconds" 10)
-  "readinessProbe" (dict "httpGet" (dict "path" "/v1/health/ready" "port" "http") "initialDelaySeconds" 3 "periodSeconds" 5)
+  "livenessProbe" (dict "httpGet" (dict "path" "/health/liveness" "port" "http") "initialDelaySeconds" 5 "periodSeconds" 10)
+  "readinessProbe" (dict "httpGet" (dict "path" "/health/readiness" "port" "http") "initialDelaySeconds" 3 "periodSeconds" 5)
   "resources" .Values.controlplane.resources
   "volumeMountsTemplate" "redis-agent-playbook.controlplaneVolumeMounts"
   "volumesTemplate" "redis-agent-playbook.controlplaneVolumes"

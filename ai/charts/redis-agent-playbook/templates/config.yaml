@@ -23,35 +23,27 @@ data:
         introspection:
           base_url: {{ include "redis-agent-playbook.identityServiceBaseURL" . | quote }}
           product: playbook
-          {{- if hasPrefix "http://" (include "redis-agent-playbook.identityServiceBaseURL" .) }}
+          {{- /* validation.yaml admits http:// only with identityService.allowInsecureTransport outside fips. */}}
+          {{- if not (hasPrefix "https://" (include "redis-agent-playbook.identityServiceBaseURL" .)) }}
           allow_insecure_transport: true
           {{- end }}
           credential:
-            token_file: /etc/playbook/credentials/identity-runtime/token
+            token_file: /etc/identity-service/runtime/playbook-dp/token
       {{- if .Values.dataplane.oidc.enabled }}
       oidc:
-        enabled: true
-        issuer: {{ .Values.dataplane.oidc.issuer | quote }}
+        {{- include "redis-agent-playbook.oidcValidation" . | nindent 8 }}
         audience:
-          {{- /* Keep in sync with playbook/dataplane/internal/infrastructure.onPremDataPlaneAudience. */}}
-          - api://playbook-dp
-        jwks_uri: {{ .Values.dataplane.oidc.jwksURI | quote }}
-        {{- with (trim .Values.dataplane.oidc.tenantIDClaim) }}
-        tenant_id_claim: {{ . | quote }}
-        {{- end }}
-        {{- with (trim .Values.dataplane.oidc.staticTenantID) }}
-        static_tenant_id: {{ . | quote }}
-        {{- end }}
-        {{- with .Values.dataplane.oidc.roleClaims }}
-        role_claims:
-          {{- toYaml . | nindent 10 }}
-        {{- end }}
-        role_mappings:
-          {{- toYaml .Values.dataplane.oidc.roleMappings | nindent 10 }}
-        allow_unmapped_roles: false
-        {{- if .Values.dataplane.oidc.allowInsecureTransport }}
-        allow_insecure_transport: true
-        {{- end }}
+          {{- toYaml (list (trim .Values.auth.oidc.audience)) | nindent 10 }}
+      {{- end }}
+      {{- if .Values.extraction.connection.enabled }}
+      service_subjects:
+        enabled: true
+        issuer: {{ .Values.extraction.connection.issuer | quote }}
+        audience: [api://playbook-dp]
+        jwks_uri: {{ required "extraction.connection.jwksURI is required" .Values.extraction.connection.jwksURI | quote }}
+        subjects:
+          {{- include "redis-agent-playbook.extractionSubjects" . | nindent 10 }}
+        allow_insecure_transport: {{ .Values.extraction.connection.allowInsecureTransport }}
       {{- end }}
     license:
       license_path: /etc/playbook/license/{{ .Values.license.secretKey }}
@@ -62,94 +54,6 @@ data:
       models:
         {{- toYaml .Values.inference.models | nindent 8 }}
     opentelemetry:
-      enable_tracing: false
-{{- if not .Values.identityService.config.existingSecret }}
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ include "redis-agent-playbook.identityServiceName" . }}-config
-  labels:
-    {{- include "redis-agent-playbook.labels" . | nindent 4 }}
-    app.kubernetes.io/component: identity-service
-data:
-  identity-service.yaml: |
-    profile: prod
-    server:
-      host: 0.0.0.0
-      port: {{ .Values.identityService.service.port }}
-      timeout: 30s
-      read_timeout: 30s
-      write_timeout: 35s
-    auth:
-      type: static-credential
-      control:
-        token_file: /etc/identity-service/credentials/control/token
-    api_keys:
-      max_rotate_grace_seconds: 604800
-    runtime:
-      service_credentials:
-        - subject: playbook-dataplane
-          token_file: /etc/identity-service/credentials/runtime/token
-          allowed_operations:
-            - api-key-introspect
-          allowed_products:
-            - playbook
-        {{- if .Values.controlplane.delegatedAuth.enabled }}
-        {{- list (include "redis-onprem.delegatedAuth.runtimeCredential" (include "redis-agent-playbook.delegatedAuthOptions" . | fromJson) | fromJson) | toYaml | nindent 8 }}
-        {{- end }}
-      cache:
-        soft_ttl_seconds: {{ .Values.identityService.runtimeCache.softTTLSeconds }}
-        hard_ttl_seconds: {{ .Values.identityService.runtimeCache.hardTTLSeconds }}
-      {{- if .Values.controlplane.delegatedAuth.enabled }}
-      oidc:
-        products:
-          playbook:
-            enabled: true
-            issuer: {{ .Values.dataplane.oidc.issuer | quote }}
-            jwks_uri: {{ .Values.dataplane.oidc.jwksURI | quote }}
-            {{- with (trim .Values.dataplane.oidc.tenantIDClaim) }}
-            tenant_id_claim: {{ . | quote }}
-            {{- end }}
-            {{- with (trim .Values.dataplane.oidc.staticTenantID) }}
-            static_tenant_id: {{ . | quote }}
-            {{- end }}
-            {{- with .Values.dataplane.oidc.roleClaims }}
-            role_claims:
-              {{- toYaml . | nindent 14 }}
-            {{- end }}
-            credentials:
-              access_token:
-                audience:
-                  {{- toYaml .Values.controlplane.delegatedAuth.audience | nindent 18 }}
-        role_bindings:
-          {{- range $group, $role := .Values.dataplane.oidc.roleMappings }}
-          - claim_value: {{ $group | quote }}
-            issuer: {{ $.Values.dataplane.oidc.issuer | quote }}
-            {{- if eq $role "suite_admin" }}
-            scope: global
-            {{- else }}
-            scope: product
-            product: playbook
-            {{- end }}
-            role: {{ $role | quote }}
-          {{- end }}
-      {{- end }}
-{{- $apiKeyTenant := default (dict) .Values.identityService.apiKeyTenant }}
-{{- $singleTenantID := trim (default "" $apiKeyTenant.singleTenantID) }}
-{{- if and $apiKeyTenant.allowTenantlessGrants (not $singleTenantID) }}
-{{- fail "identityService.apiKeyTenant.allowTenantlessGrants requires singleTenantID; Identity Service refuses to start without it" }}
-{{- end }}
-{{- if $singleTenantID }}
-      api_key_tenant:
-        single_tenant_id: {{ $singleTenantID | quote }}
-        allow_tenantless_grants: {{ default false $apiKeyTenant.allowTenantlessGrants }}
-{{- end }}
-    product_validation:
-      playbook:
-        base_url: {{ include "redis-agent-playbook.controlplaneBaseURL" . | quote }}
-        credential:
-          token_file: /etc/identity-service/credentials/product-validation/token
-    opentelemetry:
-      enable_tracing: false
-{{- end }}
+      enable_tracing: {{ .Values.tracing.enabled }}
+      otlp_grpc_endpoint: {{ .Values.tracing.otlpGRPCEndpoint | quote }}
+    trace_capture: {{ .Values.tracing.capture | quote }}

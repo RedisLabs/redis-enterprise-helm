@@ -1,18 +1,18 @@
 {{- define "redis-agent-playbook.dataplaneAnnotations" -}}
-checksum/config: {{ toJson (dict "tenantId" .Values.tenantId "service" .Values.dataplane.service "oidc" .Values.dataplane.oidc "keyPrefix" .Values.storage.keyPrefix "models" .Values.inference.models "identityServiceBaseURL" (include "redis-agent-playbook.identityServiceBaseURL" .) "security" .Values.security) | sha256sum | quote }}
+checksum/config: {{ toJson (dict "tenantId" .Values.tenantId "service" .Values.dataplane.service "oidc" .Values.dataplane.oidc "connection" .Values.extraction.connection "workerEnabled" .Values.worker.enabled "keyPrefix" .Values.storage.keyPrefix "models" .Values.inference.models "identityServiceBaseURL" (include "redis-agent-playbook.identityServiceBaseURL" .) "securityProfile" (include "redis-agent-playbook.securityProfile" .) "tracing" .Values.tracing) | sha256sum | quote }}
 {{- with .Values.storage.existingSecretChecksum }}
 checksum/storage-secret: {{ . | quote }}
 {{- end }}
 {{- if and .Values.inference.existingSecret .Values.inference.existingSecretChecksum }}
 checksum/inference-secret: {{ .Values.inference.existingSecretChecksum | quote }}
 {{- end }}
-{{- with .Values.identityService.runtimeToken.existingSecretChecksum }}
-checksum/identity-runtime-token: {{ . | quote }}
+{{- with .Values.identityService.credential.existingSecretChecksum }}
+checksum/identity-credential: {{ . | quote }}
 {{- end }}
 {{- with .Values.license.existingSecretChecksum }}
 checksum/license: {{ . | quote }}
 {{- end }}
-{{- if and .Values.tls.caCertSecret .Values.tls.caCertSecretChecksum }}
+{{- if and (include "redis-agent-playbook.tlsCaCertSecret" .) (default (dict) .Values.tls).caCertSecretChecksum }}
 checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
 {{- end }}
 {{- end }}
@@ -44,8 +44,8 @@ checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
   mountPath: /etc/playbook/inference
   readOnly: true
 {{- end }}
-- name: identity-runtime-token
-  mountPath: /etc/playbook/credentials/identity-runtime
+- name: identity-credential
+  mountPath: /etc/identity-service/runtime/playbook-dp
   readOnly: true
 - name: license
   mountPath: /etc/playbook/license
@@ -71,11 +71,11 @@ checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
       - key: {{ .Values.inference.secretKey }}
         path: {{ .Values.inference.secretKey }}
 {{- end }}
-- name: identity-runtime-token
+- name: identity-credential
   secret:
-    secretName: {{ include "redis-agent-playbook.identityServiceRuntimeTokenSecretName" . }}
+    secretName: {{ .Values.identityService.credential.existingSecret }}
     items:
-      - key: {{ .Values.identityService.runtimeToken.secretKey }}
+      - key: {{ .Values.identityService.credential.secretKey }}
         path: token
 - name: license
   secret:
@@ -96,7 +96,7 @@ checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
   "annotationsTemplate" "redis-agent-playbook.dataplaneAnnotations"
   "podAnnotations" .Values.dataplane.podAnnotations
   "podLabels" .Values.dataplane.podLabels
-  "imagePullSecrets" .Values.imagePullSecrets
+  "imagePullSecrets" (include "redis-agent-playbook.imagePullSecrets" . | fromJsonArray)
   "serviceAccountName" (include "redis-agent-playbook.serviceAccountName" .)
   "automountServiceAccountToken" false
   "podSecurityContext" .Values.podSecurityContext
@@ -106,8 +106,8 @@ checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
   "image" .Values.dataplane.image
   "envTemplate" "redis-agent-playbook.dataplaneEnv"
   "port" .Values.dataplane.service.port
-  "livenessProbe" (dict "httpGet" (dict "path" "/v1/health/live" "port" "http") "initialDelaySeconds" 5 "periodSeconds" 10)
-  "readinessProbe" (dict "httpGet" (dict "path" "/v1/health/ready" "port" "http") "initialDelaySeconds" 3 "periodSeconds" 5)
+  "livenessProbe" (dict "httpGet" (dict "path" "/health/liveness" "port" "http") "initialDelaySeconds" 5 "periodSeconds" 10)
+  "readinessProbe" (dict "httpGet" (dict "path" "/health/readiness" "port" "http") "initialDelaySeconds" 3 "periodSeconds" 5)
   "resources" .Values.dataplane.resources
   "volumeMountsTemplate" "redis-agent-playbook.dataplaneVolumeMounts"
   "volumesTemplate" "redis-agent-playbook.dataplaneVolumes"

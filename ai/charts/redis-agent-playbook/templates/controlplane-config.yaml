@@ -28,9 +28,11 @@ data:
         token_file: /etc/playbook/credentials/admin/token
       internal_token:
         token_file: /etc/playbook/credentials/internal/token
-      {{- if .Values.controlplane.delegatedAuth.enabled }}
-      delegated_auth:
-        {{- include "redis-onprem.delegatedAuth.config" (include "redis-agent-playbook.delegatedAuthOptions" . | fromJson) | fromJson | toYaml | nindent 8 }}
+      {{- if .Values.controlplane.oidc.enabled }}
+      oidc:
+        {{- include "redis-agent-playbook.oidcValidation" . | nindent 8 }}
+        audience:
+          {{- toYaml (list (trim .Values.auth.oidc.audience)) | nindent 10 }}
       {{- end }}
     license:
       license_path: /etc/playbook/license/{{ .Values.license.secretKey }}
@@ -41,5 +43,30 @@ data:
       models:
         {{- toYaml .Values.inference.models | nindent 8 }}
     opentelemetry:
-      enable_tracing: false
+      enable_tracing: {{ .Values.tracing.enabled }}
+      otlp_grpc_endpoint: {{ .Values.tracing.otlpGRPCEndpoint | quote }}
+    {{- if or .Values.extraction.enabled .Values.extraction.connection.enabled }}
+    extraction:
+      enabled: {{ .Values.extraction.enabled }}
+      {{- $connection := .Values.extraction.connection }}
+      {{- if $connection.enabled }}
+      connection:
+        enabled: true
+        issuer: {{ required "extraction.connection.issuer is required" $connection.issuer | quote }}
+        subjects:
+          {{- include "redis-agent-playbook.extractionSubjects" . | nindent 10 }}
+        identity_service:
+          base_url: {{ include "redis-agent-playbook.sourceIdentityServiceBaseURL" . | quote }}
+          token_file: /etc/playbook/credentials/extraction-ids-control/token
+        destination_identity_service:
+          base_url: {{ include "redis-agent-playbook.destinationIdentityServiceBaseURL" . | quote }}
+          token_file: /etc/playbook/credentials/extraction-destination-ids-control/token
+        {{- with $connection.ramControlPlaneBaseURL }}
+        ram_control_plane:
+          base_url: {{ . | quote }}
+          token_file: /etc/playbook/credentials/extraction-ram-cp/token
+        {{- end }}
+        allow_insecure_transport: {{ or $connection.allowInsecureTransport .Values.identityService.allowInsecureTransport }}
+      {{- end }}
+    {{- end }}
 {{- end }}

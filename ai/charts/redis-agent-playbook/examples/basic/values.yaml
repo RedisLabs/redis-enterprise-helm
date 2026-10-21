@@ -1,4 +1,4 @@
-tenantId: acme
+tenantId: default
 
 # Enables the health and shared security-profile checks run by `helm test`.
 tests:
@@ -17,15 +17,15 @@ dataplane:
   image:
     repository: registry.example.com/redis/playbook-dataplane-onprem
     tag: 1.0.0
+  # The Identity Service release's Service in the same namespace.
+  identityServiceBaseURL: http://iris-identity-service:9200
 
+# The Identity Service release installed first in the same namespace. Its
+# release must register the playbook-dp credential and the Playbook validator.
 identityService:
-  image:
-    repository: registry.example.com/redis/iris-identity-service
-    tag: 1.0.0
-  controlToken:
-    existingSecret: playbook-identity-control
-  runtimeToken:
-    existingSecret: playbook-identity-runtime
+  allowInsecureTransport: true
+  credential:
+    existingSecret: playbook-dp-credential
 
 license:
   existingSecret: playbook-license
