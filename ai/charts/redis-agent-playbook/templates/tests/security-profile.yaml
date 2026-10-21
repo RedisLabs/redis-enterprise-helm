@@ -6,7 +6,7 @@
   "labelsTemplate" "redis-agent-playbook.labels"
   "serviceAccountName" (include "redis-agent-playbook.testServiceAccountName" .)
   "deploymentName" (include "redis-agent-playbook.controlplaneName" .)
-  "securityProfile" .Values.security.profile
+  "securityProfile" (include "redis-agent-playbook.securityProfile" .)
   "image" (printf "%s:%s" .Values.tests.securityProfileImage.repository .Values.tests.securityProfileImage.tag)
   "imagePullPolicy" .Values.tests.securityProfileImage.pullPolicy
 ) }}
@@ -18,19 +18,7 @@
   "labelsTemplate" "redis-agent-playbook.labels"
   "serviceAccountName" (include "redis-agent-playbook.testServiceAccountName" .)
   "deploymentName" (include "redis-agent-playbook.dataplaneName" .)
-  "securityProfile" .Values.security.profile
-  "image" (printf "%s:%s" .Values.tests.securityProfileImage.repository .Values.tests.securityProfileImage.tag)
-  "imagePullPolicy" .Values.tests.securityProfileImage.pullPolicy
-) }}
----
-{{ include "redis-onprem.securityProfileTest" (dict
-  "root" .
-  "enabled" true
-  "name" (include "redis-agent-playbook.identityServiceSecurityTestName" .)
-  "labelsTemplate" "redis-agent-playbook.labels"
-  "serviceAccountName" (include "redis-agent-playbook.testServiceAccountName" .)
-  "deploymentName" (include "redis-agent-playbook.identityServiceName" .)
-  "securityProfile" .Values.security.profile
+  "securityProfile" (include "redis-agent-playbook.securityProfile" .)
   "image" (printf "%s:%s" .Values.tests.securityProfileImage.repository .Values.tests.securityProfileImage.tag)
   "imagePullPolicy" .Values.tests.securityProfileImage.pullPolicy
 ) }}

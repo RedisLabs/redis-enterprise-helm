@@ -17,6 +17,26 @@
       "type": "string",
       "maxLength": 64
     },
+    "auth": {
+      "type": "object",
+      "required": ["oidc"],
+      "properties": {
+        "oidc": {
+          "type": "object",
+          "description": "Settings shared by every Iris service that validates IdP access tokens.",
+          "required": ["audience"],
+          "properties": {
+            "audience": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Audience accepted by the data plane and the control plane. There is no per-service override."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "security": {
       "type": "object",
       "required": [
@@ -55,7 +75,6 @@
       "required": [
         "existingSecret",
         "playbookKey",
-        "identityServiceKey",
         "existingSecretChecksum",
         "keyPrefix",
         "maxPlaybooksPerTenant"
@@ -69,8 +88,8 @@
           "minLength": 1
         },
         "identityServiceKey": {
-          "type": "string",
-          "minLength": 1
+          "not": {},
+          "description": "Removed: the Identity Service metadata Secret belongs to the Identity Service release."
         },
         "existingSecretChecksum": {
           "type": "string"
@@ -80,7 +99,10 @@
           "minLength": 1,
           "pattern": "^[^*?\\[\\]{}[:space:]]+$"
         },
-        "maxPlaybooksPerTenant": {"type": "integer", "minimum": 1}
+        "maxPlaybooksPerTenant": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "inference": {
@@ -134,6 +156,99 @@
       },
       "additionalProperties": false
     },
+    "extraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "connection": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "issuer": {
+              "type": "string"
+            },
+            "workerSubjects": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "identityServiceBaseURL": {
+              "type": "string",
+              "pattern": "^(|https?://[^[:space:]]+)$"
+            },
+            "destinationIdentityServiceBaseURL": {
+              "type": "string",
+              "pattern": "^(|https?://[^[:space:]]+)$"
+            },
+            "controlToken": {
+              "type": "object",
+              "description": "Removed (MOD-19110): the control plane uses its own ServiceAccount JWT. Setting it fails rendering with the replacement."
+            },
+            "allowInsecureTransport": {
+              "type": "boolean"
+            },
+            "jwksURI": {
+              "type": "string"
+            },
+            "destinationControlToken": {
+              "type": "object",
+              "description": "Removed (MOD-19110): the control plane uses its own ServiceAccount JWT. Setting it fails rendering with the replacement."
+            },
+            "ramControlPlaneBaseURL": {
+              "type": "string"
+            },
+            "ramControlPlaneAudience": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sourceControlAudience": {
+              "type": "string",
+              "minLength": 1
+            },
+            "destinationControlAudience": {
+              "type": "string",
+              "minLength": 1
+            },
+            "controlTokenExpirationSeconds": {
+              "type": "integer",
+              "minimum": 600
+            }
+          }
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "tenant_id",
+              "store_id"
+            ],
+            "properties": {
+              "tenant_id": {
+                "type": "string"
+              },
+              "store_id": {
+                "type": "string"
+              },
+              "namespace_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "controlplane": {
       "type": "object",
       "required": [
@@ -176,17 +291,17 @@
         "internalToken": {
           "$ref": "#/definitions/credentialReference"
         },
-        "delegatedAuth": {
+        "oidc": {
           "type": "object",
-          "required": ["enabled", "audience", "allowInsecureTransport", "credential"],
+          "description": "Operator bearer tokens validated locally against the dataplane.oidc issuer, with the audience auth.oidc.audience.",
+          "required": ["enabled"],
           "properties": {
             "enabled": { "type": "boolean" },
             "audience": {
               "type": "array",
-              "items": { "type": "string", "minLength": 1 }
-            },
-            "allowInsecureTransport": { "type": "boolean" },
-            "credential": { "$ref": "#/definitions/credentialReference" }
+              "description": "Removed: set auth.oidc.audience. A non-empty value fails the render with a migration message.",
+              "items": { "type": "string" }
+            }
           },
           "additionalProperties": false
         }
@@ -214,7 +329,8 @@
         },
         "identityServiceBaseURL": {
           "type": "string",
-          "pattern": "^(|https?://[^[:space:]]+)$"
+          "pattern": "^(|https?://[^[:space:]]+)$",
+          "description": "URL of the Identity Service release the data plane introspects agent keys against. Required; must be https:// unless identityService.allowInsecureTransport=true outside fips."
         },
         "oidc": {
           "type": "object",
@@ -267,77 +383,28 @@
     },
     "identityService": {
       "type": "object",
-      "required": [
-        "replicaCount",
-        "image",
-        "service",
-        "playbookControlPlaneBaseURL",
-        "controlToken",
-        "runtimeToken",
-        "runtimeCache"
-      ],
+      "description": "Connection to the Identity Service release this chart does not deploy.",
       "properties": {
-        "replicaCount": {
-          "type": "integer",
-          "minimum": 1
+        "allowInsecureTransport": {
+          "type": "boolean",
+          "description": "Accept an http:// dataplane.identityServiceBaseURL, extraction.connection.identityServiceBaseURL or extraction.connection.destinationIdentityServiceBaseURL. Refused under the fips security profile."
         },
-        "image": {
-          "$ref": "#/definitions/image"
-        },
-        "service": {
-          "$ref": "#/definitions/service"
-        },
-        "config": {
+        "credential": {
           "type": "object",
-          "description": "Bring-your-own Identity Service config for runtime OIDC and delegated CP introspection.",
+          "description": "The data plane's runtime credential, provisioned by deployment automation and registered on the Identity Service release.",
           "properties": {
             "existingSecret": { "type": "string" },
             "secretKey": { "type": "string", "minLength": 1 },
             "existingSecretChecksum": { "type": "string" }
           },
           "additionalProperties": false
-        },
-        "playbookControlPlaneBaseURL": {
-          "type": "string",
-          "pattern": "^(|https?://[^[:space:]]+)$"
-        },
-        "controlToken": {
-          "$ref": "#/definitions/credentialReference"
-        },
-        "runtimeToken": {
-          "$ref": "#/definitions/credentialReference"
-        },
-        "runtimeCache": {
-          "type": "object",
-          "required": [
-            "softTTLSeconds",
-            "hardTTLSeconds"
-          ],
-          "properties": {
-            "softTTLSeconds": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "hardTTLSeconds": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        },
-        "apiKeyTenant": {
-          "type": "object",
-          "description": "Single-tenant compatibility for agent-key grants. Backfills only grants missing a tenant; a grant naming a different tenant is still rejected.",
-          "properties": {
-            "singleTenantID": {
-              "type": "string"
-            },
-            "allowTenantlessGrants": {
-              "type": "boolean"
-            }
-          },
-          "additionalProperties": false
         }
-      }
+      },
+      "additionalProperties": false
+    },
+    "global": {
+      "type": "object",
+      "description": "Umbrella-chart fallbacks read when the local value is empty: security.profile, imagePullSecrets, tls.caCertSecret."
     },
     "tests": {
       "type": "object",
@@ -354,6 +421,60 @@
         }
       },
       "additionalProperties": false
+    },
+    "worker": {
+      "type": "object",
+      "properties": {
+        "sourceURL": {"type": "string"},
+        "sourceTokenAudience": {"type": "string", "minLength": 1},
+        "sourceTokenExpirationSeconds": {"type": "integer", "minimum": 600},
+        "timeout": {"type": "string"},
+        "reasoningEffort": {"enum": ["", "none", "minimal", "low", "medium", "high", "xhigh"]},
+        "maxInputTokens": {"type": "integer", "minimum": 1},
+        "maxCompletionTokens": {"type": "integer", "minimum": 1},
+        "enabled": {
+          "type": "boolean"
+        },
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "region": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "scanConcurrency": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "extractConcurrency": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "shutdownTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "terminationGracePeriodSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "jobs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "faq-scan",
+              "faq-extract"
+            ]
+          }
+        }
+      }
     }
   },
   "definitions": {

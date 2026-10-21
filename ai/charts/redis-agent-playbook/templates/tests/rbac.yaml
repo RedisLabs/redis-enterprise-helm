@@ -17,7 +17,6 @@
   "resourceNames" (list
     (include "redis-agent-playbook.controlplaneName" .)
     (include "redis-agent-playbook.dataplaneName" .)
-    (include "redis-agent-playbook.identityServiceName" .)
   )
 ) }}
 {{- end }}

@@ -17,13 +17,3 @@
   "type" .Values.dataplane.service.type
   "port" .Values.dataplane.service.port
 ) }}
----
-{{ include "redis-onprem.identityService.service" (dict
-  "root" .
-  "name" (include "redis-agent-playbook.identityServiceName" .)
-  "component" "identity-service"
-  "labelsTemplate" "redis-agent-playbook.labels"
-  "selectorLabelsTemplate" "redis-agent-playbook.selectorLabels"
-  "type" .Values.identityService.service.type
-  "port" .Values.identityService.service.port
-) }}

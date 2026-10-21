@@ -1,0 +1,169 @@
+{{- if .Values.worker.enabled }}
+{{- $name := include "redis-agent-playbook.workerName" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "redis-agent-playbook.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "redis-agent-playbook.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "redis-agent-playbook.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+        {{- with .Values.worker.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ toJson (dict "worker" .Values.worker "extraction" .Values.extraction "tenant" .Values.tenantId "prefix" .Values.storage.keyPrefix "securityProfile" (include "redis-agent-playbook.securityProfile" .) "license" .Values.license "storage" .Values.storage "tls" (list (include "redis-agent-playbook.tlsCaCertSecret" .) .Values.tls) "tracingEnabled" .Values.tracing.enabled "tracingEndpoint" .Values.tracing.otlpGRPCEndpoint) | sha256sum | quote }}
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: {{ .Values.worker.port | quote }}
+        {{- with .Values.worker.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
+      serviceAccountName: {{ include "redis-agent-playbook.workerServiceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with include "redis-agent-playbook.imagePullSecrets" . | fromJsonArray }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: worker
+          image: "{{ .Values.dataplane.image.repository }}:{{ .Values.dataplane.image.tag }}"
+          imagePullPolicy: {{ .Values.dataplane.image.pullPolicy }}
+          args: ["--mode", "worker", "--config", "/etc/playbook/config/worker.yaml", "--config", "/etc/playbook/storage/storage.yaml", "--config", "/etc/playbook/worker/{{ .Values.worker.secretKey }}"]
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            {{- include "redis-agent-playbook.commonEnv" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.worker.port }}
+          startupProbe:
+            httpGet: {path: /health/liveness, port: http}
+            periodSeconds: 5
+            failureThreshold: 24
+          livenessProbe:
+            httpGet: {path: /health/liveness, port: http}
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /health/readiness, port: http}
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          volumeMounts:
+            - {name: config, mountPath: /etc/playbook/config, readOnly: true}
+            - {name: storage, mountPath: /etc/playbook/storage, readOnly: true}
+            - {name: worker, mountPath: /etc/playbook/worker, readOnly: true}
+            - {name: license, mountPath: /etc/playbook/license, readOnly: true}
+            {{- if .Values.extraction.connection.enabled }}
+            - {name: memory-dp-token, mountPath: /var/run/secrets/playbook/memory-dp, readOnly: true}
+            - {name: playbook-dp-token, mountPath: /var/run/secrets/playbook/playbook-dp, readOnly: true}
+            {{- end }}
+            {{- include "redis-agent-playbook.commonTLSMount" . | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}-config
+        - name: storage
+          secret:
+            secretName: {{ .Values.storage.existingSecret }}
+            items: [{key: {{ .Values.storage.playbookKey }}, path: storage.yaml}]
+        - name: worker
+          secret:
+            secretName: {{ .Values.worker.existingSecret }}
+        - name: license
+          secret:
+            secretName: {{ .Values.license.existingSecret }}
+        {{- if .Values.extraction.connection.enabled }}
+        - name: memory-dp-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: {{ .Values.worker.sourceTokenAudience | quote }}
+                  expirationSeconds: {{ .Values.worker.sourceTokenExpirationSeconds }}
+                  path: token
+        - name: playbook-dp-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: api://playbook-dp
+                  expirationSeconds: {{ .Values.worker.sourceTokenExpirationSeconds }}
+                  path: token
+        {{- end }}
+        {{- include "redis-agent-playbook.commonTLSVolume" . | nindent 8 }}
+      {{- with .Values.worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-config
+  labels:
+    {{- include "redis-agent-playbook.labels" . | nindent 4 }}
+data:
+  worker.yaml: |
+    profile: prod
+    tenant_id: {{ .Values.tenantId | quote }}
+    server:
+      port: {{ .Values.worker.port }}
+    license:
+      license_path: /etc/playbook/license/{{ .Values.license.secretKey }}
+    storage:
+      key_prefix: {{ .Values.storage.keyPrefix | quote }}
+    worker:
+      region: {{ .Values.worker.region | quote }}
+      source_url: {{ include "redis-agent-playbook.workerSourceURL" . | quote }}
+      {{- if .Values.extraction.connection.enabled }}
+      source_token_file: /var/run/secrets/playbook/memory-dp/token
+      target_token_file: /var/run/secrets/playbook/playbook-dp/token
+      {{- end }}
+      target_url: {{ default (printf "http://%s:%v" (include "redis-agent-playbook.dataplaneName" .) .Values.dataplane.service.port) .Values.worker.targetURL | quote }}
+      sources: {{ toJson .Values.extraction.sources }}
+      jobs: {{ toJson .Values.worker.jobs }}
+      scan_concurrency: {{ .Values.worker.scanConcurrency }}
+      extract_concurrency: {{ .Values.worker.extractConcurrency }}
+      dispatch_interval: {{ .Values.worker.dispatchInterval }}
+      shutdown_timeout: {{ .Values.worker.shutdownTimeoutSeconds }}s
+      {{- with .Values.worker.timeout }}
+      timeout: {{ . }}
+      {{- end }}
+      reasoning_effort: {{ .Values.worker.reasoningEffort | quote }}
+      max_input_tokens: {{ .Values.worker.maxInputTokens }}
+      max_completion_tokens: {{ .Values.worker.maxCompletionTokens }}
+    opentelemetry:
+      {{- $telemetry := deepCopy .Values.worker.opentelemetry }}
+      {{- if .Values.tracing.enabled }}
+      {{- $_ := set $telemetry "enable_tracing" true }}
+      {{- $_ := set $telemetry "otlp_grpc_endpoint" .Values.tracing.otlpGRPCEndpoint }}
+      {{- end }}
+      {{- toYaml $telemetry | nindent 6 }}
+---
+{{ include "redis-onprem.dataplane.service" (dict
+ "root" . "name" $name "component" "worker"
+ "labelsTemplate" "redis-agent-playbook.labels" "selectorLabelsTemplate" "redis-agent-playbook.selectorLabels"
+ "type" "ClusterIP" "port" .Values.worker.port
+) }}
+{{- end }}
