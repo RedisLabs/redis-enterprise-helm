@@ -30,7 +30,7 @@ spec:
   restartPolicy: Never
   automountServiceAccountToken: false
   activeDeadlineSeconds: {{ .Values.tests.smoke.activeDeadlineSeconds }}
-  {{- with .Values.imagePullSecrets }}
+  {{- with include "redis-agent-memory.imagePullSecrets" . | fromJsonArray }}
   imagePullSecrets:
     {{- toYaml . | nindent 4 }}
   {{- end }}
@@ -236,8 +236,8 @@ spec:
           print(f"Running RAM API smoke test against {base_url} store {store_id}")
 
           try:
-              health = request("GET", "/health")
-              if health.get("status") != "healthy":
+              health = request("GET", "/health/readiness")
+              if health.get("status") != "ready":
                   fail(f"health check returned unexpected payload: {health}")
 
               session_body = {

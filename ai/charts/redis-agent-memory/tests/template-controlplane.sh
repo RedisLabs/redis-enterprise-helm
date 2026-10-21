@@ -33,10 +33,6 @@ COMMON_ARGS=(
   --set config.secretKey=config.yaml
   --set controlplane.image.tag=cp-0.0.0-test
   --set controlplane.config.existingSecret=cp-config-test
-  # The Identity Service is enabled by default, and enabling it makes the image
-  # tag and the metadata Redis overlay Secret mandatory.
-  --set identityService.image.tag=ids-0.0.0-test
-  --set identityService.metadata.existingSecret=ids-metadata
 )
 
 CP_ARGS=()
@@ -59,8 +55,8 @@ count_kind() {
 
 # Count generated Secrets belonging to the control plane. Scoped by name rather
 # than counting every `kind: Secret` in the manifest, so that a Secret another
-# component adds (the Identity Service brings two) does not read as the control
-# plane having generated one it did not.
+# component adds does not read as the control plane having generated one it did
+# not.
 count_cp_secrets() {
   local manifest="$1"
   printf '%s\n' "$manifest" \
@@ -99,9 +95,8 @@ echo "OK: bundled control plane renders"
 
 echo "=== Case 2: Deployment + Service + generated token Secrets on 9100 ==="
 OUT=$(render "${CP_ARGS[@]}")
-# Four Deployments now: server, worker, control plane, Identity Service.
-[ "$(count_kind "$OUT" Deployment)" = "4" ] \
-  || fail "expected 4 Deployments (server+worker+controlplane+identity-service), got $(count_kind "$OUT" Deployment)"
+[ "$(count_kind "$OUT" Deployment)" = "3" ] \
+  || fail "expected 3 Deployments (server+worker+controlplane), got $(count_kind "$OUT" Deployment)"
 grep -qE "name: ${CP_NAME}([[:space:]]|$)" <<<"$OUT" \
   || fail "control-plane Deployment/Service named ${CP_NAME} did not render"
 grep -q "name: ${CP_TOKEN_SECRET}" <<<"$OUT" \
@@ -111,8 +106,8 @@ grep -q "name: ${CP_INTERNAL_TOKEN_SECRET}" <<<"$OUT" \
 [ "$(count_cp_secrets "$OUT")" = "2" ] \
   || fail "expected exactly 2 generated control-plane Secrets (admin + internal tokens), got $(count_cp_secrets "$OUT")"
 N=$(count_fips_runtime_value "$OUT" "fips140=off")
-[ "$N" = "4" ] \
-  || fail "expected 4 GODEBUG=fips140=off entries (server+worker+controlplane+identity-service), got $N"
+[ "$N" = "3" ] \
+  || fail "expected 3 GODEBUG=fips140=off entries (server+worker+controlplane), got $N"
 grep -q 'containerPort: 9100' <<<"$OUT" \
   || fail "control-plane container port 9100 did not render"
 grep -q 'path: /v1/health/live' <<<"$OUT" \
@@ -152,11 +147,11 @@ grep -qE "name: ${CP_NAME}([[:space:]]|$)" <<<"$OUT" \
   || fail "control plane did not render in BYO-token mode"
 echo "OK: BYO admin-token suppresses only the generated admin Secret"
 
-echo "=== Case 6: security.profile=fips → fips on server, worker, and control plane ==="
-OUT=$(render "${CP_ARGS[@]}" --set security.profile=fips)
+echo "=== Case 6: global.security.profile=fips → fips on server, worker and control plane ==="
+OUT=$(render "${CP_ARGS[@]}" --set global.security.profile=fips)
 N=$(count_fips_runtime_value "$OUT" "fips140=on")
-[ "$N" = "4" ] \
-  || fail "expected 4 GODEBUG=fips140=on entries (server+worker+controlplane+identity-service), got $N"
+[ "$N" = "3" ] \
+  || fail "expected 3 GODEBUG=fips140=on entries (server+worker+controlplane), got $N"
 echo "OK: FIPS runtime enabled on the control-plane container too"
 
 echo "=== Case 7: controlplane.volumes/volumeMounts passthrough (CSI sync support) renders ==="

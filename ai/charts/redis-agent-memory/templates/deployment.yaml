@@ -10,6 +10,9 @@ checksum/overlay: {{ include "redis-agent-memory.overlayChecksum" . | quote }}
 {{- if .Values.license.existingSecretChecksum }}
 checksum/license: {{ .Values.license.existingSecretChecksum | quote }}
 {{- end }}
+{{- with (include "redis-agent-memory.dpCredential" . | fromJson).checksum }}
+checksum/dp-credential: {{ . | quote }}
+{{- end }}
 {{- end }}
 
 {{- define "redis-agent-memory.serverArgs" -}}
@@ -27,9 +30,9 @@ checksum/license: {{ .Values.license.existingSecretChecksum | quote }}
 - name: license-volume
   mountPath: {{ .Values.license.mountDir }}
   readOnly: true
-{{- if and .Values.identityService.enabled (include "redis-agent-memory.identityServiceMemoryRuntimeCredentialSecretName" .) }}
-- name: {{ include "redis-agent-memory.identityServiceMemoryRuntimeCredentialVolumeName" . }}
-  mountPath: {{ include "redis-agent-memory.identityServiceMemoryRuntimeCredentialMountPath" . }}
+{{- if (include "redis-agent-memory.dpCredential" . | fromJson).secret }}
+- name: identity-service-runtime-memory-dp
+  mountPath: /etc/identity-service/runtime/memory-dp
   readOnly: true
 {{- end }}
 {{ include "redis-agent-memory.overlayVolumeMounts" . }}
@@ -60,13 +63,15 @@ checksum/license: {{ .Values.license.existingSecretChecksum | quote }}
     items:
       - key: {{ .Values.license.secretKey }}
         path: {{ .Values.license.fileName }}
-{{- if and .Values.identityService.enabled (include "redis-agent-memory.identityServiceMemoryRuntimeCredentialSecretName" .) }}
-- name: {{ include "redis-agent-memory.identityServiceMemoryRuntimeCredentialVolumeName" . }}
+{{- with include "redis-agent-memory.dpCredential" . | fromJson }}
+{{- if .secret }}
+- name: identity-service-runtime-memory-dp
   secret:
-    secretName: {{ include "redis-agent-memory.identityServiceMemoryRuntimeCredentialSecretName" . }}
+    secretName: {{ .secret }}
     items:
-      - key: {{ include "redis-agent-memory.identityServiceMemoryRuntimeCredentialSecretKey" . }}
+      - key: {{ .key }}
         path: token
+{{- end }}
 {{- end }}
 {{ include "redis-agent-memory.overlayVolumes" . }}
 {{ include "redis-agent-memory.tlsVolume" . }}
@@ -87,7 +92,7 @@ checksum/license: {{ .Values.license.existingSecretChecksum | quote }}
   "annotationsTemplate" "redis-agent-memory.serverAnnotations"
   "podAnnotations" .Values.podAnnotations
   "podLabels" .Values.podLabels
-  "imagePullSecrets" .Values.imagePullSecrets
+  "imagePullSecrets" (include "redis-agent-memory.imagePullSecrets" . | fromJsonArray)
   "serviceAccountName" (include "redis-agent-memory.serviceAccountName" .)
   "podSecurityContext" .Values.podSecurityContext
   "containerName" (include "redis-agent-memory.name" .)

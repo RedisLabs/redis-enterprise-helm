@@ -28,10 +28,6 @@ COMMON_ARGS=(
   --set config.secretKey=config.yaml
   --set controlplane.image.tag=cp-0.0.0-test
   --set controlplane.config.existingSecret=cp-config-test
-  # The Identity Service is enabled by default, and enabling it makes the image
-  # tag and the metadata Redis overlay Secret mandatory.
-  --set identityService.image.tag=ids-0.0.0-test
-  --set identityService.metadata.existingSecret=ids-metadata
 )
 
 fail() {
@@ -81,13 +77,13 @@ has_rbac_test_hook_annotation() {
 echo "=== Case 1: default profile (unset) → should disable the FIPS runtime ==="
 OUT=$(render)
 N=$(count_env_value "$OUT" "GODEBUG" "fips140=off")
-[ "$N" = "4" ] || fail "expected 4 GODEBUG=fips140=off entries (server+worker+controlplane+identity-service), got $N"
+[ "$N" = "3" ] || fail "expected 3 GODEBUG=fips140=off entries (server+worker+controlplane), got $N"
 echo "OK: default profile disables the FIPS runtime on all Deployments"
 
-echo "=== Case 2: security.profile=fips → should enable the FIPS runtime ==="
-OUT=$(render --set security.profile=fips)
+echo "=== Case 2: global.security.profile=fips → should enable the FIPS runtime ==="
+OUT=$(render --set global.security.profile=fips)
 N=$(count_env_value "$OUT" "GODEBUG" "fips140=on")
-[ "$N" = "4" ] || fail "expected 4 GODEBUG=fips140=on entries (server+worker+controlplane+identity-service), got $N"
+[ "$N" = "3" ] || fail "expected 3 GODEBUG=fips140=on entries (server+worker+controlplane), got $N"
 echo "OK: fips profile enables the FIPS runtime on all Deployments"
 
 echo "=== Case 3: invalid security.profile=bogus → helm must refuse to render ==="

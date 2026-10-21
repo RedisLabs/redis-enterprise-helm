@@ -15,6 +15,11 @@
 # Secret (secrets.secretName in its region file) holding that region's API keys
 # and Redis URLs; see region-<x>.secret-overlay.example.yaml for the contents.
 
+# Every agent key carries a tenant (MOD-19463). This single-tenant example
+# uses "default"; set the Identity Service release's
+# runtime.apiKeyTenant.singleTenantID to the same value.
+tenantId: default
+
 image:
   repository: redislabs/agent-memory
   # tag is supplied at install time: --set image.tag=<RAM_VERSION>
@@ -41,8 +46,21 @@ shared:
 # fields only; everything here is the stable, non-secret default.
 memory:
   default_extraction_strategy: instruct
+  ownership:
+    # Leave false until stored owner_id values match Principal.UserID.
+    # See docs/runbooks/ram-enforce-ownership-transition.md.
+    enabled: false
+  namespace_features:
+    api: true
+    routing:
+      policy_api: true
+      automatic: true
+      admission: true
   # This starter assumes infrastructure-controlled access in each region.
-  # Before enabling ingress, use agent_key auth and configure worker identity.
+  # The data plane accepts auth.method none only with profile dev. Before you
+  # enable ingress or keep data in it, use agent_key auth, remove profile dev,
+  # and configure worker identity.
+  profile: dev
   auth:
     method: none
   embedders_connection_details:
@@ -79,29 +97,27 @@ memory:
     auth:
       disabled: true
 
-# On the Identity Service (no settings needed here, hence no stanza):
-#
-# IdS is the authority for agent keys and the chart runs it by default, so it
-# comes up in every region without this file asking for it. That holds even
-# though the starter sets `memory.auth.method: none` (infrastructure-controlled
-# access, see above) and nothing introspects yet — running IdS from the start is
-# what lets a region mint keys and flip its data plane to agent-key auth without
-# a second deployment step. Set `identityService.enabled: false` only to point
-# the region at an Identity Service this chart does not own, and then write
-# `memory.auth.agent_keys.introspection` yourself.
-#
-# Running it makes two inputs mandatory, and both are set elsewhere. The image
-# tag goes on the install command line, next to the RAM ones, because IdS is
-# versioned separately:
-#
-#   --set identityService.image.tag=<IDS_VERSION>
-#
-# The metadata Secret is per-region, for the same reason each region names its
-# own credentials Secret, so it lives in region-eu.yaml / region-us.yaml.
+# Connection to the Identity Service release (installed first, same
+# namespace). Deployment automation provisions both shared Secrets: the data
+# plane's memory-dp credential, registered on the Identity Service release, and
+# the control plane's internal token, which the release's memory validator
+# presents. Each region runs its own Identity Service release next to its
+# Memory release, so the same values hold in every region. This starter runs
+# with `auth.method: none` and `profile: dev`, so nothing introspects yet. The
+# in-cluster Service speaks http, hence allowInsecureTransport (refused under
+# fips).
+dataplane:
+  identityServiceBaseURL: http://iris-identity-service:9200
+identityService:
+  allowInsecureTransport: true
+  credential:
+    existingSecret: memory-dp-credential
 
 controlplane:
   image:
     repository: redislabs/agent-memory-control-plane
+  internalToken:
+    existingSecret: memory-internal-token
   config:
     render: true
   configData:

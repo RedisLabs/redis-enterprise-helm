@@ -39,7 +39,7 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
-      {{- with .Values.imagePullSecrets }}
+      {{- with include "redis-agent-memory.imagePullSecrets" . | fromJsonArray }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}

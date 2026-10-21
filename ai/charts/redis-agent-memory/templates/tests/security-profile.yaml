@@ -5,5 +5,5 @@
   "labelsTemplate" "redis-agent-memory.labels"
   "serviceAccountName" (include "redis-agent-memory.serviceAccountName" .)
   "deploymentName" (include "redis-agent-memory.fullname" .)
-  "securityProfile" (default "" .Values.security.profile)
+  "securityProfile" (include "redis-agent-memory.securityProfile" .)
 ) }}

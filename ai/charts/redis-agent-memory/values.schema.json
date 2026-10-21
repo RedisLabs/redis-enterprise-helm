@@ -4,6 +4,24 @@
   "description": "Schema for the redis-agent-memory Helm chart values. Enforced by `helm install`/`helm upgrade` via Helm's built-in JSON Schema validation (see https://helm.sh/docs/topics/charts/#schema-files). Anything not defined here is accepted \u2014 the schema's job is to catch typos and invalid values on the keys we care most about, not to document every field.",
   "type": "object",
   "properties": {
+    "auth": {
+      "type": "object",
+      "description": "Settings shared by every Iris service that validates IdP access tokens.",
+      "properties": {
+        "oidc": {
+          "type": "object",
+          "properties": {
+            "audience": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Audience accepted on IdP access tokens, rendered as the audience of every enabled auth.oidc block (data plane and control plane). An audience already written in a block must equal it, or the render fails."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "config": {
       "type": "object",
       "description": "Data-plane config source. Bring your own Secret (existingSecret) or let the chart render a ConfigMap (render=true) from .Values.shared + .Values.memory.",
@@ -23,6 +41,10 @@
         }
       },
       "additionalProperties": false
+    },
+    "tenantId": {
+      "type": "string",
+      "description": "Central tenant (MOD-19153): when set, the static tenant of every enabled auth.oidc block and the control plane's auth.admin_tenant_id, so admin-token resources belong to it. Set the Identity Service release's runtime.apiKeyTenant.singleTenantID to the same value."
     },
     "secrets": {
       "type": "object",
@@ -586,293 +608,46 @@
     },
     "identityService": {
       "type": "object",
-      "description": "Suite-level Iris Identity Service deployment for on-prem agent-key lifecycle and runtime introspection. Enabled by default; requires identityService.image.tag and identityService.metadata.existingSecret.",
+      "description": "Connection to the Identity Service release this chart does not deploy.",
       "properties": {
-        "enabled": {
-          "type": "boolean"
+        "allowInsecureTransport": {
+          "type": "boolean",
+          "description": "Accept an http:// dataplane.identityServiceBaseURL. Refused under the fips security profile."
         },
-        "image": {
-          "type": "object",
-          "properties": {
-            "repository": {
-              "type": "string",
-              "minLength": 1
-            },
-            "tag": {
-              "type": "string"
-            },
-            "pullPolicy": {
-              "type": "string",
-              "enum": [
-                "Always",
-                "IfNotPresent",
-                "Never"
-              ]
-            }
-          },
-          "additionalProperties": false
-        },
-        "replicaCount": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "config": {
+        "credential": {
           "type": "object",
           "properties": {
             "existingSecret": {
               "type": "string"
             },
-            "render": {
-              "type": "boolean"
-            },
             "secretKey": {
-              "type": "string",
-              "minLength": 1
+              "type": "string"
             },
             "existingSecretChecksum": {
               "type": "string"
             }
           },
           "additionalProperties": false
-        },
-        "configData": {
-          "type": "object",
-          "description": "Extra non-secret IdS config fields used with identityService.config.render=true. The chart owns mounted credential paths."
-        },
-        "metadata": {
-          "type": "object",
-          "description": "Pre-created Secret holding a YAML overlay with IdS metadata Redis connection details.",
-          "properties": {
-            "existingSecret": {
-              "type": "string"
-            },
-            "secretKey": {
-              "type": "string",
-              "minLength": 1
-            },
-            "existingSecretChecksum": {
-              "type": "string"
-            }
-          },
-          "additionalProperties": false
-        },
-        "controlToken": {
-          "type": "object",
-          "description": "IdS Control static admin credential.",
-          "properties": {
-            "existingSecret": {
-              "type": "string"
-            },
-            "secretKey": {
-              "type": "string",
-              "minLength": 1
-            },
-            "autoGenerate": {
-              "type": "boolean"
-            },
-            "existingSecretChecksum": {
-              "type": "string"
-            }
-          },
-          "additionalProperties": false
-        },
-        "runtime": {
-          "type": "object",
-          "properties": {
-            "cache": {
-              "type": "object",
-              "properties": {
-                "softTtlSeconds": {
-                  "type": "integer",
-                  "minimum": 0
-                },
-                "hardTtlSeconds": {
-                  "type": "integer",
-                  "minimum": 0
-                }
-              },
-              "additionalProperties": false
-            },
-            "unscopedGrantsProduct": {
-              "type": "string",
-              "description": "Product that owns grants stored before grants carried an explicit product. Must name a configured productValidation product, or be empty to ignore such grants. Limited to the products the Identity Service recognises.",
-              "enum": [
-                "",
-                "memory",
-                "langcache",
-                "context"
-              ]
-            },
-            "memoryCredentialName": {
-              "type": "string",
-              "pattern": "^[a-z0-9-]{1,44}$",
-              "description": "Runtime credential name consumed by the packaged Agent Memory data plane when chart-rendered config enables IdS-backed API-key introspection."
-            },
-            "serviceCredentials": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "name": {
-                    "type": "string",
-                    "pattern": "^[a-z0-9-]{1,44}$",
-                    "description": "Stable credential name used for generated Secret names and mounted token_file paths."
-                  },
-                  "subject": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "existingSecret": {
-                    "type": "string"
-                  },
-                  "secretKey": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "autoGenerate": {
-                    "type": "boolean"
-                  },
-                  "existingSecretChecksum": {
-                    "type": "string"
-                  },
-                  "allowedOperations": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "enum": [
-                        "api-key-introspect",
-                        "auth-introspect",
-                        "auth-me"
-                      ],
-                      "description": "Operation the runtime service credential may perform, in canonical lowercase. An unrecognised name grants nothing, so it is rejected here rather than surfacing as a 403 at request time. The Identity Service itself compares operation names case-insensitively, so this enum is deliberately stricter: chart values are a curated surface and rendered config should be uniform, matching how the chart already requires canonical lowercase product names."
-                    }
-                  },
-                  "allowedProducts": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "enum": [
-                        "memory",
-                        "langcache",
-                        "context"
-                      ]
-                    }
-                  }
-                },
-                "additionalProperties": false
-              }
-            }
-          },
-          "additionalProperties": false
-        },
-        "productValidation": {
-          "type": "object",
-          "description": "Product control planes that IdS calls before persisting API-key grants.",
-          "properties": {
-            "products": {
-              "type": "object",
-              "minProperties": 1,
-              "patternProperties": {
-                "^[a-z0-9-]{1,44}$": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "baseURL": {
-                      "type": "string"
-                    },
-                    "credential": {
-                      "type": "object",
-                      "properties": {
-                        "existingSecret": {
-                          "type": "string"
-                        },
-                        "secretKey": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "existingSecretChecksum": {
-                          "type": "string"
-                        }
-                      },
-                      "additionalProperties": false
-                    }
-                  },
-                  "additionalProperties": false
-                }
-              },
-              "additionalProperties": false,
-              "propertyNames": {
-                "enum": [
-                  "memory",
-                  "langcache",
-                  "context"
-                ]
-              }
-            }
-          },
-          "required": [
-            "products"
-          ],
-          "additionalProperties": false
-        },
-        "apiKeys": {
-          "type": "object",
-          "properties": {
-            "maxRotateGraceSeconds": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          "additionalProperties": false
-        },
-        "service": {
-          "type": "object",
-          "properties": {
-            "type": {
-              "type": "string"
-            },
-            "port": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 65535
-            }
-          },
-          "additionalProperties": false
-        },
-        "livenessProbe": {
-          "type": "object"
-        },
-        "readinessProbe": {
-          "type": "object"
-        },
-        "resources": {
-          "type": "object"
-        },
-        "podAnnotations": {
-          "type": "object"
-        },
-        "podLabels": {
-          "type": "object"
-        },
-        "nodeSelector": {
-          "type": "object"
-        },
-        "affinity": {
-          "type": "object"
-        },
-        "tolerations": {
-          "type": "array"
-        },
-        "volumes": {
-          "type": "array"
-        },
-        "volumeMounts": {
-          "type": "array"
         }
       },
       "additionalProperties": false
+    },
+    "dataplane": {
+      "type": "object",
+      "properties": {
+        "identityServiceBaseURL": {
+          "type": "string",
+          "description": "Runtime URL of the Identity Service release the data plane introspects against. Required with config.render=true and agent-key auth; must be https:// unless identityService.allowInsecureTransport=true outside fips."
+        }
+      }
+    },
+    "externalIdentityService": {
+      "not": {},
+      "description": "Withdrawn: the chart deploys no Identity Service. Use dataplane.identityServiceBaseURL and identityService.{allowInsecureTransport,credential}."
+    },
+    "global": {
+      "type": "object",
+      "description": "Umbrella-chart fallbacks read when the local value is empty: security.profile, imagePullSecrets, tls.caCertSecret."
     }
   }
 }

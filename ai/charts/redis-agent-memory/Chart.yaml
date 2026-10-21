@@ -2,13 +2,14 @@ apiVersion: v2
 name: redis-agent-memory
 description: Helm chart to deploy Redis Agent Memory for on-premises deployment.
 type: application
-# 0.0.14: breaking config change — llm endpoint settings moved from the
-# strategy llm blocks into the root inference_providers registry, which also
-# holds http_client defaults that a block can override per field. See
-# "Migrating to inference_providers" in the README.
-version: 0.7.0
-appVersion: "0.7.0"
+# 0.1.0: breaking change — the chart no longer deploys an Identity Service.
+# Install the Identity Service chart as its own release and connect to it
+# through dataplane.identityServiceBaseURL and identityService.*; see
+# "Connecting to the Identity Service" in the README. Upgrading from an earlier release is
+# unsupported.
+version: 0.8.0
+appVersion: "0.8.0"
 dependencies:
   - name: redis-iris-onprem-lib
-    version: 0.1.0
+    version: 0.3.0
     repository: https://helm.redis.io/ai
