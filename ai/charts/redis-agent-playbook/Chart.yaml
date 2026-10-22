@@ -1,5 +1,5 @@
 apiVersion: v2
-appVersion: 0.2.0
+appVersion: 0.10.2
 dependencies:
 - name: redis-iris-onprem-lib
   repository: https://helm.redis.io/ai
@@ -13,4 +13,4 @@ keywords:
 - on-prem
 name: redis-agent-playbook
 type: application
-version: 0.2.0
+version: 0.10.2

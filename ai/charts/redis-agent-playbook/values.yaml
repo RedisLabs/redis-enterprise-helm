@@ -149,7 +149,7 @@ controlplane:
   image:
     repository: "redislabs/iris-agent-playbook-control"
     # Must be set explicitly at install or upgrade time.
-    tag: "0.2.0"
+    tag: "0.10.2"
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
@@ -191,7 +191,7 @@ dataplane:
   image:
     repository: "redislabs/iris-agent-playbook-data"
     # Must be set explicitly at install or upgrade time.
-    tag: "0.2.0"
+    tag: "0.10.2"
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
