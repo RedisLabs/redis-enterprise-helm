@@ -20,7 +20,7 @@ Retrieve the generated runtime credential {{ .name }}:
 Reach it from your workstation:
 
   kubectl port-forward svc/{{ $fullname }} -n {{ .Release.Namespace }} {{ .Values.service.port }}
-  curl http://127.0.0.1:{{ .Values.service.port }}/v1/health/ready
+  curl http://127.0.0.1:{{ .Values.service.port }}/health/readiness
 
 Check health in-cluster:
 

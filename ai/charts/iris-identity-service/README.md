@@ -19,7 +19,7 @@ pod start.
   entry's `generatedSecretName`.
   Generated Secrets are created once and kept across upgrades and uninstalls
   (`helm.sh/resource-policy: keep`).
-- One `helm test` Pod that checks `/v1/health/ready`.
+- One `helm test` Pod that checks `/health/readiness`.
 
 It does not deploy Redis, a product control plane or data plane, an Ingress, a
 NetworkPolicy, a SecretProviderClass, an HPA, or a metrics port.
@@ -163,8 +163,9 @@ unreachable; liveness does not, so a Redis outage takes the pod out of service
 without restarting it. Readiness does not probe the product control planes, so
 one product's outage never withdraws the shared service; grant validation still
 needs them. A passing `helm test` is not proof that the install can mint API
-keys. The cross-product KinD harness (`task test:kind`) is: its standalone flow
-creates a key through a stub grant validator, introspects it and revokes it.
+keys. The cross-product [KinD harness](../../tests/kind/README.md)
+(`task test:identity:integration`) is: its standalone flow creates a key through a
+stub grant validator and introspects it.
 
 ## Product contracts
 
@@ -219,11 +220,18 @@ productValidation:
 
 | Set on this release | Value | Matching Playbook value |
 |---|---|---|
-| `runtime.serviceCredentials[]` | `name: playbook-dp`, `subject: playbook-dataplane`, `allowedOperations: [api-key-introspect]` (plus `subject-grant-lookup` with `extraction.connection.enabled`), `allowedProducts: [playbook]`, `existingSecret` + `secretKey` | The data plane's runtime credential: the same Secret |
+| `runtime.serviceCredentials[]` | `name: playbook-dp`, `subject: playbook-dp`, `allowedOperations: [api-key-introspect]` (plus `subject-grant-lookup` with `extraction.connection.enabled`), `allowedProducts: [playbook]`, `existingSecret` + `secretKey` | `identityService.credential.existingSecret` + `secretKey`: the same Secret, mounted by the data plane |
 | `productValidation.products.playbook.baseURL` | `http://playbook-redis-agent-playbook-controlplane:9200` | The control-plane Service `<fullname>-controlplane` on `controlplane.service.port` (default `9200`) |
 | `productValidation.products.playbook.credential` | The control plane's internal-token Secret and key | `controlplane.internalToken.existingSecret` + `secretKey` (development only: the chart generates `<fullname>-controlplane-internal-token`) |
 | `runtime.apiKeyTenant.singleTenantID` | Playbook's tenant, for example `default` | `tenantId` |
 | `subjectGrants.allowed` | `{product: playbook, resourceType: playbook, actions: [read, propose]}`, with `extraction.connection.enabled` | Extraction workers read and propose to destination Playbooks |
+| `controlAuth.workloadIdentity` | Subject `system:serviceaccount:<namespace>:<fullname>-controlplane`, `roles: [subject_grant_admin]`, audience `api://playbook-identity-control`, with `extraction.connection.enabled` | `extraction.connection.destinationControlAudience`; the control plane provisions destination grants with its ServiceAccount JWT |
+
+The Playbook data plane and control plane reach this release through
+`dataplane.identityServiceBaseURL`, for example `http://iris-identity-service:9200`.
+A control plane that reaches the same release at a different URL sets
+`extraction.connection.destinationIdentityServiceBaseURL`; it must not name
+another release, because the data plane looks up the workers' grants here.
 
 Playbook extraction reading Agent Memory stores also needs these on the IdS
 release that serves Memory (the same release when one IdS serves both):
@@ -247,7 +255,7 @@ runtime:
     singleTenantID: default
   serviceCredentials:
     - name: playbook-dp
-      subject: playbook-dataplane
+      subject: playbook-dp
       allowedOperations: [api-key-introspect, subject-grant-lookup]
       allowedProducts: [playbook]
       existingSecret: playbook-dp-credential
@@ -267,8 +275,10 @@ subjectGrants:
 
 When one release serves both products, merge the two blocks: one
 `serviceCredentials` list (with `subject-grant-lookup` on `memory-dp`), both
-validators, and `unscopedGrantsProduct: memory`. Every product served by one
-release uses the same tenant.
+validators, and `unscopedGrantsProduct: memory`. List both control audiences for
+the one Playbook control-plane subject:
+`audience: [api://memory-identity-control, api://playbook-identity-control]`.
+Every product served by one release uses the same tenant.
 
 ## Values
 
@@ -318,8 +328,8 @@ install.
 | `podLabels` | `{}` | Extra pod labels. |
 | `podSecurityContext` | restricted, UID 65532 | Pod security context. |
 | `securityContext` | read-only root, no privilege escalation, all capabilities dropped | Container security context. |
-| `livenessProbe` | `GET /v1/health/live` | Container liveness probe. |
-| `readinessProbe` | `GET /v1/health/ready` | Container readiness probe. |
+| `livenessProbe` | `GET /health/liveness` | Container liveness probe. |
+| `readinessProbe` | `GET /health/readiness` | Container readiness probe. |
 | `resources` | limits `500m` / `512Mi`, requests `100m` / `128Mi` | Container resources. |
 | `volumes` | `[]` | Extra pod volumes, appended to the chart's own. |
 | `volumeMounts` | `[]` | Extra container mounts, appended to the chart's own. |
@@ -570,3 +580,9 @@ The policy (G6,
   [MOD-19267](https://redislabs.atlassian.net/browse/MOD-19267)) a non-`https://`
   `productValidation.products.*.baseURL`.
 - Product charts keep fail-fast `https://` guards on the URLs they author.
+
+## Health probe naming
+
+Chart `0.10.2` uses `/health/liveness` and `/health/readiness`. Deploy it with
+an Identity Service image containing these routes. The old `/v1/health/live` and
+`/v1/health/ready` URLs are removed; update custom callers to the new names.
