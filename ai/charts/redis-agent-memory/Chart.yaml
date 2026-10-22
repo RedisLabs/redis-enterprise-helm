@@ -7,8 +7,8 @@ type: application
 # through dataplane.identityServiceBaseURL and identityService.*; see
 # "Connecting to the Identity Service" in the README. Upgrading from an earlier release is
 # unsupported.
-version: 0.8.0
-appVersion: "0.8.0"
+version: 0.10.2
+appVersion: "0.10.2"
 dependencies:
   - name: redis-iris-onprem-lib
     version: 0.3.0

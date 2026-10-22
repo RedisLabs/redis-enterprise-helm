@@ -100,16 +100,16 @@
 {{- $httpChecks = append $httpChecks (dict "collectorName" "ram-worker-liveness" "checkName" "RAM worker liveness" "url" (printf "%s/health/liveness" $workerBaseURL) "timeout" $timeout "severity" "fail") -}}
 {{- $httpChecks = append $httpChecks (dict "collectorName" "ram-worker-readiness" "checkName" "RAM worker readiness" "url" (printf "%s/health/readiness" $workerBaseURL) "timeout" $timeout "severity" "fail") -}}
 {{- $controlplaneBaseURL := printf "http://%s.%s.svc.cluster.local:%v" (include "redis-agent-memory.controlplaneFullname" .) .Release.Namespace .Values.controlplane.service.port -}}
-{{- $httpChecks = append $httpChecks (dict "collectorName" "ram-controlplane-live" "checkName" "RAM control plane live" "url" (printf "%s/v1/health/live" $controlplaneBaseURL) "timeout" $timeout "severity" "fail") -}}
-{{- $httpChecks = append $httpChecks (dict "collectorName" "ram-controlplane-ready" "checkName" "RAM control plane ready" "url" (printf "%s/v1/health/ready" $controlplaneBaseURL) "timeout" $timeout "severity" "fail") -}}
+{{- $httpChecks = append $httpChecks (dict "collectorName" "ram-controlplane-live" "checkName" "RAM control plane live" "url" (printf "%s/health/liveness" $controlplaneBaseURL) "timeout" $timeout "severity" "fail") -}}
+{{- $httpChecks = append $httpChecks (dict "collectorName" "ram-controlplane-ready" "checkName" "RAM control plane ready" "url" (printf "%s/health/readiness" $controlplaneBaseURL) "timeout" $timeout "severity" "fail") -}}
 {{- if and $queueMonitor $queueMonitor.enabled -}}
 {{- $queueMonitorBaseURL := printf "http://%s.%s.svc.cluster.local:%v" (include "redis-agent-memory.queueMonitorFullname" .) .Release.Namespace $queueMonitor.service.port -}}
 {{- $httpChecks = append $httpChecks (dict "collectorName" "ram-queue-monitor-root" "checkName" "RAM queue monitor" "url" (printf "%s%s" $queueMonitorBaseURL (default "/" $healthChecks.queueMonitorPath)) "timeout" $timeout "severity" "warn") -}}
 {{- end -}}
 {{- with $identityServiceBaseURL -}}
 {{- /* The data plane's CA bundle, so the probe trusts what introspection trusts. */ -}}
-{{- $httpChecks = append $httpChecks (dict "collectorName" "iris-identity-service-live" "checkName" "Iris Identity Service live" "url" (printf "%s/v1/health/live" .) "timeout" $timeout "severity" "fail" "tlsCA" true) -}}
-{{- $httpChecks = append $httpChecks (dict "collectorName" "iris-identity-service-ready" "checkName" "Iris Identity Service ready" "url" (printf "%s/v1/health/ready" .) "timeout" $timeout "severity" "fail" "tlsCA" true) -}}
+{{- $httpChecks = append $httpChecks (dict "collectorName" "iris-identity-service-live" "checkName" "Iris Identity Service live" "url" (printf "%s/health/liveness" .) "timeout" $timeout "severity" "fail" "tlsCA" true) -}}
+{{- $httpChecks = append $httpChecks (dict "collectorName" "iris-identity-service-ready" "checkName" "Iris Identity Service ready" "url" (printf "%s/health/readiness" .) "timeout" $timeout "severity" "fail" "tlsCA" true) -}}
 {{- end -}}
 {{- end -}}
 apiVersion: v1

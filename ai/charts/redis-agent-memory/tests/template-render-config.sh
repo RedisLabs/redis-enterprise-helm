@@ -61,7 +61,7 @@ CONFIG_KIND="$(awk '/kind: ConfigMap/{k="ConfigMap"} /kind: Secret/{k="Secret"} 
 grep -q "default: eu1" <<<"$OUT" \
   || fail "region-eu request_region.default did not merge in"
 grep -A1 "^[[:space:]]*ownership:" <<<"$OUT" | grep -q "enabled: false" \
-  || fail "ownership enforcement default missing from rendered config"
+  || fail "unauthenticated example's ownership opt-out was not preserved"
 grep -q "api: true" <<<"$OUT" \
   || fail "namespace_features.api was not rendered from the example values"
 echo "OK: rendered config ConfigMap merges base + region overrides"
@@ -104,6 +104,18 @@ grep -q "mountPath: /etc/ai/overlays/0" <<<"$SR_OUT" \
 grep -q "mountPath: /etc/ai/overlays/1" <<<"$SR_OUT" \
   && fail "single-region unexpectedly mounted a second overlay" || true
 echo "OK: single-region secretName mounts exactly one overlay at index 0"
+
+grep -A1 "^[[:space:]]*ownership:" <<<"$SR_OUT" | grep -q "enabled: true" \
+  || fail "ownership enforcement should default to enabled without example values"
+
+OWNERSHIP_OFF="$(helm template "$RELEASE" "$CHART_DIR" "${TENANT_ARGS[@]}" \
+  --set image.tag=0.0.0-test --set license.existingSecret=ram-license \
+  --set controlplane.image.tag=cp-0.0.0-test \
+  --set controlplane.config.existingSecret=cp-config-test \
+  --set config.render=true --set memory.profile=dev --set 'memory.auth.method=none' \
+  --set memory.ownership.enabled=false)"
+grep -A1 "^[[:space:]]*ownership:" <<<"$OWNERSHIP_OFF" | grep -q "enabled: false" \
+  || fail "explicit ownership opt-out was not preserved"
 
 echo "=== Case 2c: BYO existingSecret with no secretName — no overlays at all ==="
 BYO_OUT="$(helm template "$RELEASE" "$CHART_DIR" "${TENANT_ARGS[@]}" \
@@ -170,13 +182,19 @@ fi
 echo "OK: chart fails closed when config.existingSecret and config.render are both set"
 
 echo "=== Case 4c: rendered config requires a real body ==="
-if helm template "$RELEASE" "$CHART_DIR" "${TENANT_ARGS[@]}" \
- --set image.tag=0.0.0-test --set license.existingSecret=ram-license \
- --set controlplane.image.tag=cp-0.0.0-test \
- --set controlplane.config.existingSecret=cp-config-test \
- --set config.render=true >/dev/null 2>&1; then
- fail "config.render=true without memory or shared config body unexpectedly rendered"
-fi
+for ownership in true false; do
+  if ERROR="$(helm template "$RELEASE" "$CHART_DIR" "${TENANT_ARGS[@]}" \
+    --set image.tag=0.0.0-test --set license.existingSecret=ram-license \
+    --set controlplane.image.tag=cp-0.0.0-test \
+    --set controlplane.config.existingSecret=cp-config-test \
+    --set dataplane.identityServiceBaseURL=https://identity.example.com \
+    --set identityService.credential.existingSecret=runtime-credential \
+    --set config.render=true --set memory.ownership.enabled="$ownership" 2>&1)"; then
+    fail "config.render=true with only ownership.enabled=$ownership unexpectedly rendered"
+  fi
+  grep -q 'config.render=true requires a config body' <<<"$ERROR" \
+    || fail "config without a body must report the config-body validation error: $ERROR"
+done
 echo "OK: rendered config without a body fails closed"
 
 echo "=== Case 5: control-plane config renders as a ConfigMap and gets the region overlay ==="

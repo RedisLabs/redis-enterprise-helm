@@ -245,8 +245,8 @@ echo "OK"
 
 echo "=== Support package ==="
 OUT=$(render "${CONNECTION[@]}" --set supportPackage.enabled=true)
-has "$OUT" "https://ids.example/v1/health/live"
-has "$OUT" "https://ids.example/v1/health/ready"
+has "$OUT" "https://ids.example/health/liveness"
+has "$OUT" "https://ids.example/health/readiness"
 has "$OUT" "Iris Identity Service runtime credential memory-dp"
 lacks "$OUT" "logs/identity-service" "support package collects IdS logs"
 lacks "$OUT" "Iris Identity Service Deployment" "support package checks the IdS Deployment"

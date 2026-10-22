@@ -47,8 +47,7 @@ shared:
 memory:
   default_extraction_strategy: instruct
   ownership:
-    # Leave false until stored owner_id values match Principal.UserID.
-    # See docs/runbooks/ram-enforce-ownership-transition.md.
+    # This unauthenticated dev example has no identity for ownership checks.
     enabled: false
   namespace_features:
     api: true
