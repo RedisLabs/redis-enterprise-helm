@@ -192,6 +192,26 @@ entries:
     version: 0.1.0
   redis-agent-playbook:
   - apiVersion: v2
+    appVersion: 0.10.2
+    created: "2026-10-22T17:19:02.546625451Z"
+    dependencies:
+    - name: redis-iris-onprem-lib
+      repository: https://helm.redis.io/ai
+      version: 0.3.0
+    description: Redis Playbook on-prem control plane and data plane
+    digest: 786ed313e2ef54482de002c57f4a4d819d85e2236f9cf6484ad322007532c207
+    home: https://github.com/Redislabsdev/iris
+    keywords:
+    - redis
+    - playbook
+    - ai
+    - on-prem
+    name: redis-agent-playbook
+    type: application
+    urls:
+    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-playbook-0.10.2/redis-agent-playbook-0.10.2.tgz
+    version: 0.10.2
+  - apiVersion: v2
     appVersion: 0.2.0
     created: "2026-10-21T17:47:47.747793271Z"
     dependencies:
@@ -364,4 +384,4 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-iris-onprem-lib-0.1.0/redis-iris-onprem-lib-0.1.0.tgz
     version: 0.1.0
-generated: "2026-10-22T17:13:37.915999956Z"
+generated: "2026-10-22T17:19:02.54668598Z"
