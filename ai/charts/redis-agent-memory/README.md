@@ -1231,7 +1231,8 @@ chart version validated with this chart is `0.10.0`.
 
 Neither chart reads the other's values or checks them against its own. Keeping
 the two releases consistent is the deployment automation's job. The end-to-end
-KinD harness (`task test:kind FLOW=memory`) proves that a consistent pair works;
+KinD harness (`task test:identity:integration FLOW=memory`; see
+[the harness README](../../tests/kind/README.md)) proves that a consistent pair works;
 `helm test` does not.
 
 ### Two-step install
@@ -1989,6 +1990,21 @@ what the FIPS posture enforces.
 See [Federated data-plane authentication preview](#federated-data-plane-authentication-preview)
 for the current limitations, tenant configuration, audience policy, and egress requirements.
 
+### Ownership enforcement
+
+The on-prem server and worker enable ownership enforcement by default. The chart
+sets `memory.ownership.enabled: true` for rendered configuration. With a supplied
+config Secret, the on-prem binary also defaults an omitted `ownership.enabled`
+to `true`. Explicit `false` values and `MEM_OWNERSHIP_ENABLED=false` remain supported.
+
+Before upgrading an existing deployment, follow the
+[ownership transition runbook](../../docs/runbooks/ram-enforce-ownership-transition.md).
+Keep the flag explicitly false until stored personal owners match `Principal.UserID`
+and namespace placement indexes are migrated. Configure server and worker alike;
+replace existing Summary Views when changing the flag.
+The unauthenticated development examples explicitly disable ownership checks
+because their clients have no authenticated user identity.
+
 ### Delegated user token (MOD-19849)
 
 An agent can act for the user it serves. The agent sends its agent key as usual
@@ -2412,7 +2428,7 @@ HTTP collector against `*.svc.cluster.local` and analyzes the pod log for HTTP
 `<release>-worker-support`.
 
 With `dataplane.identityServiceBaseURL` set, the health checks also probe that
-URL's `/v1/health/live` and `/v1/health/ready`, and the package flags Identity
+URL's `/health/liveness` and `/health/readiness`, and the package flags Identity
 Service introspection errors in the server logs. With
 `identityService.credential.existingSecret` set, it checks that the Secret key
 exists without collecting its value. The health check proves reachability only: the
@@ -2525,6 +2541,19 @@ helm upgrade <release-name> redis-ai/redis-agent-memory \
 
 If your registry does not require an image pull Secret, omit `global.imagePullSecrets`.
 
+## Health probe migration (chart 0.1.1)
+
+The RAM control plane now serves `/health/liveness` and `/health/readiness`,
+matching the data-plane probe paths. The old `/v1/health/live` and
+`/v1/health/ready` URLs are removed without aliases. Readiness checks and
+response bodies are unchanged.
+
+Deploy chart `0.1.1` together with a control-plane image containing this route
+change. Pair older images with their matching older charts; mixing the old and
+new probe contracts makes the control-plane pod fail its probes. Update custom
+monitoring and UI `healthPath` settings to `/health/readiness`. The standalone
+Identity Service retains its `/v1/health/live` and `/v1/health/ready` routes.
+
 ## Verify
 
 ```sh
@@ -2537,7 +2566,7 @@ If the control plane is enabled, verify it on port `9100`:
 
 ```sh
 kubectl port-forward -n <namespace-name> svc/redis-agent-memory-controlplane 9100:9100
-curl http://localhost:9100/v1/health/ready
+curl http://localhost:9100/health/readiness
 # Admin endpoints require the token (HTTP 401 without it):
 curl -H "Authorization: Bearer <admin-token>" http://localhost:9100/v1/stores
 ```
@@ -2640,3 +2669,10 @@ Three changes from MOD-19875 can stop an upgrade:
   [ram-enforce-ownership-transition.md](../../docs/runbooks/ram-enforce-ownership-transition.md).
 
 <!-- markdownlint-enable MD013 MD060 -->
+
+## Health probe migration
+
+Chart `0.1.2` uses `/health/liveness` and `/health/readiness` for Identity Service
+support-bundle checks. Deploy matching service images that expose these
+routes; older images and newer chart probes must not be mixed. Update custom
+monitoring URLs at the same time.

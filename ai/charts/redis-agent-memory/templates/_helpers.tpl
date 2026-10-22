@@ -324,7 +324,7 @@ Validate required enterprise inputs.
 {{- if and .Values.config.existingSecret .Values.config.render -}}
 {{- fail "config: existingSecret (BYO Secret) and render (chart-rendered ConfigMap) are mutually exclusive; existingSecret silently wins over render, so pick one" -}}
 {{- end -}}
-{{- if and .Values.config.render (not .Values.memory) (not .Values.shared) -}}
+{{- if and .Values.config.render (empty (omit (default (dict) .Values.memory) "ownership")) (not .Values.shared) -}}
 {{- fail "config.render=true requires a config body: set .Values.memory (and optionally .Values.shared)" -}}
 {{- end -}}
 {{- if not .Values.config.secretKey -}}

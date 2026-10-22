@@ -110,10 +110,14 @@ N=$(count_fips_runtime_value "$OUT" "fips140=off")
   || fail "expected 3 GODEBUG=fips140=off entries (server+worker+controlplane), got $N"
 grep -q 'containerPort: 9100' <<<"$OUT" \
   || fail "control-plane container port 9100 did not render"
-grep -q 'path: /v1/health/live' <<<"$OUT" \
-  || fail "control-plane liveness probe /v1/health/live did not render"
-grep -q 'path: /v1/health/ready' <<<"$OUT" \
-  || fail "control-plane readiness probe /v1/health/ready did not render"
+CP_OUT=$(render --show-only templates/controlplane-deployment.yaml)
+grep -q 'path: /health/liveness' <<<"$CP_OUT" \
+  || fail "control-plane liveness probe /health/liveness did not render"
+grep -q 'path: /health/readiness' <<<"$CP_OUT" \
+  || fail "control-plane readiness probe /health/readiness did not render"
+if grep -q 'path: /v1/health/' <<<"$CP_OUT"; then
+  fail "control-plane deployment still uses versioned health probes"
+fi
 echo "OK: control plane renders resources, probes, and the default non-FIPS runtime"
 
 echo "=== Case 3: missing controlplane.image.tag → helm must refuse ==="

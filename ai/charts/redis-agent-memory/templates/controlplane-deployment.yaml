@@ -111,8 +111,8 @@ checksum/license: {{ .Values.license.existingSecretChecksum | quote }}
   "image" .Values.controlplane.image
   "envTemplate" "redis-agent-memory.controlplaneEnv"
   "port" .Values.controlplane.service.port
-  "livenessProbe" (dict "httpGet" (dict "path" "/v1/health/live" "port" "http"))
-  "readinessProbe" (dict "httpGet" (dict "path" "/v1/health/ready" "port" "http"))
+  "livenessProbe" (dict "httpGet" (dict "path" "/health/liveness" "port" "http"))
+  "readinessProbe" (dict "httpGet" (dict "path" "/health/readiness" "port" "http"))
   "resources" .Values.controlplane.resources
   "volumeMountsTemplate" "redis-agent-memory.controlplaneVolumeMounts"
   "volumesTemplate" "redis-agent-memory.controlplaneVolumes"
