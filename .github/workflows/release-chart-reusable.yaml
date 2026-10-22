@@ -174,6 +174,33 @@ jobs:
         env:
           CR_TOKEN: "${{ github.token }}"
 
+      # Keep the generator from the release commit and publish only ai/index.html.
+      - name: Checkout AI Pages content
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: .ai-pages
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Generate AI Helm Charts HTML
+        run: |
+          uv run --python 3.12 --with pyyaml --with packaging \
+            ai/scripts/generate_index.py .ai-pages/ai/index.yaml \
+            --output .ai-pages/ai/index.html
+
+      - name: Publish AI Helm Charts HTML
+        working-directory: .ai-pages
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+          git add ai/index.html
+          if ! git diff --cached --quiet; then
+            git commit -m "Update AI Helm charts page"
+            git push origin HEAD:gh-pages
+          fi
+
   deploy:
     environment:
       name: github-pages
