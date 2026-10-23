@@ -1,0 +1,14 @@
+# Layer over kubernetes-secret.yaml or csi.yaml. Create this Secret in the
+# release namespace, with ca.crt containing a PEM-encoded CA certificate.
+volumes:
+  - name: redis-ca
+    secret:
+      secretName: gateway-redis-ca
+
+# Mount a single file so the image's public CA certificates remain available.
+# subPath mounts do not receive Secret updates; restart both planes after rotation.
+volumeMounts:
+  - name: redis-ca
+    mountPath: /etc/ssl/certs/redis-ca.crt
+    subPath: ca.crt
+    readOnly: true

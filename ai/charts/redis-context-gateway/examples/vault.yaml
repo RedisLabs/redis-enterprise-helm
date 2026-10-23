@@ -1,0 +1,11 @@
+credentialStorage:
+  provider: vault
+  basePath: context-gateway
+  vault:
+    address: https://vault.example.com:8200
+    mount: secret
+    credentials:
+      controlplane:
+        existingSecret: gateway-vault-writer
+      dataplane:
+        existingSecret: gateway-vault-reader

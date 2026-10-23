@@ -1,0 +1,20 @@
+{{- range $role := list "controlplane" "dataplane" -}}
+{{- $settings := index $.Values $role -}}
+{{- $name := printf "%s-%s" (include "gateway.fullname" $) $role -}}
+{{- if $settings.autoscaling.enabled }}
+{{- $hpa := include "redis-onprem.dataplane.hpa" (dict
+  "root" (dict "root" $ "role" $role "settings" $settings)
+  "name" $name "component" $role "targetName" $name
+  "labelsTemplate" "gateway.labels" "enabled" true
+  "minReplicas" $settings.autoscaling.minReplicas
+  "maxReplicas" $settings.autoscaling.maxReplicas
+  "targetCPUUtilizationPercentage" $settings.autoscaling.targetCPUUtilizationPercentage
+  "targetMemoryUtilizationPercentage" $settings.autoscaling.targetMemoryUtilizationPercentage
+) | fromYaml -}}
+{{- with $settings.autoscaling.behavior -}}
+{{- $_ := set $hpa.spec "behavior" . -}}
+{{- end }}
+---
+{{ toYaml $hpa }}
+{{- end -}}
+{{- end -}}

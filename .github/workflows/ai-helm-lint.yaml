@@ -36,7 +36,11 @@ jobs:
             if [[ -d "$chart_dir" && -f "$chart_dir/Chart.yaml" ]]; then
               chart_count=$((chart_count + 1))
               echo "Linting $chart_dir"
-              helm lint "$chart_dir"
+              if [[ "$chart_dir" == "ai/charts/redis-context-gateway" ]]; then
+                helm lint "$chart_dir" -f "$chart_dir/examples/kubernetes-secret.yaml"
+              else
+                helm lint "$chart_dir"
+              fi
             fi
           done
 

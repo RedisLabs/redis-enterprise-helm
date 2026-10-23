@@ -1,0 +1,517 @@
+# Default values for redis-context-gateway.
+# Keep credentials in externally managed files; values are stored in Helm releases.
+# You provision all referenced Secrets/CSI objects before installation; this chart
+# does not create them. Example names are arbitrary and can be changed.
+# See examples/kubernetes-secret.yaml and examples/csi.yaml for complete references.
+
+# Required installation inputs.
+# tenantId is the single tenant served by both planes. It must equal the
+# Identity Service chart's runtime.apiKeyTenant.singleTenantID.
+tenantId: ""
+# publicBaseURL is the data-plane URL advertised to MCP clients.
+publicBaseURL: ""
+
+# -----------------------------------------------------------------------------
+# Shared Kubernetes deployment
+# -----------------------------------------------------------------------------
+
+imagePullSecrets: []
+
+security:
+  # standard or fips; fips also requires compatible application TLS settings.
+  profile: standard
+
+# Additional Kubernetes volumes and mounts for both planes. Component entries
+# are appended. Names must not collide with config or a managed volume.
+# For private CA certificates, see examples/certificates.yaml.
+volumes: []
+
+volumeMounts: []
+
+# -----------------------------------------------------------------------------
+# Shared application configuration
+# -----------------------------------------------------------------------------
+
+# prod uses production JSON logging; dev selects the development logging profile.
+profile: prod
+
+identityService:
+  # Required: an existing Identity Service. This chart does not install one.
+  baseURL: ""
+  # Set true only when intentionally using an HTTP endpoint.
+  allowInsecureTransport: false
+
+shared:
+  # Application configuration ----------------------------------------------------
+  # Shared settings. Omitted fields use the image defaults.
+  # Replace config: {} with the overrides you need from the example below.
+  # Values shown document the current image; future image defaults may differ.
+  # Durations use ms, s, m, or h; size limits are integer bytes.
+  config: {}
+  # config:
+  #   # Supply URLs through metadataDB; these are optional client overrides.
+  #   metadata_db:
+  #     client:
+  #       client_name: ""
+  #       db: 0
+  #   # Map keys are database IDs used by the Gateway administration API.
+  #   # Both planes need the same registry; databaseConnections supplies urls.
+  #   databases:
+  #     customer:
+  #       name: Customer database
+  #       account_id: ""
+  #       subscription_id: ""
+  #   opentelemetry:
+  #     enable_tracing: false
+  #     service_version: ""
+  #     otlp_endpoint: ""
+  #     otlp_grpc_endpoint: ""
+
+  # Configuration files and credentials -----------------------------------------
+  # Advanced overrides, loaded after the purpose-specific connection files.
+  # Normal installation uses metadataDB, databaseConnections, and
+  # credentialStorage connection/credential references documented below.
+  # Each entry sets existingSecret + secretKey, or secretProviderClass + fileName.
+  # Overlays can override named connection settings and token-file paths.
+  # Later overlays win; environment overrides win last. Set checksum to roll pods
+  # after externally managed file contents change.
+  overlays: []
+
+# Storage for Upstream credentials submitted through the administration API.
+# This backend selection is independent of Secret versus CSI file delivery.
+credentialStorage:
+  # redis (encrypted), vault (KV v2), or aws_secrets_manager.
+  provider: redis
+  # Keep the same credential namespace in both planes throughout upgrades.
+  basePath: context-gateway
+
+  redis:
+    # Required when provider=redis. Create a Secret whose config.yaml contains:
+    #   credential_storage:
+    #     redis:
+    #       urls: ["rediss://credential-user:PASSWORD@credentials.example.com:6379"]
+    # Both planes load this file. This is the connection to the credential backend,
+    # not the Upstream credential values stored through the administration API.
+    # Use a separate Redis deployment/database and ACL user from metadata Redis.
+    connection:
+      existingSecret: ""
+      secretKey: config.yaml
+      # CSI alternative (existingSecret must stay empty):
+      # secretProviderClass: gateway-credential-redis
+      # fileName: config.yaml
+      # Optional for either method: change this value to trigger a rollout.
+      # checksum: ""
+
+    # Distribute new encryption key files to both planes before changing the active key.
+    # Same client override fields and defaults as shared.config.metadata_db.client.
+    client: {}
+    activeKeyId: k1
+    # Required for encrypted Redis: an external directory of encryption keys.
+    # Generate each key with openssl rand -base64 32; store it under a filename
+    # listed in keyFiles. Both planes mount the same keys. Do not put Redis URLs
+    # or Upstream credential values in this keyring.
+    keyring:
+      existingSecret: ""
+      # CSI alternative (existingSecret must stay empty):
+      # secretProviderClass: gateway-keyring
+      # Optional for either method: change this value to trigger a rollout.
+      # checksum: ""
+    # Maps key IDs to filenames in the keyring. Files contain
+    # base64-encoded 32-byte keys. Retain old keys until their ciphertext is unused.
+    keyFiles:
+      k1: k1
+
+  vault:
+    # Required when provider=vault. Address and mount identify the KV v2 backend.
+    address: ""
+    mount: secret
+    # Each reference below selects a YAML configuration fragment, NOT a raw token:
+    #   credential_storage:
+    #     vault:
+    #       token: REPLACE_WITH_VAULT_TOKEN
+    # The control plane writes and deletes Upstream credentials; the data plane
+    # only reads them. Provision tokens with the appropriate backend permissions.
+    credentials:
+      controlplane:
+        existingSecret: ""
+        secretKey: config.yaml
+        # CSI alternative (existingSecret must stay empty):
+        # secretProviderClass: gateway-vault-writer
+        # fileName: config.yaml
+        # Optional for either method: change this value to trigger a rollout.
+        # checksum: ""
+      dataplane:
+        existingSecret: ""
+        secretKey: config.yaml
+        # CSI alternative (existingSecret must stay empty):
+        # secretProviderClass: gateway-vault-reader
+        # fileName: config.yaml
+        # Optional for either method: change this value to trigger a rollout.
+        # checksum: ""
+
+  aws:
+    # Required for aws_secrets_manager. Credentials use the AWS SDK default chain.
+    region: ""
+    # Optional customer-managed KMS key for newly stored credentials.
+    kmsKeyId: ""
+    timeout: 10s
+
+controlplane:
+  # Kubernetes deployment -------------------------------------------------------
+
+  image:
+    repository: redislabs/iris-context-gateway-control
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1
+
+  service:
+    port: 9100
+
+  # For AWS Secrets Manager, configure workload identity for this ServiceAccount.
+  # See examples/aws.yaml for IRSA; EKS Pod Identity uses an external association.
+  serviceAccount:
+    create: true
+    # Required when create=false; empty otherwise uses the generated name.
+    name: ""
+    # Use annotations for cloud workload identity where supported.
+    annotations: {}
+    automount: false
+
+  # Kubernetes tuning. Autoscaling requires Metrics Server and resource requests.
+  resources: {}
+
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 0
+    # Native autoscaling/v2 behavior, e.g. scaleDown.stabilizationWindowSeconds.
+    behavior: {}
+
+  # Set a probe to null to disable it. When changing its action, clear httpGet.
+  startupProbe:
+    httpGet: {path: /health/liveness, port: http}
+    periodSeconds: 5
+    failureThreshold: 30
+
+  livenessProbe:
+    httpGet: {path: /health/liveness, port: http}
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+  readinessProbe:
+    httpGet: {path: /health/readiness, port: http}
+    initialDelaySeconds: 3
+    periodSeconds: 5
+
+  podAnnotations: {}
+
+  podLabels: {}
+
+  nodeSelector: {}
+
+  tolerations: []
+
+  affinity: {}
+
+  # Additional volumes and mounts for this plane only, after the top-level lists.
+  volumes: []
+
+  volumeMounts: []
+
+  # Application configuration ----------------------------------------------------
+  # Control-plane settings. Omitted fields use the image defaults.
+  # Replace config: {} with the overrides you need from the example below.
+  # Values shown document the current image; future image defaults may differ.
+  # Durations use ms, s, m, or h; size limits are integer bytes.
+  config: {}
+  # config:
+  #   server:
+  #     timeout: 30s
+  #     read_timeout: 30s
+  #     write_timeout: 35s
+  #   discovery:
+  #     timeout: 10s
+  #   credential_storage:
+  #     call_timeout: 2s
+  #   auth:
+  #     admin_token:
+  #       header: Authorization
+  #       scheme: Bearer
+  #     internal_token:
+  #       header: Authorization
+  #       scheme: Bearer
+  #     # Optional IdP sign-in for administration; see the chart README.
+  #     oidc:
+  #       enabled: false
+  #       issuer: ""
+  #       audience: [api://redis-iris]
+  #       jwks_uri: ""
+  #       role_claims: [groups]
+  #       role_mappings: {}
+
+  # Configuration files and credentials -----------------------------------------
+
+  # Advanced overrides loaded last, after all connection files and shared.overlays.
+  # They may replace application settings from those files, including URLs and
+  # token-file paths. They do not change Kubernetes Secret references or mounts.
+  overlays: []
+
+  # Required raw admin token. Operators/admin clients send it to the Gateway
+  # control plane to create/manage Gateways and Upstreams. Gateway checks it
+  # directly; do not register it with Identity Service. Provision its value in
+  # the selected Secret key or CSI file, with no YAML wrapper.
+  adminToken:
+    existingSecret: ""
+    secretKey: token
+    # CSI alternative (existingSecret must stay empty):
+    # secretProviderClass: gateway-admin
+    # fileName: token
+    # Optional for either method: change this value to trigger a rollout.
+    # checksum: ""
+
+  # Required raw grant-validation token. Identity Service sends it to Gateway's
+  # POST /internal/v1/grants/validate callback before issuing an agent key.
+  # Configure the SAME value in the Identity Service chart at
+  # productValidation.products.context-gateway.credential; use its baseURL to
+  # point to this control plane. Keep it distinct from adminToken and runtimeToken.
+  # This HTTP path currently uses a shared secret, not Kubernetes SA JWT validation.
+  internalToken:
+    existingSecret: ""
+    secretKey: token
+    # CSI alternative (existingSecret must stay empty):
+    # secretProviderClass: gateway-grant-validation
+    # fileName: token
+    # Optional for either method: change this value to trigger a rollout.
+    # checksum: ""
+
+dataplane:
+  # Kubernetes deployment -------------------------------------------------------
+
+  image:
+    repository: redislabs/iris-context-gateway-data
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1
+
+  service:
+    port: 8083
+
+  # For AWS Secrets Manager, configure workload identity for this ServiceAccount.
+  # See examples/aws.yaml for IRSA; EKS Pod Identity uses an external association.
+  serviceAccount:
+    create: true
+    # Required when create=false; empty otherwise uses the generated name.
+    name: ""
+    annotations: {}
+    automount: false
+
+  # Kubernetes tuning. Autoscaling requires Metrics Server and resource requests.
+  resources: {}
+
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 0
+    # Native autoscaling/v2 behavior, e.g. scaleDown.stabilizationWindowSeconds.
+    behavior: {}
+
+  # Set a probe to null to disable it. When changing its action, clear httpGet.
+  startupProbe:
+    httpGet: {path: /health/liveness, port: http}
+    periodSeconds: 5
+    failureThreshold: 30
+
+  livenessProbe:
+    httpGet: {path: /health/liveness, port: http}
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+  readinessProbe:
+    httpGet: {path: /health/readiness, port: http}
+    initialDelaySeconds: 3
+    periodSeconds: 5
+
+  podAnnotations: {}
+
+  podLabels: {}
+
+  nodeSelector: {}
+
+  tolerations: []
+
+  affinity: {}
+
+  # Additional volumes and mounts for this plane only, after the top-level lists.
+  volumes: []
+
+  volumeMounts: []
+
+  # Application configuration ----------------------------------------------------
+  # Data-plane settings. Omitted fields use the image defaults.
+  # Replace config: {} with the overrides you need from the example below.
+  # Values shown document the current image; future image defaults may differ.
+  # Durations use ms, s, m, or h; size limits are integer bytes.
+  config: {}
+  # config:
+  #   server:
+  #     timeout: 30s
+  #     read_timeout: 30s
+  #     write_timeout: 35s
+  #   # Both capabilities default to disabled. Caching still needs a tool policy.
+  #   # Both need the Gateway's databaseId to select a configured database, and
+  #   # each serves only Gateways whose resultCache or resultHandles is enabled.
+  #   result_cache:
+  #     enabled: false
+  #     max_entry_bytes: 262144
+  #     lookup_timeout: 100ms
+  #     write_timeout: 1s
+  #   result_handles:
+  #     enabled: false
+  #     # Fallback TTL; a tool policy may override it. Maximum 24h.
+  #     ttl: 15m
+  #     inline_max_bytes: 32768
+  #     max_capture_bytes: 8388608
+  #     preview_items: 3
+  #     preview_bytes: 2048
+  #     write_timeout: 1s
+  #     operation_timeout: 2s
+  #     max_query_response_bytes: 32768
+  #   auth:
+  #     agent_keys:
+  #       introspection:
+  #         credential:
+  #           header: Authorization
+  #           scheme: Bearer
+  #         http_client: {}
+  #         cache:
+  #           negative_ttl: 30s
+  #           failed_refresh_backoff: 30s
+  #           positive_ttl_jitter: 5s
+  #           miss_rate_limit_window: 1s
+  #           max_negative_entries: 1024
+  #           max_misses_per_window: 64
+  #     # Optional MCP caller sign-in. Configure oauth below when enabled.
+  #     oidc:
+  #       enabled: false
+  #       # Required when enabled. Use the shared audience, e.g. api://redis-iris.
+  #       issuer: ""
+  #       audience: []
+  #       jwks_uri: ""
+  #       user_id_claim: sub
+  #       # The chart supplies tenantId as static_tenant_id.
+  #       email_claim: email
+  #       role_claims: [roles, groups]
+  #       # Requires a Gateway image with mapped-role support (MOD-19688).
+  #       role_mappings: {"/gateway-users": gateway_user}
+  #       scope_claims: [scope, scp]
+  #       required_algorithms: [RS256]
+  #       clock_skew: 5m
+  #       jwks_cache_ttl: 10m
+  #       max_jwks_stale_age: 1h
+  #       jwks_forced_refresh_min_interval: 30s
+  #       allow_insecure_transport: false
+  #       # Optional HTTP overrides: timeout (duration), max_retry_attempts (integer),
+  #       # skip_verify (boolean). Omit to use the authentication client's defaults.
+  #       http_client: {}
+  #   oauth:
+  #     public_base_url: ""
+  #     scopes_supported: []
+
+  # Configuration files and credentials -----------------------------------------
+
+  # Advanced overrides loaded last, after all connection files and shared.overlays.
+  # They may replace application settings from those files, including URLs and
+  # token-file paths. They do not change Kubernetes Secret references or mounts.
+  overlays: []
+
+  # Required raw Identity Service client token. Gateway data plane sends it to
+  # Identity Service to validate MCP callers' agent keys. It is NOT an agent key.
+  # Register the SAME value in the Identity Service chart's
+  # runtime.serviceCredentials with allowedOperations: [api-key-introspect] and
+  # allowedProducts: [context-gateway].
+  # Keep it distinct from adminToken/internalToken and Identity Service's control
+  # credential. This path currently uses a shared secret, not Kubernetes SA JWTs.
+  runtimeToken:
+    existingSecret: ""
+    secretKey: token
+    # CSI alternative (existingSecret must stay empty):
+    # secretProviderClass: gateway-runtime
+    # fileName: token
+    # Optional for either method: change this value to trigger a rollout.
+    # checksum: ""
+
+# -----------------------------------------------------------------------------
+# Shared configuration files and credentials
+# -----------------------------------------------------------------------------
+
+# Required metadata Redis connection for both planes. Provision this Secret (or
+# CSI file) before installation. Its config.yaml must contain the application YAML:
+#   metadata_db:
+#     urls: ["rediss://metadata-user:PASSWORD@metadata.example.com:6379"]
+# Gateway/Upstream definitions live here; cached results and Upstream credentials
+# use other databases. Secret names are chosen by you, not created by this chart.
+metadataDB:
+  existingSecret: ""
+  secretKey: config.yaml
+  # CSI alternative (existingSecret must stay empty):
+  # secretProviderClass: gateway-metadata
+  # fileName: config.yaml
+  # Optional for either method: change this value to trigger a rollout.
+  # checksum: ""
+
+# Connections for registered Gateway databases, consumed by both planes.
+# Configure at least one customer database for this deployment. Supply its URLs
+# here, or through an advanced configuration overlay. Leave this list empty only
+# when an overlay supplies those connections.
+# Each file contains one or more database IDs and their complete connection URLs:
+#   databases:
+#     customer:
+#       urls: ["rediss://customer-user:PASSWORD@customer.example.com:6379"]
+# IDs must match shared.config.databases entries. Put display names there; put
+# authenticated URLs here. Gateway operators select an ID through databaseId.
+# These databases hold cached results and result handles, not Gateway metadata.
+# The application rejects customer databases sharing a host and port with
+# metadata_db, even when their URLs select different Redis database numbers.
+# One Secret can hold all connections. Add more files for separate ownership or
+# rotation; files load in list order.
+databaseConnections: []
+# databaseConnections:
+#   - existingSecret: gateway-database-connections
+#     secretKey: config.yaml
+#   # CSI alternative for another connection file:
+#   - secretProviderClass: gateway-analytics-connection
+#     fileName: config.yaml
+
+
+license:
+  # Required license file covering Context Gateway for this deployment. Store the
+  # license contents as issued, without a YAML wrapper. Both planes read it.
+  existingSecret: ""
+  secretKey: license
+  # CSI alternative (existingSecret must stay empty):
+  # secretProviderClass: gateway-license
+  # fileName: license
+  # Optional for either method: change this value to trigger a rollout.
+  # checksum: ""
+
+tls:
+  # Optional PEM CA bundle for outbound connections that need a private CA.
+  # With both selectors empty, no bundle is mounted and SSL_CERT_FILE is unchanged.
+  # Selecting a file sets SSL_CERT_FILE in both planes; it does not configure
+  # the Gateway's own HTTPS server certificate. For additive system trust mounts,
+  # use volumes/volumeMounts as shown in examples/certificates.yaml.
+  caBundle:
+    existingSecret: ""
+    secretKey: ca.crt
+    # CSI alternative (existingSecret must stay empty):
+    # secretProviderClass: gateway-ca
+    # fileName: ca.crt
+    # Optional for either method: change this value to trigger a rollout.
+    # checksum: ""

@@ -1,0 +1,123 @@
+{{- $_ := required "tenantId is required" .Values.tenantId -}}
+{{- $_ := required "publicBaseURL is required" .Values.publicBaseURL -}}
+{{- $_ := required "identityService.baseURL is required" .Values.identityService.baseURL -}}
+{{- if and (hasPrefix "http://" .Values.identityService.baseURL) (not .Values.identityService.allowInsecureTransport) -}}
+  {{- fail "HTTP Identity Service requires explicit allowInsecureTransport" -}}
+{{- end -}}
+{{- include "gateway.safeConfig" .Values.shared.config -}}
+{{- include "gateway.safeConfig" .Values.credentialStorage.vault.address -}}
+{{- range $key := list "auth" "tenant_id" "profile" "license" "credential_storage" "server" "dataplane" -}}
+  {{- if hasKey $.Values.shared.config $key -}}{{- fail "shared.config contains a chart-owned setting" -}}{{- end -}}
+{{- end -}}
+{{- if eq .Values.credentialStorage.provider "vault" -}}
+  {{- $_ := required "credentialStorage.vault.address is required" .Values.credentialStorage.vault.address -}}
+{{- else if eq .Values.credentialStorage.provider "aws_secrets_manager" -}}
+  {{- $_ := required "credentialStorage.aws.region is required" .Values.credentialStorage.aws.region -}}
+{{- else if not (hasKey .Values.credentialStorage.redis.keyFiles .Values.credentialStorage.redis.activeKeyId) -}}
+  {{- fail "the active encryption key must be in credentialStorage.redis.keyFiles" -}}
+{{- end -}}
+{{- if eq (include "gateway.referenceIdentity" .Values.controlplane.adminToken) (include "gateway.referenceIdentity" .Values.controlplane.internalToken) -}}
+  {{- fail "admin and grant-validation credentials must use separate files" -}}
+{{- end -}}
+{{- range $reference := list .Values.controlplane.adminToken .Values.controlplane.internalToken -}}
+  {{- if eq (include "gateway.referenceIdentity" $reference) (include "gateway.referenceIdentity" $.Values.dataplane.runtimeToken) -}}
+    {{- fail "runtime credentials must use a separate file" -}}
+  {{- end -}}
+{{- end -}}
+{{- $controlplaneCredentials := list .Values.controlplane.adminToken .Values.controlplane.internalToken -}}
+{{- if eq .Values.credentialStorage.provider "vault" -}}
+  {{- $vaultCredentials := .Values.credentialStorage.vault.credentials -}}
+  {{- $controlplaneCredentials = append $controlplaneCredentials $vaultCredentials.controlplane -}}
+  {{- if and (or $vaultCredentials.dataplane.existingSecret $vaultCredentials.dataplane.secretProviderClass) (eq (include "gateway.referenceIdentity" $vaultCredentials.controlplane) (include "gateway.referenceIdentity" $vaultCredentials.dataplane)) -}}
+    {{- fail "control-plane and data-plane Vault credentials must use separate files" -}}
+  {{- end -}}
+{{- end -}}
+{{- $dataplaneReferences := include "gateway.references" (dict "root" . "role" "dataplane" "settings" .Values.dataplane) | fromJsonArray -}}
+{{- range $credential := $controlplaneCredentials -}}
+  {{- range $dataplaneReferences -}}
+    {{- if and $credential.secretProviderClass (eq $credential.secretProviderClass .reference.secretProviderClass) -}}
+      {{- fail "control-plane credentials must use separate CSI classes from data-plane mounts to keep control-plane files out of the data plane" -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- range $role := list "controlplane" "dataplane" -}}
+  {{- $settings := index $.Values $role -}}
+  {{- if and (not $settings.serviceAccount.create) (empty $settings.serviceAccount.name) -}}
+    {{- fail "serviceAccount.name is required when serviceAccount.create is false" -}}
+  {{- end -}}
+  {{- include "gateway.safeConfig" $settings.config -}}
+  {{- if and (empty $.Values.shared.overlays) (empty $settings.overlays) -}}
+    {{- $required := dict "metadataDB" $.Values.metadataDB -}}
+    {{- if eq $.Values.credentialStorage.provider "redis" -}}
+      {{- $_ := set $required "credentialStorage.redis.connection" $.Values.credentialStorage.redis.connection -}}
+    {{- else if eq $.Values.credentialStorage.provider "vault" -}}
+      {{- $_ := set $required (printf "credentialStorage.vault.credentials.%s" $role) (index $.Values.credentialStorage.vault.credentials $role) -}}
+    {{- end -}}
+    {{- range $path, $reference := $required -}}
+      {{- if and (empty $reference.existingSecret) (empty $reference.secretProviderClass) -}}
+        {{- fail (printf "%s is required unless an overlay supplies it" $path) -}}
+      {{- end -}}
+    {{- end -}}
+  {{- end -}}
+  {{- range $key := list "tenant_id" "profile" "license" "metadata_db" "databases" "dataplane" -}}
+    {{- if hasKey $settings.config $key -}}{{- fail "component config contains a shared or chart-owned setting" -}}{{- end -}}
+  {{- end -}}
+  {{- if or (hasKey (default dict $settings.config.server) "port") (hasKey (default dict $settings.config.server) "host") -}}
+    {{- fail "configure server ports through component service.port" -}}
+  {{- end -}}
+  {{- if $settings.autoscaling.enabled -}}
+    {{- if gt (int $settings.autoscaling.minReplicas) (int $settings.autoscaling.maxReplicas) -}}
+      {{- fail "autoscaling.minReplicas must not exceed maxReplicas" -}}
+    {{- end -}}
+    {{- if and (not $settings.autoscaling.targetCPUUtilizationPercentage) (not $settings.autoscaling.targetMemoryUtilizationPercentage) -}}
+      {{- fail "autoscaling requires at least one CPU or memory utilization target" -}}
+    {{- end -}}
+    {{- $requests := default dict $settings.resources.requests -}}
+    {{- if and $settings.autoscaling.targetCPUUtilizationPercentage (empty $requests.cpu) -}}{{- fail "CPU autoscaling requires resources.requests.cpu" -}}{{- end -}}
+    {{- if and $settings.autoscaling.targetMemoryUtilizationPercentage (empty $requests.memory) -}}{{- fail "memory autoscaling requires resources.requests.memory" -}}{{- end -}}
+  {{- end -}}
+  {{- $volumeNames := dict "config" true -}}
+  {{- range include "gateway.references" (dict "root" $ "role" $role "settings" $settings) | fromJsonArray -}}
+    {{- $reference := .reference -}}
+    {{- if eq (empty $reference.existingSecret) (empty $reference.secretProviderClass) -}}
+      {{- fail "each required file reference must select exactly one of existingSecret or secretProviderClass" -}}
+    {{- end -}}
+    {{- if not .directory -}}
+      {{- if $reference.existingSecret -}}
+        {{- $_ := required "secretKey is required with existingSecret" $reference.secretKey -}}
+      {{- else -}}
+        {{- $_ := required "fileName is required with secretProviderClass" $reference.fileName -}}
+      {{- end -}}
+    {{- end -}}
+    {{- $_ := set $volumeNames .name true -}}
+  {{- end -}}
+  {{- range concat $.Values.volumes $settings.volumes -}}
+    {{- if hasKey $volumeNames .name -}}{{- fail "additional volume names must be unique and must not replace managed volumes" -}}{{- end -}}
+    {{- $_ := set $volumeNames .name true -}}
+  {{- end -}}
+  {{- $mountPaths := dict -}}
+  {{- range concat $.Values.volumeMounts $settings.volumeMounts -}}
+    {{- if not (hasKey $volumeNames .name) -}}{{- fail "an additional volumeMount references a volume that is not defined for this component" -}}{{- end -}}
+    {{- $path := clean .mountPath -}}
+    {{- if or (eq $path "/etc/context-gateway/config") (hasPrefix "/etc/context-gateway/config/" $path) (eq $path "/etc/context-gateway/files") (hasPrefix "/etc/context-gateway/files/" $path) -}}
+      {{- fail "additional volumeMounts must not cover managed configuration or file-reference paths" -}}
+    {{- end -}}
+    {{- if hasKey $mountPaths $path -}}{{- fail "additional volumeMount paths must be unique within each component" -}}{{- end -}}
+    {{- $_ := set $mountPaths $path true -}}
+  {{- end -}}
+{{- end -}}
+
+{{- define "gateway.safeConfig" -}}
+{{- if kindIs "map" . -}}
+  {{- range $key, $value := . -}}
+    {{- if has (lower $key) (list "token" "password" "urls" "api_key" "secret" "private_key" "access_key_id" "secret_access_key" "results_db" "result_policies") -}}
+      {{- fail "inline credentials, Redis URLs, and removed configuration keys are forbidden; use mounted overlays" -}}
+    {{- end -}}
+    {{- include "gateway.safeConfig" $value -}}
+  {{- end -}}
+{{- else if kindIs "slice" . -}}
+  {{- range . -}}{{- include "gateway.safeConfig" . -}}{{- end -}}
+{{- else if kindIs "string" . -}}
+  {{- if regexMatch "://[^/]*@" . -}}{{- fail "inline URL credentials are forbidden; use mounted overlays" -}}{{- end -}}
+{{- end -}}
+{{- end -}}
