@@ -251,6 +251,22 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-playbook-0.1.0-alpha.3/redis-agent-playbook-0.1.0-alpha.3.tgz
     version: 0.1.0-alpha.3
+  redis-context-gateway:
+  - apiVersion: v2
+    appVersion: 0.10.2
+    created: "2026-10-23T20:58:27.463700501Z"
+    dependencies:
+    - name: redis-iris-onprem-lib
+      repository: https://helm.redis.io/ai
+      version: 0.3.0
+    description: Single-tenant Context Gateway control plane and data plane with external
+      Identity Service
+    digest: f48565927b861ffae0e2a5229ad092dcb866fde6e4c327c4f94ea0707cb047b7
+    name: redis-context-gateway
+    type: application
+    urls:
+    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-context-gateway-0.10.2/redis-context-gateway-0.10.2.tgz
+    version: 0.10.2
   redis-context-retriever:
   - apiVersion: v2
     appVersion: 0.4.2
@@ -384,4 +400,4 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-iris-onprem-lib-0.1.0/redis-iris-onprem-lib-0.1.0.tgz
     version: 0.1.0
-generated: "2026-10-22T17:19:02.54668598Z"
+generated: "2026-10-23T20:58:27.463733963Z"
