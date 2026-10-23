@@ -1,5 +1,5 @@
 apiVersion: v2
-appVersion: 0.1.0
+appVersion: 0.10.2
 dependencies:
 - name: redis-iris-onprem-lib
   repository: https://helm.redis.io/ai
@@ -8,4 +8,4 @@ description: Single-tenant Context Gateway control plane and data plane with ext
   Identity Service
 name: redis-context-gateway
 type: application
-version: 0.1.0
+version: 0.10.2

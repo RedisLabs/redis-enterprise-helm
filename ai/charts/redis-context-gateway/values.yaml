@@ -161,7 +161,7 @@ controlplane:
 
   image:
     repository: redislabs/iris-context-gateway-control
-    tag: "0.1.0"
+    tag: "0.10.2"
     pullPolicy: IfNotPresent
 
   replicaCount: 1
@@ -293,7 +293,7 @@ dataplane:
 
   image:
     repository: redislabs/iris-context-gateway-data
-    tag: "0.1.0"
+    tag: "0.10.2"
     pullPolicy: IfNotPresent
 
   replicaCount: 1
