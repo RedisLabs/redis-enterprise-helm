@@ -1,0 +1,1408 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "global": {
+      "type": "object"
+    },
+    "tenantId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "publicBaseURL": {
+      "type": "string",
+      "pattern": "^https?://[^@?#]+$"
+    },
+    "imagePullSecrets": {
+      "type": "array"
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "type": "string",
+          "enum": [
+            "standard",
+            "fips"
+          ]
+        }
+      }
+    },
+    "shared": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "metadata_db": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "client": {
+                  "$ref": "#/definitions/redisClient"
+                }
+              }
+            },
+            "databases": {
+              "type": "object",
+              "propertyNames": {
+                "pattern": "^[A-Za-z0-9-]{1,32}$"
+              },
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "account_id": {
+                    "type": "string"
+                  },
+                  "subscription_id": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "opentelemetry": {
+              "$ref": "#/definitions/telemetry"
+            }
+          },
+          "description": "Shared application configuration. Connection URLs must be supplied through protected overlays."
+        },
+        "overlays": {
+          "$ref": "#/definitions/overlays"
+        }
+      }
+    },
+    "license": {
+      "$ref": "#/definitions/fileReference"
+    },
+    "identityService": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "baseURL": {
+          "type": "string",
+          "pattern": "^https?://[^@?#]+$"
+        },
+        "allowInsecureTransport": {
+          "type": "boolean"
+        }
+      }
+    },
+    "credentialStorage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "redis",
+            "vault",
+            "aws_secrets_manager"
+          ]
+        },
+        "basePath": {
+          "type": "string"
+        },
+        "redis": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "activeKeyId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "keyFiles": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_.-]*$"
+              }
+            },
+            "keyring": {
+              "$ref": "#/definitions/directoryReference"
+            },
+            "client": {
+              "$ref": "#/definitions/redisClient"
+            },
+            "connection": {
+              "$ref": "#/definitions/fileReference",
+              "description": "Configuration file containing credential_storage.redis.urls. Separate from metadata Redis and the encryption keyring."
+            }
+          }
+        },
+        "vault": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "mount": {
+              "type": "string",
+              "minLength": 1
+            },
+            "credentials": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "controlplane": {
+                  "$ref": "#/definitions/fileReference"
+                },
+                "dataplane": {
+                  "$ref": "#/definitions/fileReference"
+                }
+              },
+              "description": "Per-plane configuration files containing credential_storage.vault.token; control plane needs write access, data plane read access."
+            }
+          }
+        },
+        "aws": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "region": {
+              "type": "string"
+            },
+            "kmsKeyId": {
+              "type": "string"
+            },
+            "timeout": {
+              "type": "string",
+              "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "Duration, for example 100ms, 2s, or 5m."
+            }
+          }
+        }
+      }
+    },
+    "controlplane": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "image": {
+          "$ref": "#/definitions/image"
+        },
+        "service": {
+          "$ref": "#/definitions/service"
+        },
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "server": {
+              "$ref": "#/definitions/applicationServer"
+            },
+            "opentelemetry": {
+              "$ref": "#/definitions/telemetry"
+            },
+            "discovery": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "timeout": {
+                  "type": "string",
+                  "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+                  "description": "Duration, for example 100ms, 2s, or 5m."
+                }
+              }
+            },
+            "credential_storage": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "call_timeout": {
+                  "type": "string",
+                  "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+                  "description": "Duration, for example 100ms, 2s, or 5m."
+                }
+              }
+            },
+            "auth": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "oidc": {
+                  "$ref": "#/definitions/operatorOIDC"
+                },
+                "admin_token": {
+                  "$ref": "#/definitions/credentialTransport"
+                },
+                "internal_token": {
+                  "$ref": "#/definitions/credentialTransport"
+                }
+              }
+            }
+          }
+        },
+        "overlays": {
+          "$ref": "#/definitions/overlays"
+        },
+        "serviceAccount": {
+          "$ref": "#/definitions/serviceAccount"
+        },
+        "resources": {
+          "$ref": "#/definitions/resources"
+        },
+        "podAnnotations": {
+          "$ref": "#/definitions/podAnnotations"
+        },
+        "podLabels": {
+          "$ref": "#/definitions/podLabels"
+        },
+        "nodeSelector": {
+          "$ref": "#/definitions/nodeSelector"
+        },
+        "tolerations": {
+          "$ref": "#/definitions/tolerations"
+        },
+        "affinity": {
+          "$ref": "#/definitions/affinity"
+        },
+        "adminToken": {
+          "$ref": "#/definitions/fileReference"
+        },
+        "internalToken": {
+          "$ref": "#/definitions/fileReference"
+        },
+        "volumes": {
+          "$ref": "#/definitions/volumes"
+        },
+        "volumeMounts": {
+          "$ref": "#/definitions/volumeMounts"
+        },
+        "startupProbe": {
+          "$ref": "#/definitions/probe"
+        },
+        "livenessProbe": {
+          "$ref": "#/definitions/probe"
+        },
+        "readinessProbe": {
+          "$ref": "#/definitions/probe"
+        },
+        "autoscaling": {
+          "$ref": "#/definitions/autoscaling"
+        }
+      }
+    },
+    "dataplane": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "image": {
+          "$ref": "#/definitions/image"
+        },
+        "service": {
+          "$ref": "#/definitions/service"
+        },
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "server": {
+              "$ref": "#/definitions/applicationServer"
+            },
+            "opentelemetry": {
+              "$ref": "#/definitions/telemetry"
+            },
+            "result_cache": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "max_entry_bytes": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "lookup_timeout": {
+                  "type": "string",
+                  "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+                  "description": "Duration, for example 100ms, 2s, or 5m."
+                },
+                "write_timeout": {
+                  "type": "string",
+                  "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+                  "description": "Duration, for example 100ms, 2s, or 5m."
+                }
+              },
+              "description": "Deployment limits for tool result caching."
+            },
+            "result_handles": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "inline_max_bytes": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "max_capture_bytes": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "preview_items": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                "preview_bytes": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "max_query_response_bytes": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "ttl": {
+                  "type": "string",
+                  "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+                  "description": "Duration, for example 100ms, 2s, or 5m."
+                },
+                "write_timeout": {
+                  "type": "string",
+                  "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+                  "description": "Duration, for example 100ms, 2s, or 5m."
+                },
+                "operation_timeout": {
+                  "type": "string",
+                  "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+                  "description": "Duration, for example 100ms, 2s, or 5m."
+                }
+              },
+              "description": "Deployment defaults and limits for result handles; per-tool policies may override TTL."
+            },
+            "auth": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "oidc": {
+                  "$ref": "#/definitions/callerOIDC"
+                },
+                "agent_keys": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "introspection": {
+                      "$ref": "#/definitions/introspectionTuning"
+                    }
+                  }
+                }
+              }
+            },
+            "oauth": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "public_base_url": {
+                  "type": "string"
+                },
+                "scopes_supported": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "overlays": {
+          "$ref": "#/definitions/overlays"
+        },
+        "serviceAccount": {
+          "$ref": "#/definitions/serviceAccount"
+        },
+        "resources": {
+          "$ref": "#/definitions/resources"
+        },
+        "podAnnotations": {
+          "$ref": "#/definitions/podAnnotations"
+        },
+        "podLabels": {
+          "$ref": "#/definitions/podLabels"
+        },
+        "nodeSelector": {
+          "$ref": "#/definitions/nodeSelector"
+        },
+        "tolerations": {
+          "$ref": "#/definitions/tolerations"
+        },
+        "affinity": {
+          "$ref": "#/definitions/affinity"
+        },
+        "runtimeToken": {
+          "$ref": "#/definitions/fileReference"
+        },
+        "volumes": {
+          "$ref": "#/definitions/volumes"
+        },
+        "volumeMounts": {
+          "$ref": "#/definitions/volumeMounts"
+        },
+        "startupProbe": {
+          "$ref": "#/definitions/probe"
+        },
+        "livenessProbe": {
+          "$ref": "#/definitions/probe"
+        },
+        "readinessProbe": {
+          "$ref": "#/definitions/probe"
+        },
+        "autoscaling": {
+          "$ref": "#/definitions/autoscaling"
+        }
+      }
+    },
+    "redis-iris-onprem-lib": {
+      "type": "object"
+    },
+    "profile": {
+      "type": "string",
+      "enum": [
+        "prod",
+        "dev"
+      ]
+    },
+    "volumes": {
+      "$ref": "#/definitions/volumes"
+    },
+    "volumeMounts": {
+      "$ref": "#/definitions/volumeMounts"
+    },
+    "tls": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "caBundle": {
+          "$ref": "#/definitions/fileReference"
+        }
+      }
+    },
+    "metadataDB": {
+      "$ref": "#/definitions/fileReference",
+      "description": "Configuration file containing metadata_db.urls, consumed by both planes."
+    },
+    "databaseConnections": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/fileReference"
+      },
+      "description": "Ordered configuration files containing databases.<id>.urls for registered Gateway databases."
+    }
+  },
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        }
+      },
+      "required": [
+        "repository",
+        "tag",
+        "pullPolicy"
+      ]
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        }
+      },
+      "required": [
+        "port"
+      ]
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "automount": {
+          "type": "boolean"
+        }
+      }
+    },
+    "resources": {
+      "type": "object"
+    },
+    "podAnnotations": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "podLabels": {
+      "type": "object",
+      "propertyNames": {
+        "not": {
+          "enum": [
+            "app.kubernetes.io/name",
+            "app.kubernetes.io/instance",
+            "app.kubernetes.io/component"
+          ]
+        }
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "nodeSelector": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "tolerations": {
+      "type": "array"
+    },
+    "affinity": {
+      "type": "object"
+    },
+    "overlays": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/fileReference"
+      }
+    },
+    "fileReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingSecret": {
+          "type": "string"
+        },
+        "secretProviderClass": {
+          "type": "string"
+        },
+        "checksum": {
+          "type": "string"
+        },
+        "secretKey": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_.-]*$"
+        },
+        "fileName": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_.-]*$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "existingSecret"
+            ],
+            "properties": {
+              "existingSecret": {
+                "minLength": 1
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "secretKey"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "secretProviderClass"
+            ],
+            "properties": {
+              "secretProviderClass": {
+                "minLength": 1
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "fileName"
+            ]
+          }
+        }
+      ]
+    },
+    "volumes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 63,
+            "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "volumeMounts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "mountPath"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 63,
+            "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+          },
+          "mountPath": {
+            "type": "string",
+            "pattern": "^/"
+          },
+          "readOnly": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "directoryReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingSecret": {
+          "type": "string"
+        },
+        "secretProviderClass": {
+          "type": "string"
+        },
+        "checksum": {
+          "type": "string"
+        }
+      }
+    },
+    "redisClient": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "client_name": {
+          "type": "string",
+          "description": "Optional Redis connection name, visible in CLIENT LIST. Does not select a database or change authentication or the internal instrumentation name."
+        },
+        "db": {
+          "type": "integer",
+          "minimum": 0,
+          "description": " Redis client db. Zero values retain client defaults where applicable."
+        },
+        "protocol": {
+          "type": "integer",
+          "minimum": 0,
+          "description": " Redis client protocol. Zero values retain client defaults where applicable."
+        },
+        "max_retries": {
+          "type": "integer",
+          "minimum": -1,
+          "description": " Redis client max retries. Zero values retain client defaults where applicable."
+        },
+        "min_retry_backoff": {
+          "type": "string",
+          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+          "description": "Duration, for example 100ms, 2s, or 5m. Redis client min retry backoff. Zero values retain client defaults where applicable."
+        },
+        "max_retry_backoff": {
+          "type": "string",
+          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+          "description": "Duration, for example 100ms, 2s, or 5m. Redis client max retry backoff. Zero values retain client defaults where applicable."
+        },
+        "dial_timeout": {
+          "type": "string",
+          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+          "description": "Duration, for example 100ms, 2s, or 5m. Redis client dial timeout. Zero values retain client defaults where applicable."
+        },
+        "read_timeout": {
+          "type": "string",
+          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+          "description": "Duration, for example 100ms, 2s, or 5m. Redis client read timeout. Zero values retain client defaults where applicable."
+        },
+        "write_timeout": {
+          "type": "string",
+          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+          "description": "Duration, for example 100ms, 2s, or 5m. Redis client write timeout. Zero values retain client defaults where applicable."
+        },
+        "context_timeout_enabled": {
+          "type": "boolean",
+          "description": " Redis client context timeout enabled. Zero values retain client defaults where applicable."
+        },
+        "read_buffer_size": {
+          "type": "integer",
+          "minimum": 0,
+          "description": " Redis client read buffer size. Zero values retain client defaults where applicable."
+        },
+        "write_buffer_size": {
+          "type": "integer",
+          "minimum": 0,
+          "description": " Redis client write buffer size. Zero values retain client defaults where applicable."
+        },
+        "pool_fifo": {
+          "type": "boolean",
+          "description": " Redis client pool fifo. Zero values retain client defaults where applicable."
+        },
+        "pool_size": {
+          "type": "integer",
+          "minimum": 0,
+          "description": " Redis client pool size. Zero values retain client defaults where applicable."
+        },
+        "pool_timeout": {
+          "type": "string",
+          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+          "description": "Duration, for example 100ms, 2s, or 5m. Redis client pool timeout. Zero values retain client defaults where applicable."
+        },
+        "min_idle_conns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": " Redis client min idle conns. Zero values retain client defaults where applicable."
+        },
+        "max_idle_conns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": " Redis client max idle conns. Zero values retain client defaults where applicable."
+        },
+        "max_active_conns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": " Redis client max active conns. Zero values retain client defaults where applicable."
+        },
+        "conn_max_idle_time": {
+          "type": "string",
+          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+          "description": "Duration, for example 100ms, 2s, or 5m. Redis client conn max idle time. Zero values retain client defaults where applicable."
+        },
+        "conn_max_lifetime": {
+          "type": "string",
+          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+          "description": "Duration, for example 100ms, 2s, or 5m. Redis client conn max lifetime. Zero values retain client defaults where applicable."
+        },
+        "disable_identity": {
+          "type": "boolean",
+          "description": " Redis client disable identity. Zero values retain client defaults where applicable."
+        },
+        "identity_suffix": {
+          "type": "string",
+          "description": " Redis client identity suffix. Zero values retain client defaults where applicable."
+        },
+        "unstable_resp3": {
+          "type": "boolean",
+          "description": " Redis client unstable resp3. Zero values retain client defaults where applicable."
+        }
+      }
+    },
+    "httpClient": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "skip_verify": {
+          "type": "boolean"
+        },
+        "timeout": {
+          "type": "string",
+          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+          "description": "Duration, for example 100ms, 2s, or 5m."
+        },
+        "max_retry_attempts": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "description": "Optional authentication HTTP client overrides; omitted values use that client\u2019s defaults."
+    },
+    "telemetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enable_tracing": {
+          "type": "boolean"
+        },
+        "service_name": {
+          "type": "string",
+          "description": "Compatibility setting only. Iris supplies service.name from the process role and ignores conflicting values."
+        },
+        "service_version": {
+          "type": "string"
+        },
+        "otlp_endpoint": {
+          "type": "string"
+        },
+        "otlp_grpc_endpoint": {
+          "type": "string"
+        }
+      }
+    },
+    "applicationServer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timeout": {
+          "type": "string",
+          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+          "description": "Duration, for example 100ms, 2s, or 5m."
+        },
+        "read_timeout": {
+          "type": "string",
+          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+          "description": "Duration, for example 100ms, 2s, or 5m."
+        },
+        "write_timeout": {
+          "type": "string",
+          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+          "description": "Duration, for example 100ms, 2s, or 5m."
+        }
+      },
+      "description": "HTTP deadlines. Configure the listening port through service.port."
+    },
+    "operatorOIDC": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "issuer": {
+          "type": "string"
+        },
+        "jwks_uri": {
+          "type": "string"
+        },
+        "user_id_claim": {
+          "type": "string"
+        },
+        "tenant_id_claim": {
+          "type": "string"
+        },
+        "static_tenant_id": {
+          "type": "string"
+        },
+        "email_claim": {
+          "type": "string"
+        },
+        "audience": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "role_claims": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "scope_claims": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "required_algorithms": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "clock_skew": {
+          "type": "string",
+          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+          "description": "Duration, for example 100ms, 2s, or 5m."
+        },
+        "jwks_cache_ttl": {
+          "type": "string",
+          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+          "description": "Duration, for example 100ms, 2s, or 5m."
+        },
+        "max_jwks_stale_age": {
+          "type": "string",
+          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+          "description": "Duration, for example 100ms, 2s, or 5m."
+        },
+        "jwks_forced_refresh_min_interval": {
+          "type": "string",
+          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+          "description": "Duration, for example 100ms, 2s, or 5m."
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "allow_insecure_transport": {
+          "type": "boolean"
+        },
+        "allow_unmapped_roles": {
+          "type": "boolean"
+        },
+        "role_mappings": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "http_client": {
+          "$ref": "#/definitions/httpClient"
+        }
+      },
+      "description": "Opt-in OIDC authentication for Gateway administration. Validated operator tokens use explicit role mappings and the configured tenant; the admin token remains available."
+    },
+    "callerOIDC": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "issuer": {
+          "type": "string"
+        },
+        "jwks_uri": {
+          "type": "string"
+        },
+        "user_id_claim": {
+          "type": "string"
+        },
+        "email_claim": {
+          "type": "string"
+        },
+        "audience": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 1
+        },
+        "role_claims": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "scope_claims": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "required_algorithms": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "clock_skew": {
+          "type": "string",
+          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+          "description": "Duration, for example 100ms, 2s, or 5m."
+        },
+        "jwks_cache_ttl": {
+          "type": "string",
+          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+          "description": "Duration, for example 100ms, 2s, or 5m."
+        },
+        "max_jwks_stale_age": {
+          "type": "string",
+          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+          "description": "Duration, for example 100ms, 2s, or 5m."
+        },
+        "jwks_forced_refresh_min_interval": {
+          "type": "string",
+          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+          "description": "Duration, for example 100ms, 2s, or 5m."
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "allow_insecure_transport": {
+          "type": "boolean"
+        },
+        "http_client": {
+          "$ref": "#/definitions/httpClient"
+        },
+        "role_mappings": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "enum": [
+              "gateway_user"
+            ]
+          },
+          "description": "Maps IdP role or group claims to gateway_user; requires a Gateway image with MOD-19688 support."
+        }
+      },
+      "description": "MCP caller sign-in. Tenant comes from tenantId; Gateway access comes from Identity Service grants."
+    },
+    "introspectionTuning": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "http_client": {
+          "$ref": "#/definitions/httpClient"
+        },
+        "cache": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "negative_ttl": {
+              "type": "string",
+              "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "Duration, for example 100ms, 2s, or 5m."
+            },
+            "failed_refresh_backoff": {
+              "type": "string",
+              "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "Duration, for example 100ms, 2s, or 5m."
+            },
+            "positive_ttl_jitter": {
+              "type": "string",
+              "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "Duration, for example 100ms, 2s, or 5m."
+            },
+            "miss_rate_limit_window": {
+              "type": "string",
+              "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "Duration, for example 100ms, 2s, or 5m."
+            },
+            "max_negative_entries": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "max_misses_per_window": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "credential": {
+          "$ref": "#/definitions/credentialTransport"
+        }
+      }
+    },
+    "probe": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "httpGet": {
+          "type": "object"
+        },
+        "tcpSocket": {
+          "type": "object"
+        },
+        "exec": {
+          "type": "object"
+        },
+        "grpc": {
+          "type": "object"
+        },
+        "initialDelaySeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "periodSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "successThreshold": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "failureThreshold": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "terminationGracePeriodSeconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "description": "Native Kubernetes Probe. An empty object disables the probe.",
+      "anyOf": [
+        {
+          "maxProperties": 0
+        },
+        {
+          "required": [
+            "httpGet"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "tcpSocket"
+                ]
+              },
+              {
+                "required": [
+                  "exec"
+                ]
+              },
+              {
+                "required": [
+                  "grpc"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "tcpSocket"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "httpGet"
+                ]
+              },
+              {
+                "required": [
+                  "exec"
+                ]
+              },
+              {
+                "required": [
+                  "grpc"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "exec"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "httpGet"
+                ]
+              },
+              {
+                "required": [
+                  "tcpSocket"
+                ]
+              },
+              {
+                "required": [
+                  "grpc"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "grpc"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "httpGet"
+                ]
+              },
+              {
+                "required": [
+                  "tcpSocket"
+                ]
+              },
+              {
+                "required": [
+                  "exec"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "autoscaling": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "minReplicas": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxReplicas": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "targetCPUUtilizationPercentage": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "targetMemoryUtilizationPercentage": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "behavior": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "scaleUp": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "stabilizationWindowSeconds": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 3600
+                },
+                "selectPolicy": {
+                  "enum": [
+                    "Max",
+                    "Min",
+                    "Disabled"
+                  ]
+                },
+                "policies": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "enum": [
+                          "Pods",
+                          "Percent"
+                        ]
+                      },
+                      "value": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "periodSeconds": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1800
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "scaleDown": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "stabilizationWindowSeconds": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 3600
+                },
+                "selectPolicy": {
+                  "enum": [
+                    "Max",
+                    "Min",
+                    "Disabled"
+                  ]
+                },
+                "policies": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "enum": [
+                          "Pods",
+                          "Percent"
+                        ]
+                      },
+                      "value": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "periodSeconds": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1800
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "description": "Optional HPA. Requires Metrics Server and a resource request for every utilization target."
+    },
+    "credentialTransport": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Credential transport only. Token files come from the purpose-specific reference. Use scheme none for a raw header value.",
+      "properties": {
+        "header": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scheme": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

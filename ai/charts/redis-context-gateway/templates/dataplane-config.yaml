@@ -1,0 +1,12 @@
+{{- $settings := .Values.dataplane -}}
+{{- $context := dict "root" . "role" "dataplane" "settings" $settings -}}
+{{- $name := printf "%s-dataplane" (include "gateway.fullname" .) -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-config
+data:
+  shared.yaml: |
+    {{- include "gateway.sharedConfig" . | nindent 4 }}
+  component.yaml: |
+    {{- include "gateway.componentConfig" $context | nindent 4 }}

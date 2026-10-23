@@ -1,0 +1,37 @@
+{{- $settings := .Values.dataplane -}}
+{{- $context := dict "root" . "role" "dataplane" "settings" $settings -}}
+{{- $name := printf "%s-dataplane" (include "gateway.fullname" .) -}}
+{{- $deployment := include "redis-onprem.deployment" (dict
+  "root" $context
+  "name" $name
+  "component" "dataplane"
+  "labelsTemplate" "gateway.labels"
+  "selectorLabelsTemplate" "gateway.labels"
+  "replicas" $settings.replicaCount
+  "autoscalingEnabled" $settings.autoscaling.enabled
+  "annotationsTemplate" "gateway.annotations"
+  "podAnnotations" $settings.podAnnotations
+  "podLabels" $settings.podLabels
+  "imagePullSecrets" .Values.imagePullSecrets
+  "serviceAccountName" (include "gateway.serviceAccount" $context)
+  "automountServiceAccountToken" $settings.serviceAccount.automount
+  "podSecurityContext" (dict "runAsNonRoot" true "runAsUser" 65532 "runAsGroup" 65532 "fsGroup" 65532)
+  "containerName" "dataplane"
+  "argsTemplate" "gateway.args"
+  "containerSecurityContext" (dict "allowPrivilegeEscalation" false "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL")) "seccompProfile" (dict "type" "RuntimeDefault"))
+  "image" $settings.image
+  "envTemplate" "gateway.env"
+  "port" $settings.service.port
+  "livenessProbe" $settings.livenessProbe
+  "readinessProbe" $settings.readinessProbe
+  "resources" $settings.resources
+  "volumeMountsTemplate" "gateway.mounts"
+  "volumesTemplate" "gateway.volumes"
+  "nodeSelector" $settings.nodeSelector
+  "tolerations" $settings.tolerations
+  "affinity" $settings.affinity
+) | fromYaml -}}
+{{- with $settings.startupProbe -}}
+  {{- $_ := set (index $deployment.spec.template.spec.containers 0) "startupProbe" . -}}
+{{- end -}}
+{{- toYaml $deployment }}
