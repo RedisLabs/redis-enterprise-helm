@@ -1,10 +1,19 @@
 name: Release Charts
 
-# Releases run only from master, started manually by someone with write
-# access to the repository. Releasing from a pull request comment let any
-# account trigger a publish of an unmerged PR head to helm.redis.io.
+# Releases are started manually by someone with write access to the
+# repository.
+#
+# The workflow definition always comes from master. The chart is released
+# from a branch of this repository: master, or a version branch such as
+# 7.22.2-47 for maintenance releases of older lines.
 on:
   workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to release the chart from (master or a version branch, e.g. 7.22.2-47).
+        required: true
+        default: master
+        type: string
 
 concurrency:
   group: release-redis-enterprise-operator
@@ -21,18 +30,33 @@ jobs:
       chart_version: ${{ steps.chart-releaser.outputs.chart_version }}
 
     steps:
-      - name: Verify workflow runs from master
+      - name: Verify workflow and release branch
+        env:
+          RELEASE_BRANCH: ${{ inputs.branch }}
         run: |
           if [ "${GITHUB_REF_NAME}" != "master" ]; then
             echo "This workflow can only be run from master. Current ref: ${GITHUB_REF_NAME}"
             exit 1
           fi
 
+          if [ "$RELEASE_BRANCH" != "master" ] && ! [[ "$RELEASE_BRANCH" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$ ]]; then
+            echo "::error::Release branch must be master or a version branch such as 7.22.2-47, got: $RELEASE_BRANCH"
+            exit 1
+          fi
+
+      # refs/heads/ restricts the checkout to a branch of this repository, never
+      # a pull request head, tag or arbitrary commit.
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.sha }}
+          ref: refs/heads/${{ inputs.branch }}
+
+      - name: Resolve release commit
+        id: release-commit
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Releasing $(git rev-parse HEAD)"
 
       - name: Configure Git
         run: |
@@ -59,16 +83,17 @@ jobs:
       - name: Create and push release tag
         env:
           VERSION: ${{ steps.extract-version.outputs.version }}
+          RELEASE_SHA: ${{ steps.release-commit.outputs.sha }}
         run: |
           TAG_NAME="redis-enterprise-operator-$VERSION"
 
           git fetch --force origin "refs/tags/$TAG_NAME:refs/tags/$TAG_NAME" 2>/dev/null || true
           if existing=$(git rev-parse -q --verify "refs/tags/$TAG_NAME^{commit}"); then
-            if [ "$existing" != "$GITHUB_SHA" ]; then
-              echo "::error::Tag $TAG_NAME already points at $existing, not $GITHUB_SHA"
+            if [ "$existing" != "$RELEASE_SHA" ]; then
+              echo "::error::Tag $TAG_NAME already points at $existing, not $RELEASE_SHA"
               exit 1
             fi
-            echo "Reusing existing tag $TAG_NAME at $GITHUB_SHA"
+            echo "Reusing existing tag $TAG_NAME at $RELEASE_SHA"
             exit 0
           fi
 
