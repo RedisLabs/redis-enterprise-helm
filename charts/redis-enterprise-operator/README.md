@@ -190,5 +190,5 @@ If you created the REC manually (not through the chart), see [Delete custom reso
 ## Known limitations
 
 - The chart can optionally create a Redis Enterprise Cluster (see `cluster.create` option), but this feature is disabled by default and primarily intended for new deployments.
-- The chart doesn't include configuration options for multiple namespaces, rack-awareness, and Vault integration. The steps for configuring these options remain the same.
+- The chart doesn't include configuration options for multiple namespaces and rack-awareness. The steps for configuring these options remain the same.
 - The chart has had limited testing in advanced setups, including Active-Active configurations, air-gapped deployments, and IPv6/dual-stack environments.

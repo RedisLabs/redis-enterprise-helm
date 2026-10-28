@@ -7,3 +7,19 @@ metadata:
   namespace: {{ $.Release.Namespace }}
   annotations:
     {{- include "redis-enterprise-operator.annotations" . | nindent 4}}
+{{- with .Values.operator.environment }}
+{{- /* Invalid or env:-overridden keys never match the operator's startup ConfigMap-vs-env check and crash-loop it */}}
+{{- $reserved := list "POD_NAMESPACE" "WATCH_NAMESPACE" "POD_NAME" "OPERATOR_NAME" "IS_OPENSHIFT" }}
+data:
+  {{- range $key, $value := . }}
+  {{- if not (kindIs "invalid" $value) }}
+  {{- if not (regexMatch "^[A-Za-z_][A-Za-z0-9_]*$" $key) }}
+  {{- fail (printf "operator.environment: %q is not a valid environment variable name" $key) }}
+  {{- end }}
+  {{- if has $key $reserved }}
+  {{- fail (printf "operator.environment: %s is set by the chart and cannot be overridden" $key) }}
+  {{- end }}
+  {{ $key | quote }}: {{ $value | toString | quote }}
+  {{- end }}
+  {{- end }}
+{{- end }}
