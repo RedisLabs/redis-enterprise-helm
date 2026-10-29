@@ -1,22 +1,28 @@
 name: Release Charts
 
+# Releases are started manually by someone with write access to the
+# repository.
+#
+# The workflow definition always comes from master. The chart is released
+# from a branch of this repository: master, or a version branch such as
+# 7.22.2-47 for maintenance releases of older lines.
 on:
-  issue_comment:
-    types: [created]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to release the chart from (master or a version branch, e.g. 7.22.2-47).
+        required: true
+        default: master
+        type: string
+
+concurrency:
+  group: release-redis-enterprise-operator
+  cancel-in-progress: false
 
 jobs:
   release:
-    # Only run if:
-    # 1. Comment is on a PR (not an issue)
-    # 2. Comment contains "/release"
-    # 3. PR is open (not closed/merged yet)
-    if: |
-      github.event.issue.pull_request &&
-      contains(github.event.comment.body, '/release') &&
-      github.event.issue.state == 'open'
     permissions:
       contents: write # to push chart release and create a release (helm/chart-releaser-action)
-      pull-requests: read # to read PR details and reviews
 
     runs-on: ubuntu-latest
     outputs:
@@ -24,48 +30,33 @@ jobs:
       chart_version: ${{ steps.chart-releaser.outputs.chart_version }}
 
     steps:
-      - name: Get PR details and check approval
-        id: pr
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
+      - name: Verify workflow and release branch
+        env:
+          RELEASE_BRANCH: ${{ inputs.branch }}
+        run: |
+          if [ "${GITHUB_REF_NAME}" != "master" ]; then
+            echo "This workflow can only be run from master. Current ref: ${GITHUB_REF_NAME}"
+            exit 1
+          fi
 
-            // Check if PR is open
-            if (pr.data.state !== 'open') {
-              core.setFailed('PR is not open. Cannot release.');
-              return;
-            }
+          if [ "$RELEASE_BRANCH" != "master" ] && ! [[ "$RELEASE_BRANCH" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$ ]]; then
+            echo "::error::Release branch must be master or a version branch such as 7.22.2-47, got: $RELEASE_BRANCH"
+            exit 1
+          fi
 
-            // Check if PR is approved
-            const reviews = await github.rest.pulls.listReviews({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-
-            const approvedReviews = reviews.data.filter(review => review.state === 'APPROVED');
-
-            if (approvedReviews.length === 0) {
-              core.setFailed('PR must be approved before release. Please get an approval first.');
-              return;
-            }
-
-            core.info(`PR is approved by: ${approvedReviews.map(r => r.user.login).join(', ')}`);
-
-            core.setOutput('base_ref', pr.data.base.ref);
-            core.setOutput('head_ref', pr.data.head.ref);
-            core.setOutput('head_sha', pr.data.head.sha);
-
+      # refs/heads/ restricts the checkout to a branch of this repository, never
+      # a pull request head, tag or arbitrary commit.
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ steps.pr.outputs.head_sha }}  # Checkout the PR branch HEAD
+          ref: refs/heads/${{ inputs.branch }}
+
+      - name: Resolve release commit
+        id: release-commit
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Releasing $(git rev-parse HEAD)"
 
       - name: Configure Git
         run: |
@@ -77,18 +68,36 @@ jobs:
         run: |
           VERSION=$(grep '^version:' charts/redis-enterprise-operator/Chart.yaml | awk '{print $2}')
 
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          if ! [[ "$VERSION" =~ ^[0-9A-Za-z.+-]+$ ]]; then
+            echo "::error::Unexpected chart version: $VERSION"
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Detected version: $VERSION"
 
+      # The tag is pushed before packaging, so a run that failed later already
+      # left it behind. Reuse it only when it points at this commit, so a
+      # re-run resumes packaging and index publication; a tag on any other
+      # commit is a conflict and stops the release.
       - name: Create and push release tag
+        env:
+          VERSION: ${{ steps.extract-version.outputs.version }}
+          RELEASE_SHA: ${{ steps.release-commit.outputs.sha }}
         run: |
-          VERSION="${{ steps.extract-version.outputs.version }}"
           TAG_NAME="redis-enterprise-operator-$VERSION"
 
-          # Create the tag
-          git tag "$TAG_NAME"
+          git fetch --force origin "refs/tags/$TAG_NAME:refs/tags/$TAG_NAME" 2>/dev/null || true
+          if existing=$(git rev-parse -q --verify "refs/tags/$TAG_NAME^{commit}"); then
+            if [ "$existing" != "$RELEASE_SHA" ]; then
+              echo "::error::Tag $TAG_NAME already points at $existing, not $RELEASE_SHA"
+              exit 1
+            fi
+            echo "Reusing existing tag $TAG_NAME at $RELEASE_SHA"
+            exit 0
+          fi
 
-          # Push the tag
+          git tag "$TAG_NAME"
           git push origin "$TAG_NAME"
 
           echo "Created and pushed tag: $TAG_NAME"
@@ -112,24 +121,43 @@ jobs:
       - release
     if: needs.release.outputs.changed_charts != ''   # Only run when charts changed
     steps:
-      - uses: actions/checkout@v4
+      # The page generator comes from the release commit on master, never from
+      # gh-pages, so nothing executed here can be changed by a gh-pages push.
+      - name: Checkout generator
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Checkout Pages content
+        uses: actions/checkout@v4
         with:
           ref: gh-pages
-          fetch-depth: 0
+          path: .pages
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
 
       - name: Generate Helm Charts HTML
-        uses: ./.github/actions/generate-helm-html-index
-        with:
-          index_file: 'index.yaml'
-          output_file: 'index.html'
+        run: |
+          python -m pip install pyyaml packaging
+          python .github/scripts/generate_helm_index.py .pages/index.yaml \
+            --output .pages/index.html \
+            --repo-url https://helm.redis.io
 
       - name: Commit and Push
+        working-directory: .pages
+        env:
+          CHANGED_CHARTS: ${{ needs.release.outputs.changed_charts }}
         run: |
           git config --local user.name "$GITHUB_ACTOR"
-          git config --local user.email "$GITHUB_ACTOR@users.noreply.github.com"  
+          git config --local user.email "$GITHUB_ACTOR@users.noreply.github.com"
           git add index.html
-          git commit -m "Update Helm charts page version: ${{ needs.release.outputs.changed_charts  }}" || exit 0  # Don't fail if no changes
-          git push
+          git commit -m "Update Helm charts page version: $CHANGED_CHARTS" || exit 0  # Don't fail if no changes
+          git push origin HEAD:gh-pages
 
   deploy:
     environment:
