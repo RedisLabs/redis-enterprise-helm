@@ -26,7 +26,7 @@ jobs:
     steps:
       - name: Get PR details and check approval
         id: pr
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const pr = await github.rest.pulls.get({
@@ -62,7 +62,7 @@ jobs:
             core.setOutput('head_sha', pr.data.head.sha);
 
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ steps.pr.outputs.head_sha }}  # Checkout the PR branch HEAD
@@ -94,7 +94,7 @@ jobs:
           echo "Created and pushed tag: $TAG_NAME"
 
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
         with:
           version: v3.9.2
 
@@ -112,7 +112,7 @@ jobs:
       - release
     if: needs.release.outputs.changed_charts != ''   # Only run when charts changed
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: gh-pages
           fetch-depth: 0
@@ -143,17 +143,17 @@ jobs:
       - generate-page
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: gh-pages
           fetch-depth: 0
       - name: Setup Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           # Upload entire repository
           path: '.'
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
