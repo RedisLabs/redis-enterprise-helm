@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Redis AI Helm Charts</title><style>
+        body {
+            font-family: -apple-system, system-ui, sans-serif;
+            line-height: 1.5;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .chart-icon {
+            width: 64px;
+            height: 64px;
+        }
+        .title-section h1 {
+            margin: 0;
+            color: #2a2a2a;
+        }
+        .description {
+            color: #666;
+            margin: 10px 0;
+        }
+        .metadata {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            margin: 20px 0;
+            padding: 15px;
+            background: #f8f8f8;
+            border-radius: 6px;
+        }
+        .metadata div {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .metadata div::before {
+            content: "•";
+            color: #666;
+        }
+        .search-section {
+            margin: 20px 0;
+            display: flex;
+            gap: 10px;
+        }
+        input[type="text"] {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            flex: 1;
+        }
+        .versions-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        .versions-table th {
+            text-align: left;
+            padding: 12px;
+            background: #f0f0f0;
+            border-bottom: 2px solid #ddd;
+        }
+        .versions-table td {
+            padding: 12px;
+            border-bottom: 1px solid #eee;
+        }
+        .download-btn {
+            display: inline-block;
+            padding: 6px 12px;
+            background: #0366d6;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .download-btn:hover {
+            background: #0255b3;
+        }
+        .installation {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f8f8;
+            border-radius: 6px;
+        }
+        .command {
+            background: #2a2a2a;
+            color: white;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: monospace;
+            margin: 10px 0;
+            position: relative;
+        }
+        .copy-btn {
+            position: absolute;
+            right: 5px;
+            top: 5px;
+            padding: 5px 10px;
+            background: #444;
+            border: none;
+            color: white;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .copy-btn:hover {
+            background: #555;
+        }
+        .hidden {
+            display: none;
+        }
+        .latest-version {
+            background-color: #f8f8ff;
+        }
+        .latest-badge {
+            background-color: #0366d6;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 12px;
+            font-size: 12px;
+            margin-left: 8px;
+        }
+        tr.latest-version td {
+            font-weight: 500;
+        }
+        .version-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .toggle-latest {
+            padding: 6px 12px;
+            background: #f0f0f0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .toggle-latest:hover {
+            background: #e5e5e5;
+        }
+
+.container { margin-bottom: 24px; }
+.product-tabs { display: flex; gap: 8px; overflow-x: auto; padding: 8px 2px; margin: 24px 0 12px; }
+.product-tabs button { flex-shrink: 0; border: 1px solid #ddd; border-radius: 6px; padding: 12px 16px; background: white; color: #333; font: inherit; cursor: pointer; }
+.product-tabs button[aria-selected="true"] { background: #0366d6; color: white; border-color: #0366d6; }
+.product-tabs button:focus-visible { outline: 3px solid #2a2a2a; outline-offset: 2px; }
+.command { white-space: pre-wrap; overflow-wrap: anywhere; padding-right: 70px; }
+.table-scroll { overflow-x: auto; }
+.search-section { flex-wrap: wrap; align-items: center; }
+</style></head><body><h1>Redis AI Helm Charts</h1>
+<p>Add this Helm repository:</p>
+<pre class="command"><code>helm repo add redis-ai https://helm.redis.io/ai</code><button class="copy-btn" onclick="copyCommand(this)">Copy</button></pre>
+<div class="product-tabs" role="tablist" aria-label="Products"><button type="button" role="tab" id="tab-redis-agent-memory"
+            aria-controls="redis-agent-memory" aria-selected="true" tabindex="0"
+            onclick="selectProduct(this)" onkeydown="navigateProducts(event)">Redis Agent Memory</button><button type="button" role="tab" id="tab-redis-agent-playbook"
+            aria-controls="redis-agent-playbook" aria-selected="false" tabindex="-1"
+            onclick="selectProduct(this)" onkeydown="navigateProducts(event)">Redis Agent Playbook</button><button type="button" role="tab" id="tab-iris-identity-service"
+            aria-controls="iris-identity-service" aria-selected="false" tabindex="-1"
+            onclick="selectProduct(this)" onkeydown="navigateProducts(event)">Iris Identity Service</button><button type="button" role="tab" id="tab-redis-iris-onprem-lib"
+            aria-controls="redis-iris-onprem-lib" aria-selected="false" tabindex="-1"
+            onclick="selectProduct(this)" onkeydown="navigateProducts(event)">Redis Iris On-Premises Library</button></div><section class="container" id="redis-agent-memory" role="tabpanel"
+            aria-labelledby="tab-redis-agent-memory" tabindex="0" >
+            <div class="header"><div class="title-section"><h2>Redis Agent Memory</h2>
+            <p class="description">Helm chart to deploy Redis Agent Memory for on-premises deployment.</p></div></div>
+            <div class="metadata"><div>Type: application</div>
+            <div>Latest: 0.10.2</div></div>
+            <div class="installation"><h3>Installation</h3>
+            <pre class="command"><code>helm install redis-agent-memory redis-ai/redis-agent-memory --version 0.10.2</code><button class="copy-btn" onclick="copyCommand(this)">Copy</button></pre></div>
+            <div class="search-section"><label>Search versions
+            <input type="text" placeholder="Chart or application version" oninput="filterVersions(this.closest('section'))"></label>
+            <label><input type="checkbox" onchange="filterVersions(this.closest('section'))">Latest only</label></div>
+            <div class="table-scroll"><table class="versions-table"><thead><tr><th>Version</th>
+            <th>App Version</th><th>Created</th><th>Digest</th><th>Download</th></tr></thead>
+            <tbody><tr class="version-row latest-version" data-version="0.10.2"
+                data-appversion="0.10.2" data-command="helm install redis-agent-memory redis-ai/redis-agent-memory --version 0.10.2">
+                <td><input type="radio" name="version-redis-agent-memory" checked
+                    onchange="selectVersion(this)">0.10.2 <span class="latest-badge">Latest</span></td>
+                <td>0.10.2</td><td>2026-10-22</td><td>9af41145</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-memory-0.10.2/redis-agent-memory-0.10.2.tgz">Download</a></td></tr><tr class="version-row" data-version="0.8.0"
+                data-appversion="0.8.0" data-command="helm install redis-agent-memory redis-ai/redis-agent-memory --version 0.8.0">
+                <td><input type="radio" name="version-redis-agent-memory" 
+                    onchange="selectVersion(this)">0.8.0 </td>
+                <td>0.8.0</td><td>2026-10-21</td><td>07732058</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-memory-0.8.0/redis-agent-memory-0.8.0.tgz">Download</a></td></tr><tr class="version-row" data-version="0.7.0"
+                data-appversion="0.7.0" data-command="helm install redis-agent-memory redis-ai/redis-agent-memory --version 0.7.0">
+                <td><input type="radio" name="version-redis-agent-memory" 
+                    onchange="selectVersion(this)">0.7.0 </td>
+                <td>0.7.0</td><td>2026-09-10</td><td>6da0fb68</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-memory-0.7.0/redis-agent-memory-0.7.0.tgz">Download</a></td></tr><tr class="version-row" data-version="0.6.0"
+                data-appversion="0.6.0" data-command="helm install redis-agent-memory redis-ai/redis-agent-memory --version 0.6.0">
+                <td><input type="radio" name="version-redis-agent-memory" 
+                    onchange="selectVersion(this)">0.6.0 </td>
+                <td>0.6.0</td><td>2026-07-29</td><td>ca1b324d</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-memory-0.6.0/redis-agent-memory-0.6.0.tgz">Download</a></td></tr><tr class="version-row" data-version="0.5.3"
+                data-appversion="0.5.3" data-command="helm install redis-agent-memory redis-ai/redis-agent-memory --version 0.5.3">
+                <td><input type="radio" name="version-redis-agent-memory" 
+                    onchange="selectVersion(this)">0.5.3 </td>
+                <td>0.5.3</td><td>2026-06-30</td><td>9f15a545</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-memory-0.5.3/redis-agent-memory-0.5.3.tgz">Download</a></td></tr><tr class="version-row" data-version="0.5.2"
+                data-appversion="0.5.2" data-command="helm install redis-agent-memory redis-ai/redis-agent-memory --version 0.5.2">
+                <td><input type="radio" name="version-redis-agent-memory" 
+                    onchange="selectVersion(this)">0.5.2 </td>
+                <td>0.5.2</td><td>2026-06-23</td><td>f2efd1a3</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-memory-0.5.2/redis-agent-memory-0.5.2.tgz">Download</a></td></tr><tr class="version-row" data-version="0.5.0"
+                data-appversion="0.5.0" data-command="helm install redis-agent-memory redis-ai/redis-agent-memory --version 0.5.0">
+                <td><input type="radio" name="version-redis-agent-memory" 
+                    onchange="selectVersion(this)">0.5.0 </td>
+                <td>0.5.0</td><td>2026-06-19</td><td>2022a2c1</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-memory-0.5.0/redis-agent-memory-0.5.0.tgz">Download</a></td></tr><tr class="version-row" data-version="0.4.0"
+                data-appversion="0.4.0" data-command="helm install redis-agent-memory redis-ai/redis-agent-memory --version 0.4.0">
+                <td><input type="radio" name="version-redis-agent-memory" 
+                    onchange="selectVersion(this)">0.4.0 </td>
+                <td>0.4.0</td><td>2026-06-10</td><td>ddcbf165</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-memory-0.4.0/redis-agent-memory-0.4.0.tgz">Download</a></td></tr><tr class="version-row" data-version="0.3.0"
+                data-appversion="0.3.0" data-command="helm install redis-agent-memory redis-ai/redis-agent-memory --version 0.3.0">
+                <td><input type="radio" name="version-redis-agent-memory" 
+                    onchange="selectVersion(this)">0.3.0 </td>
+                <td>0.3.0</td><td>2026-06-08</td><td>c4187be5</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-memory-0.3.0/redis-agent-memory-0.3.0.tgz">Download</a></td></tr><tr class="version-row" data-version="0.2.1"
+                data-appversion="0.2.1" data-command="helm install redis-agent-memory redis-ai/redis-agent-memory --version 0.2.1">
+                <td><input type="radio" name="version-redis-agent-memory" 
+                    onchange="selectVersion(this)">0.2.1 </td>
+                <td>0.2.1</td><td>2026-05-15</td><td>e099f128</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-memory-0.2.1/redis-agent-memory-0.2.1.tgz">Download</a></td></tr><tr class="version-row" data-version="0.2.0"
+                data-appversion="0.2.0" data-command="helm install redis-agent-memory redis-ai/redis-agent-memory --version 0.2.0">
+                <td><input type="radio" name="version-redis-agent-memory" 
+                    onchange="selectVersion(this)">0.2.0 </td>
+                <td>0.2.0</td><td>2026-05-15</td><td>7be73d55</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-memory-0.2.0/redis-agent-memory-0.2.0.tgz">Download</a></td></tr><tr class="version-row" data-version="0.1.1"
+                data-appversion="0.1.1" data-command="helm install redis-agent-memory redis-ai/redis-agent-memory --version 0.1.1">
+                <td><input type="radio" name="version-redis-agent-memory" 
+                    onchange="selectVersion(this)">0.1.1 </td>
+                <td>0.1.1</td><td>2026-05-13</td><td>8fd1381e</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-memory-0.1.1/redis-agent-memory-0.1.1.tgz">Download</a></td></tr><tr class="version-row" data-version="0.1.0"
+                data-appversion="0.1.0" data-command="helm install redis-agent-memory redis-ai/redis-agent-memory --version 0.1.0">
+                <td><input type="radio" name="version-redis-agent-memory" 
+                    onchange="selectVersion(this)">0.1.0 </td>
+                <td>0.1.0</td><td>2026-04-30</td><td>7b1d6c4d</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-memory-0.1.0/redis-agent-memory-0.1.0.tgz">Download</a></td></tr></tbody></table></div></section><section class="container" id="redis-agent-playbook" role="tabpanel"
+            aria-labelledby="tab-redis-agent-playbook" tabindex="0" hidden>
+            <div class="header"><div class="title-section"><h2>Redis Agent Playbook</h2>
+            <p class="description">Redis Playbook on-prem control plane and data plane</p></div></div>
+            <div class="metadata"><div>Type: application</div>
+            <div>Latest: 0.10.2</div></div>
+            <div class="installation"><h3>Installation</h3>
+            <pre class="command"><code>helm install redis-agent-playbook redis-ai/redis-agent-playbook --version 0.10.2</code><button class="copy-btn" onclick="copyCommand(this)">Copy</button></pre></div>
+            <div class="search-section"><label>Search versions
+            <input type="text" placeholder="Chart or application version" oninput="filterVersions(this.closest('section'))"></label>
+            <label><input type="checkbox" onchange="filterVersions(this.closest('section'))">Latest only</label></div>
+            <div class="table-scroll"><table class="versions-table"><thead><tr><th>Version</th>
+            <th>App Version</th><th>Created</th><th>Digest</th><th>Download</th></tr></thead>
+            <tbody><tr class="version-row latest-version" data-version="0.10.2"
+                data-appversion="0.10.2" data-command="helm install redis-agent-playbook redis-ai/redis-agent-playbook --version 0.10.2">
+                <td><input type="radio" name="version-redis-agent-playbook" checked
+                    onchange="selectVersion(this)">0.10.2 <span class="latest-badge">Latest</span></td>
+                <td>0.10.2</td><td>2026-10-22</td><td>786ed313</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-playbook-0.10.2/redis-agent-playbook-0.10.2.tgz">Download</a></td></tr><tr class="version-row" data-version="0.2.0"
+                data-appversion="0.2.0" data-command="helm install redis-agent-playbook redis-ai/redis-agent-playbook --version 0.2.0">
+                <td><input type="radio" name="version-redis-agent-playbook" 
+                    onchange="selectVersion(this)">0.2.0 </td>
+                <td>0.2.0</td><td>2026-10-21</td><td>49a1d9ed</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-playbook-0.2.0/redis-agent-playbook-0.2.0.tgz">Download</a></td></tr><tr class="version-row" data-version="0.1.0-alpha.3"
+                data-appversion="0.1.0-alpha.3" data-command="helm install redis-agent-playbook redis-ai/redis-agent-playbook --version 0.1.0-alpha.3">
+                <td><input type="radio" name="version-redis-agent-playbook" 
+                    onchange="selectVersion(this)">0.1.0-alpha.3 </td>
+                <td>0.1.0-alpha.3</td><td>2026-10-07</td><td>5f8bec21</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-playbook-0.1.0-alpha.3/redis-agent-playbook-0.1.0-alpha.3.tgz">Download</a></td></tr></tbody></table></div></section><section class="container" id="iris-identity-service" role="tabpanel"
+            aria-labelledby="tab-iris-identity-service" tabindex="0" hidden>
+            <div class="header"><div class="title-section"><h2>Iris Identity Service</h2>
+            <p class="description">Helm chart to deploy the standalone Iris Identity Service for on-premises deployment.</p></div></div>
+            <div class="metadata"><div>Type: application</div>
+            <div>Latest: 0.10.2</div></div>
+            <div class="installation"><h3>Installation</h3>
+            <pre class="command"><code>helm install iris-identity-service redis-ai/iris-identity-service --version 0.10.2</code><button class="copy-btn" onclick="copyCommand(this)">Copy</button></pre></div>
+            <div class="search-section"><label>Search versions
+            <input type="text" placeholder="Chart or application version" oninput="filterVersions(this.closest('section'))"></label>
+            <label><input type="checkbox" onchange="filterVersions(this.closest('section'))">Latest only</label></div>
+            <div class="table-scroll"><table class="versions-table"><thead><tr><th>Version</th>
+            <th>App Version</th><th>Created</th><th>Digest</th><th>Download</th></tr></thead>
+            <tbody><tr class="version-row latest-version" data-version="0.10.2"
+                data-appversion="0.10.2" data-command="helm install iris-identity-service redis-ai/iris-identity-service --version 0.10.2">
+                <td><input type="radio" name="version-iris-identity-service" checked
+                    onchange="selectVersion(this)">0.10.2 <span class="latest-badge">Latest</span></td>
+                <td>0.10.2</td><td>2026-10-22</td><td>79d528b3</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/iris-identity-service-0.10.2/iris-identity-service-0.10.2.tgz">Download</a></td></tr><tr class="version-row" data-version="0.10.0"
+                data-appversion="0.10.0" data-command="helm install iris-identity-service redis-ai/iris-identity-service --version 0.10.0">
+                <td><input type="radio" name="version-iris-identity-service" 
+                    onchange="selectVersion(this)">0.10.0 </td>
+                <td>0.10.0</td><td>2026-10-20</td><td>cb5787e2</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/iris-identity-service-0.10.0/iris-identity-service-0.10.0.tgz">Download</a></td></tr></tbody></table></div></section><section class="container" id="redis-iris-onprem-lib" role="tabpanel"
+            aria-labelledby="tab-redis-iris-onprem-lib" tabindex="0" hidden>
+            <div class="header"><div class="title-section"><h2>Redis Iris On-Premises Library</h2>
+            <p class="description">Internal Helm library for Redis AI on-prem workloads.</p></div></div>
+            <div class="metadata"><div>Type: library</div>
+            <div>Latest: 0.4.0</div></div>
+            <div class="installation"><h3>Installation</h3>
+            <pre class="command"><code>helm install redis-iris-onprem-lib redis-ai/redis-iris-onprem-lib --version 0.4.0</code><button class="copy-btn" onclick="copyCommand(this)">Copy</button></pre></div>
+            <div class="search-section"><label>Search versions
+            <input type="text" placeholder="Chart or application version" oninput="filterVersions(this.closest('section'))"></label>
+            <label><input type="checkbox" onchange="filterVersions(this.closest('section'))">Latest only</label></div>
+            <div class="table-scroll"><table class="versions-table"><thead><tr><th>Version</th>
+            <th>App Version</th><th>Created</th><th>Digest</th><th>Download</th></tr></thead>
+            <tbody><tr class="version-row latest-version" data-version="0.4.0"
+                data-appversion="" data-command="helm install redis-iris-onprem-lib redis-ai/redis-iris-onprem-lib --version 0.4.0">
+                <td><input type="radio" name="version-redis-iris-onprem-lib" checked
+                    onchange="selectVersion(this)">0.4.0 <span class="latest-badge">Latest</span></td>
+                <td></td><td>2026-10-30</td><td>8ad3a7ca</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-iris-onprem-lib-0.4.0/redis-iris-onprem-lib-0.4.0.tgz">Download</a></td></tr><tr class="version-row" data-version="0.3.0"
+                data-appversion="" data-command="helm install redis-iris-onprem-lib redis-ai/redis-iris-onprem-lib --version 0.3.0">
+                <td><input type="radio" name="version-redis-iris-onprem-lib" 
+                    onchange="selectVersion(this)">0.3.0 </td>
+                <td></td><td>2026-10-02</td><td>0425873c</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-iris-onprem-lib-0.3.0/redis-iris-onprem-lib-0.3.0.tgz">Download</a></td></tr><tr class="version-row" data-version="0.2.0"
+                data-appversion="" data-command="helm install redis-iris-onprem-lib redis-ai/redis-iris-onprem-lib --version 0.2.0">
+                <td><input type="radio" name="version-redis-iris-onprem-lib" 
+                    onchange="selectVersion(this)">0.2.0 </td>
+                <td></td><td>2026-09-21</td><td>e6558050</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-iris-onprem-lib-0.2.0/redis-iris-onprem-lib-0.2.0.tgz">Download</a></td></tr><tr class="version-row" data-version="0.1.0"
+                data-appversion="" data-command="helm install redis-iris-onprem-lib redis-ai/redis-iris-onprem-lib --version 0.1.0">
+                <td><input type="radio" name="version-redis-iris-onprem-lib" 
+                    onchange="selectVersion(this)">0.1.0 </td>
+                <td></td><td>2026-09-09</td><td>aaf7bda9</td>
+                <td><a class="download-btn" href="https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-iris-onprem-lib-0.1.0/redis-iris-onprem-lib-0.1.0.tgz">Download</a></td></tr></tbody></table></div></section>
+<script>
+function selectProduct(selectedTab) {
+    for (const tab of document.querySelectorAll('[role="tab"]')) {
+        const active = tab === selectedTab;
+        tab.setAttribute('aria-selected', String(active));
+        tab.tabIndex = active ? 0 : -1;
+        document.getElementById(tab.getAttribute('aria-controls')).hidden = !active;
+    }
+}
+function navigateProducts(event) {
+    const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+    let position = tabs.indexOf(event.currentTarget);
+    if (event.key === 'ArrowRight') position = (position + 1) % tabs.length;
+    else if (event.key === 'ArrowLeft') position = (position - 1 + tabs.length) % tabs.length;
+    else if (event.key === 'Home') position = 0;
+    else if (event.key === 'End') position = tabs.length - 1;
+    else return;
+    event.preventDefault();
+    selectProduct(tabs[position]);
+    tabs[position].focus();
+}
+function filterVersions(section) {
+    const search = section.querySelector('input[type="text"]').value.toLowerCase();
+    const latestOnly = section.querySelector('input[type="checkbox"]').checked;
+    for (const row of section.querySelectorAll('.version-row')) {
+        const matches = row.dataset.version.toLowerCase().includes(search) ||
+            row.dataset.appversion.toLowerCase().includes(search);
+        row.hidden = !matches || (latestOnly && !row.classList.contains('latest-version'));
+    }
+}
+function selectVersion(radio) {
+    radio.closest('section').querySelector('.command code').textContent =
+        radio.closest('tr').dataset.command;
+}
+async function copyCommand(button) {
+    await navigator.clipboard.writeText(button.parentElement.querySelector('code').textContent);
+    button.textContent = 'Copied!';
+    setTimeout(() => { button.textContent = 'Copy'; }, 2000);
+}
+</script></body></html>
