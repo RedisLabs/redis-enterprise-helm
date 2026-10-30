@@ -1,0 +1,25 @@
+{{- $p := "fixture." -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: suite
+data:
+  enabled: {{ include "redis-onprem.suite.enabled" . | quote }}
+  tenantId: {{ include "redis-onprem.suite.tenantId" (dict "root" . "prefix" $p "local" .Values.tenantId "default" "standalone-tenant") | quote }}
+  clusterDomain: {{ include "redis-onprem.suite.clusterDomain" (dict "root" . "prefix" $p "local" .Values.clusterDomain) | quote }}
+  fqdn: {{ include "redis-onprem.suite.fqdn" (dict "root" . "prefix" $p "local" .Values.clusterDomain "name" "svc-a") | quote }}
+  license: {{ include "redis-onprem.suite.license" (dict "root" . "prefix" $p "local" .Values.license "defaultSecretKey" "license") | quote }}
+  securityProfile: {{ include "redis-onprem.suite.securityProfile" . | quote }}
+  caCertSecret: {{ include "redis-onprem.suite.caCertSecret" . | quote }}
+  imagePullSecrets: {{ include "redis-onprem.suite.imagePullSecrets" . | quote }}
+  oidc: {{ include "redis-onprem.suite.oidc" (dict "root" . "prefix" $p "local" .Values.oidc "paths" (dict "audience" "auth.oidc.audience") "defaults" (dict "audience" "api://standalone" "roleClaims" (list "roles"))) | quote }}
+  workloadIdentity: {{ include "redis-onprem.suite.workloadIdentity" (dict "root" .) | quote }}
+  memoryEnabled: {{ include "redis-onprem.suite.productEnabled" (dict "root" . "product" "agent_memory") | quote }}
+  roleMappings.agent_memory: {{ include "redis-onprem.suite.roleMappings" (dict "root" . "product" "agent_memory") | quote }}
+  roleMappings.playbook: {{ include "redis-onprem.suite.roleMappings" (dict "root" . "product" "playbook") | quote }}
+  ui.roleMappings: {{ include "redis-onprem.suite.ui.roleMappings" (dict "root" .) | quote }}
+  ids.roleBindings: {{ include "redis-onprem.suite.ids.roleBindings" (dict "root" .) | quote }}
+  credential.dataplane: {{ include "redis-onprem.suite.credential" (dict "root" . "product" "memory" "credential" "dataplane" "local" .Values.credential.existingSecret "field" "fixture.credential.existingSecret") | quote }}
+  credential.controlplane: {{ include "redis-onprem.suite.credential" (dict "root" . "product" "playbook" "credential" "controlplane") | quote }}
+  owned: {{ include "redis-onprem.suite.owned" (dict "prefix" $p "path" "owned" "local" .Values.owned "derived" (list "a")) | quote }}
+  identityService: {{ include "redis-onprem.suite.identityService" (dict "root" .) | quote }}

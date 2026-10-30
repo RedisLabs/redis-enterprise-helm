@@ -1,0 +1,15 @@
+# Local (product) values the suite helpers resolve against. Unset markers by default.
+tenantId: ""
+clusterDomain: ""
+license:
+  existingSecret: ""
+  secretKey: ""
+oidc:
+  issuer: ""
+  accessTokenIssuer: ""
+  jwksURI: ""
+  audience: ""
+  roleClaims: null
+credential:
+  existingSecret: ""
+owned: null
