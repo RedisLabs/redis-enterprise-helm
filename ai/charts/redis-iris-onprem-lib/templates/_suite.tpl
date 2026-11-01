@@ -51,13 +51,17 @@ Core resolution. Returns JSON {"value": <resolved>}.
 {{/*
 A value the suite owns under the umbrella: returns JSON {"value": derived}, and fails, naming
 <prefix><path>, when the local value is set and differs. Call it only under the umbrella.
+A nil derived value means the suite leaves the field off (no IdP, say), so an empty local value
+(false, [], {}, the old chart defaults) agrees with it.
   prefix, path, local, derived
   source  what derived comes from (default "the value redis-iris derives from global.iris")
 */}}
 {{- define "redis-onprem.suite.owned" -}}
 {{- $set := not (or (kindIs "invalid" .local) (and (kindIs "string" .local) (eq .local ""))) -}}
-{{- if and $set (ne (toJson .local) (toJson .derived)) -}}
-{{- fail (printf "%s%s (%s) conflicts with %s (%s); remove the product value" (default "" .prefix) .path (toJson .local) (default "the value redis-iris derives from global.iris" .source) (toJson .derived)) -}}
+{{- $off := kindIs "invalid" .derived -}}
+{{- if and $set (not (and $off (empty .local))) (ne (toJson .local) (toJson .derived)) -}}
+{{- $source := default "the value redis-iris derives from global.iris" .source -}}
+{{- fail (printf "%s%s (%s) conflicts with %s; remove the product value" (default "" .prefix) .path (toJson .local) ($off | ternary (printf "%s, which leaves it unset" $source) (printf "%s (%s)" $source (toJson .derived)))) -}}
 {{- end -}}
 {{- toJson (dict "value" .derived) -}}
 {{- end }}
@@ -113,8 +117,10 @@ allowInsecureTransport}. Takes root, prefix,
   local     map of the chart's local values keyed by the names above (any subset)
   paths     map of their local field paths, same keys
   defaults  standalone defaults, same keys (audience and roleClaims typically)
-accessTokenIssuer falls back to issuer. allowInsecureTransport is true when the effective
-access-token issuer is http:// and the security profile is not fips.
+accessTokenIssuer falls back to issuer. allowInsecureTransport is the token validators' flag: true
+when jwksURI, the only URL they fetch, is http:// and the security profile is not fips. They only
+compare issuer / accessTokenIssuer with a token's iss, so an http:// one (AD FS) needs no insecure
+transport; the UI, which also fetches the discovery issuer, adds that itself.
 */}}
 {{- define "redis-onprem.suite.oidc" -}}
 {{- $local := default (dict) .local -}}
@@ -127,7 +133,7 @@ access-token issuer is http:// and the security profile is not fips.
 {{- $_ := set $out $f $r.value -}}
 {{- end -}}
 {{- $_ := set $out "accessTokenIssuer" (default (default "" $out.issuer) $out.accessTokenIssuer) -}}
-{{- $_ := set $out "allowInsecureTransport" (and (hasPrefix "http://" $out.accessTokenIssuer) (ne (include "redis-onprem.suite.securityProfile" .root) "fips")) -}}
+{{- $_ := set $out "allowInsecureTransport" (and (hasPrefix "http://" $out.jwksURI) (ne (include "redis-onprem.suite.securityProfile" .root) "fips")) -}}
 {{- toJson $out -}}
 {{- end }}
 

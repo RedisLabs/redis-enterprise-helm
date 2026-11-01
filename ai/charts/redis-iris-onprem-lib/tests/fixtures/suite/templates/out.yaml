@@ -22,4 +22,5 @@ data:
   credential.dataplane: {{ include "redis-onprem.suite.credential" (dict "root" . "product" "memory" "credential" "dataplane" "local" .Values.credential.existingSecret "field" "fixture.credential.existingSecret") | quote }}
   credential.controlplane: {{ include "redis-onprem.suite.credential" (dict "root" . "product" "playbook" "credential" "controlplane") | quote }}
   owned: {{ include "redis-onprem.suite.owned" (dict "prefix" $p "path" "owned" "local" .Values.owned "derived" (list "a")) | quote }}
+  ownedOff: {{ include "redis-onprem.suite.owned" (dict "prefix" $p "path" "ownedOff" "local" .Values.ownedOff "derived" nil) | quote }}
   identityService: {{ include "redis-onprem.suite.identityService" (dict "root" .) | quote }}
