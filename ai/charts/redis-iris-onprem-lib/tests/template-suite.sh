@@ -93,9 +93,16 @@ out=$(render "${UMBRELLA[@]}" --set global.iris.tenantId=acme --set tenantId=acm
 expect "$out" tenantId "acme" "global tenant"
 expect "$out" fqdn "svc-a.ns.svc.corp.local" "global cluster domain"
 expect "$out" license '{"existingSecret":"iris-license","secretKey":"lic"}' "global license key"
-expect "$out" oidc '{"accessTokenIssuer":"http://adfs","allowInsecureTransport":true,"audience":"aud","issuer":"https://idp","jwksURI":"https://idp/jwks","roleClaims":["teams"]}' "global OIDC, http access-token issuer is insecure"
+expect "$out" oidc '{"accessTokenIssuer":"http://adfs","allowInsecureTransport":false,"audience":"aud","issuer":"https://idp","jwksURI":"https://idp/jwks","roleClaims":["teams"]}' "global OIDC, an http access-token issuer is never fetched"
 expect "$out" workloadIdentity '{"issuer":"https://kubernetes.default.svc.corp.local","jwksURI":"https://kubernetes.default.svc.corp.local/openid/v1/jwks"}' "workload identity follows clusterDomain"
 expect "$out" credential.dataplane '{"existingSecret":"dp-agg","secretKey":"memory-dp"}' "aggregate data-plane credential"
+
+# The token validators fetch only the JWKS URI, so only an http one needs insecure transport; an
+# http discovery issuer is the UI's concern (Identity Service profile=prod refuses the flag).
+out=$(render "${UMBRELLA[@]}" --set global.iris.auth.oidc.issuer=https://idp --set global.iris.auth.oidc.jwksURI=http://idp/jwks)
+grep -qF 'allowInsecureTransport\":true' <<<"$out" || fail "global OIDC, an http JWKS URI is insecure"
+out=$(render "${UMBRELLA[@]}" --set global.iris.auth.oidc.issuer=http://idp --set global.iris.auth.oidc.jwksURI=https://idp/jwks)
+grep -qF 'allowInsecureTransport\":false' <<<"$out" || fail "global OIDC, an http discovery issuer with an https JWKS URI stays secure"
 
 out=$(render "${UMBRELLA[@]}" --set global.iris.workloadIdentity.issuer=https://oidc.eks/id/1)
 expect "$out" workloadIdentity '{"issuer":"https://oidc.eks/id/1","jwksURI":"https://oidc.eks/id/1/openid/v1/jwks"}' "custom workload identity issuer"
@@ -125,6 +132,11 @@ expect "$(render)" owned '{"value":["a"]}' "unset local takes the derived value"
 expect "$(render --set-json 'owned=["a"]')" owned '{"value":["a"]}' "equal local accepted"
 expect_fail 'fixture.owned ([]) conflicts with the value redis-iris derives from global.iris (["a"])' "explicit [] is a value, so it conflicts" \
   --set-json 'owned=[]'
+for empty in false '[]' '{}'; do
+  expect "$(render --set-json "ownedOff=$empty")" ownedOff '{"value":null}' "empty local $empty agrees with a derived nil (the field is off)"
+done
+expect_fail 'fixture.ownedOff (true) conflicts with the value redis-iris derives from global.iris, which leaves it unset' "set local against a derived nil names it unset" \
+  --set-json 'ownedOff=true'
 
 echo "== Role-binding translations (TDD authorization table) =="
 BINDINGS='[{"group":"admins","role":"suite_admin"},{"group":"mops","role":"operator","product":"agent_memory"},{"group":"keys","role":"viewer","product":"identity"},{"group":"pb","role":"viewer","product":"playbook"},{"group":"cg","role":"viewer","product":"context_gateway"}]'
