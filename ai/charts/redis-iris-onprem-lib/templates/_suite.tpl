@@ -149,7 +149,7 @@ https://kubernetes.default.svc.<clusterDomain> and <issuer>/openid/v1/jwks. Take
 
 {{/*
 "true" when global.iris.products.<product>.enabled. Takes root, product: the products key
-(memory, playbook, lens, contextGateway) or the canonical id (agent_memory, context_gateway).
+(memory, playbook, lens, contextGateway, intent) or the canonical id (agent_memory, context_gateway).
 */}}
 {{- define "redis-onprem.suite.productEnabled" -}}
 {{- $key := index (dict "agent_memory" "memory" "context_gateway" "contextGateway") .product | default .product -}}
@@ -163,7 +163,7 @@ https://kubernetes.default.svc.<clusterDomain> and <issuer>/openid/v1/jwks. Take
 
 {{/*
 group -> role for one canonical product id (agent_memory, playbook, lens, context_gateway,
-identity): that product's bindings plus suite scope. A group bound to two roles fails. JSON map.
+intent, identity): that product's bindings plus suite scope. A group bound to two roles fails. JSON map.
 Takes root, product.
 */}}
 {{- define "redis-onprem.suite.roleMappings" -}}
@@ -185,7 +185,7 @@ suite scope copied under each. JSON map. Takes root.
 */}}
 {{- define "redis-onprem.suite.ui.roleMappings" -}}
 {{- $out := dict -}}
-{{- range $p := list "agent_memory" "playbook" "lens" "context_gateway" "identity" -}}
+{{- range $p := list "agent_memory" "playbook" "lens" "context_gateway" "intent" "identity" -}}
 {{- if or (eq $p "identity") (include "redis-onprem.suite.productEnabled" (dict "root" $.root "product" $p)) -}}
 {{- $_ := set $out $p (include "redis-onprem.suite.roleMappings" (dict "root" $.root "product" $p) | fromJson) -}}
 {{- end -}}
@@ -199,7 +199,7 @@ scope global; product scope -> scope product with the IdS product id, only for e
 identity bindings are UI-only and dropped. JSON list. Takes root.
 */}}
 {{- define "redis-onprem.suite.ids.roleBindings" -}}
-{{- $ids := dict "agent_memory" "memory" "playbook" "playbook" "lens" "lens" "context_gateway" "context-gateway" -}}
+{{- $ids := dict "agent_memory" "memory" "playbook" "playbook" "lens" "lens" "context_gateway" "context-gateway" "intent" "intent" -}}
 {{- $out := list -}}
 {{- range $b := include "redis-onprem.suite.roleBindings.raw" . | fromJsonArray -}}
 {{- if not $b.product -}}

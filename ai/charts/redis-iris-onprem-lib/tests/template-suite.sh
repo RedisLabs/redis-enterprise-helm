@@ -139,19 +139,19 @@ expect_fail 'fixture.ownedOff (true) conflicts with the value redis-iris derives
   --set-json 'ownedOff=true'
 
 echo "== Role-binding translations (TDD authorization table) =="
-BINDINGS='[{"group":"admins","role":"suite_admin"},{"group":"mops","role":"operator","product":"agent_memory"},{"group":"keys","role":"viewer","product":"identity"},{"group":"pb","role":"viewer","product":"playbook"},{"group":"cg","role":"viewer","product":"context_gateway"}]'
+BINDINGS='[{"group":"admins","role":"suite_admin"},{"group":"mops","role":"operator","product":"agent_memory"},{"group":"keys","role":"viewer","product":"identity"},{"group":"pb","role":"viewer","product":"playbook"},{"group":"cg","role":"viewer","product":"context_gateway"},{"group":"ir","role":"viewer","product":"intent"}]'
 out=$(render "${UMBRELLA[@]}" --set global.iris.products.memory.enabled=true --set global.iris.products.playbook.enabled=false \
   --set global.iris.products.contextGateway.enabled=true --set-json "global.iris.auth.roleBindings=$BINDINGS")
 expect "$out" memoryEnabled "true" "canonical id maps to products.memory"
 expect "$out" roleMappings.agent_memory '{"admins":"suite_admin","mops":"operator"}' "Memory: own bindings plus suite scope"
 expect "$out" roleMappings.playbook '{"admins":"suite_admin","pb":"viewer"}' "Playbook mapping ignores enablement"
-expect "$out" ui.roleMappings '{"agent_memory":{"admins":"suite_admin","mops":"operator"},"context_gateway":{"admins":"suite_admin","cg":"viewer"},"identity":{"admins":"suite_admin","keys":"viewer"}}' "UI: enabled products and identity; disabled Playbook dropped"
-expect "$out" ids.roleBindings '[{"claim_value":"admins","role":"suite_admin","scope":"global"},{"claim_value":"mops","product":"memory","role":"operator","scope":"product"},{"claim_value":"cg","product":"context-gateway","role":"viewer","scope":"product"}]' "IdS: mapped ids, identity and disabled Playbook dropped"
+expect "$out" ui.roleMappings '{"agent_memory":{"admins":"suite_admin","mops":"operator"},"context_gateway":{"admins":"suite_admin","cg":"viewer"},"identity":{"admins":"suite_admin","keys":"viewer"}}' "UI: enabled products and identity; disabled Playbook and Intent Router dropped"
+expect "$out" ids.roleBindings '[{"claim_value":"admins","role":"suite_admin","scope":"global"},{"claim_value":"mops","product":"memory","role":"operator","scope":"product"},{"claim_value":"cg","product":"context-gateway","role":"viewer","scope":"product"}]' "IdS: mapped ids, identity and disabled Playbook and Intent Router dropped"
 
 out=$(render "${UMBRELLA[@]}" --set global.iris.products.memory.enabled=true --set global.iris.products.playbook.enabled=true \
-  --set-json "global.iris.auth.roleBindings=$BINDINGS")
-expect "$out" ui.roleMappings '{"agent_memory":{"admins":"suite_admin","mops":"operator"},"identity":{"admins":"suite_admin","keys":"viewer"},"playbook":{"admins":"suite_admin","pb":"viewer"}}' "UI: re-enabled Playbook restored"
-expect "$out" ids.roleBindings '[{"claim_value":"admins","role":"suite_admin","scope":"global"},{"claim_value":"mops","product":"memory","role":"operator","scope":"product"},{"claim_value":"pb","product":"playbook","role":"viewer","scope":"product"}]' "IdS: re-enabled Playbook restored"
+  --set global.iris.products.intent.enabled=true --set-json "global.iris.auth.roleBindings=$BINDINGS")
+expect "$out" ui.roleMappings '{"agent_memory":{"admins":"suite_admin","mops":"operator"},"identity":{"admins":"suite_admin","keys":"viewer"},"intent":{"admins":"suite_admin","ir":"viewer"},"playbook":{"admins":"suite_admin","pb":"viewer"}}' "UI: re-enabled Playbook and Intent Router restored"
+expect "$out" ids.roleBindings '[{"claim_value":"admins","role":"suite_admin","scope":"global"},{"claim_value":"mops","product":"memory","role":"operator","scope":"product"},{"claim_value":"pb","product":"playbook","role":"viewer","scope":"product"},{"claim_value":"ir","product":"intent","role":"viewer","scope":"product"}]' "IdS: re-enabled Playbook and Intent Router restored"
 
 expect_fail 'group "admins" is bound to both "suite_admin" and "viewer" for agent_memory' "duplicate group per product" \
   "${UMBRELLA[@]}" --set-json 'global.iris.auth.roleBindings=[{"group":"admins","role":"suite_admin"},{"group":"admins","role":"viewer","product":"agent_memory"}]'
