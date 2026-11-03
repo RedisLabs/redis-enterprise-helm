@@ -459,4 +459,28 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-iris-ui-0.1.0/redis-iris-ui-0.1.0.tgz
     version: 0.1.0
-generated: "2026-11-03T18:44:19.59471295Z"
+  redis-lens:
+  - apiVersion: v2
+    appVersion: 0.10.2
+    created: "2026-11-03T19:57:44.604412047Z"
+    dependencies:
+    - name: redis-iris-onprem-lib
+      repository: https://helm.redis.io/ai
+      version: 0.4.2
+    description: Redis Iris Lens on-prem data plane, worker, and control plane (connects
+      to a standalone Identity Service)
+    digest: c9b686f95c474317e17cd14327d596d517ac3dd19f0aa948d6aaa4307d85c4e7
+    home: https://github.com/Redislabsdev/iris
+    icon: https://raw.githubusercontent.com/RedisLabs/redis-enterprise-helm/main/ai/charts/redis-lens/icon.svg
+    keywords:
+    - redis
+    - lens
+    - observability
+    - ai
+    - on-prem
+    name: redis-lens
+    type: application
+    urls:
+    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-lens-0.10.2/redis-lens-0.10.2.tgz
+    version: 0.10.2
+generated: "2026-11-03T19:57:44.604502374Z"
