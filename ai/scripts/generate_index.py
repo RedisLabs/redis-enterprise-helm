@@ -18,7 +18,12 @@ from packaging.version import Version
 PRODUCTS = (
     ('redis-agent-memory', 'Redis Agent Memory'),
     ('redis-agent-playbook', 'Redis Agent Playbook'),
+    ('redis-lens', 'Redis Lens'),
+    ('redis-context-gateway', 'Redis Context Gateway'),
+    ('redis-intent-router', 'Redis Intent Router'),
     ('iris-identity-service', 'Iris Identity Service'),
+    ('redis-iris-ui', 'Redis Iris User Interface'),
+    ('redis-iris', 'Redis Iris'),
     ('redis-iris-onprem-lib', 'Redis Iris On-Premises Library'),
 )
 
