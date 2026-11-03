@@ -1,0 +1,31 @@
+The on-prem UI gateway has been deployed:
+
+  {{ include "ui.fullname" . }}:{{ .Values.service.port }} (ClusterIP)
+
+{{- if .Values.ingress.enabled }}
+
+The Ingress forwards {{ if (include "ui.resolved" $ | fromJson).ingress.tlsSecretName }}https{{ else }}http{{ end }}://{{ (include "ui.resolved" $ | fromJson).ingress.host }}/ to it through your ingress controller.
+{{- if not (include "ui.resolved" $ | fromJson).ingress.tlsSecretName }}
+No ingress.tls.secretName is set, so no TLS block is rendered; terminate HTTPS at your controller or set it.
+{{- end }}
+{{- if (include "ui.resolved" $ | fromJson).publicURL }}
+Public URL: {{ (include "ui.resolved" $ | fromJson).publicURL }}
+{{- end }}
+{{- else }}
+
+The Ingress is disabled (set ingress.enabled=true and ingress.host to enable it). Reach the UI with:
+
+  kubectl port-forward --namespace {{ .Release.Namespace }} svc/{{ include "ui.fullname" . }} 8080:{{ .Values.service.port }}
+
+Then open http://localhost:8080/ in a browser.
+{{- end }}
+
+{{- if .Values.sso.enabled }}
+
+SSO is on. The UI auth service is {{ include "ui.auth.fullname" . }}:9000 (ClusterIP).
+{{- if not .Values.sso.session.existingSecret }}
+The session encryption key is generated and kept in Secret {{ include "ui.auth.sessionSecretName" . }}. It is kept across
+upgrades only by `helm install` / `helm upgrade`; if you render this chart with Argo CD, Flux, Helmfile or
+`helm template`, set sso.session.existingSecret or every render will sign every user out.
+{{- end }}
+{{- end }}

@@ -1,0 +1,13 @@
+name: Release Redis Iris UI Chart
+
+on:
+  workflow_dispatch:
+
+jobs:
+  call-release-workflow:
+    uses: ./.github/workflows/release-chart-reusable.yaml
+    with:
+      chart_name: redis-iris-ui
+      chart_path: ai/charts/redis-iris-ui
+      tag_prefix: redis-iris-ui
+    secrets: inherit

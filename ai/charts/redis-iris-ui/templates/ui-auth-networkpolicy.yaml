@@ -1,0 +1,44 @@
+{{- if and .Values.sso.enabled .Values.uiAuth.networkPolicy.enabled }}
+{{- /*
+Only the UI nginx pods may call the UI auth service (TDD NET-6). Egress is not restricted unless
+the operator lists CIDRs for the IdP and the session Redis; then egress is those CIDRs plus DNS.
+*/ -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ui.auth.fullname" . }}
+  labels:
+    {{- include "ui.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ui-auth
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "ui.auth.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    {{- if .Values.uiAuth.networkPolicy.egress }}
+    - Egress
+    {{- end }}
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "ui.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: gateway
+      ports:
+        - port: http
+          protocol: TCP
+  {{- if .Values.uiAuth.networkPolicy.egress }}
+  egress:
+    - to:
+        {{- range .Values.uiAuth.networkPolicy.egress }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  {{- end }}
+{{- end }}

@@ -1,0 +1,130 @@
+# Layered on top of values-test.yaml by template-render.sh: turns SSO on with the minimum the
+# chart requires, and nothing else, so each case overrides one value.
+publicURL: https://iris.corp.example
+
+# SSO needs bearer products (nginx sends the access token as a bearer), so the products are
+# restated here with memory-tls as bearer; every other field matches values-test.yaml.
+products:
+  - key: memory
+    label: "Agent Memory"
+    product: agent_memory
+    authScheme: bearer
+    healthPath: /health/readiness
+    upstream:
+      host: redis-agent-memory-controlplane-onprem.redis-agent-memory.svc.cluster.local
+      port: 8080
+      basePath: /v1
+      scheme: http
+  - key: memory-tls
+    label: "Agent Memory TLS"
+    product: agent_memory
+    authScheme: bearer
+    healthPath: /health/readiness
+    upstream:
+      host: memory-tls.redis-agent-memory.svc.cluster.local
+      port: 8443
+      basePath: /v1
+      scheme: https
+      caSecretName: memory-tls-ca
+  - key: lens
+    label: "Lens"
+    product: lens
+    authScheme: bearer
+    healthPath: /health/readiness
+    instanceId: test
+    upstream:
+      host: lens-dataplane.lens.svc.cluster.local
+      port: 9000
+      basePath: ""
+      scheme: https
+      insecureSkipVerify: true
+  - key: playbook
+    label: Playbook
+    product: playbook
+    authScheme: bearer
+    healthPath: /health/readiness
+    upstream:
+      host: playbook-controlplane.redis-ai.svc.cluster.local
+      port: 9200
+      basePath: ""
+      scheme: http
+  - key: playbook-dp
+    label: Playbook DP
+    product: playbook
+    authScheme: bearer
+    healthPath: /health/readiness
+    showInNavigation: false
+    maxRequestBodyBytes: 8388608
+    upstream:
+      host: playbook-dataplane.redis-ai.svc.cluster.local
+      port: 9201
+      basePath: ""
+      scheme: http
+  - key: context-gateway
+    label: Context Gateway
+    product: context_gateway
+    authScheme: bearer
+    healthPath: /health/readiness
+    upstream:
+      host: context-gateway-controlplane.redis-ai.svc.cluster.local
+      port: 9100
+      basePath: ""
+      scheme: http
+  - key: context-gateway-dp
+    label: Context Gateway DP
+    product: context_gateway
+    authScheme: bearer
+    healthPath: /health/liveness
+    showInNavigation: false
+    protectedResourceMetadata: true
+    upstream:
+      host: context-gateway-dataplane.redis-ai.svc.cluster.local
+      port: 8083
+      basePath: ""
+      scheme: http
+  - key: api-keys
+    label: API keys
+    product: identity
+    authScheme: bearer
+    healthPath: /health/readiness
+    upstream:
+      host: iris-identity-service.redis-ai.svc.cluster.local
+      port: 9200
+      basePath: ""
+      scheme: http
+
+  - key: intent
+    label: Intent Router
+    product: intent
+    authScheme: bearer
+    healthPath: /health/readiness
+    upstream:
+      host: intent-redis-intent-router-controlplane.redis-ai.svc.cluster.local
+      port: 9400
+      basePath: ""
+      scheme: http
+  - key: intent-data
+    label: Intent Router DP
+    product: intent
+    authScheme: bearer
+    healthPath: /health/readiness
+    showInNavigation: false
+    upstream:
+      host: intent-redis-intent-router-dataplane.redis-ai.svc.cluster.local
+      port: 9401
+      basePath: ""
+      scheme: http
+
+sso:
+  enabled: true
+  issuer: https://idp.corp.example/realms/iris
+  clientId: iris-ui
+  clientCredential:
+    existingSecret: idp-client
+  redis:
+    existingSecret: ui-auth-redis
+  roleMappings:
+    agent_memory:
+      iris-admins: product_admin
+    playbook:
+      iris-admins: product_admin

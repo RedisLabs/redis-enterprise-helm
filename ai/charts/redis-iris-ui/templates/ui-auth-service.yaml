@@ -1,0 +1,11 @@
+{{- if .Values.sso.enabled }}
+{{- include "redis-onprem.service" (dict
+  "root" .
+  "name" (include "ui.auth.fullname" .)
+  "component" "ui-auth"
+  "labelsTemplate" "ui.labels"
+  "selectorLabelsTemplate" "ui.selectorLabels"
+  "type" "ClusterIP"
+  "port" 9000
+) }}
+{{- end }}
