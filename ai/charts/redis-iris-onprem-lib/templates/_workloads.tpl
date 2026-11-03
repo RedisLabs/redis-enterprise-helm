@@ -56,6 +56,10 @@ spec:
   {{- if not .autoscalingEnabled }}
   replicas: {{ .replicas }}
   {{- end }}
+  {{- with .strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include .selectorLabelsTemplate $root | nindent 6 }}
@@ -225,6 +229,32 @@ spec:
           type: Utilization
           averageUtilization: {{ .targetMemoryUtilizationPercentage }}
     {{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+redis-onprem.pdb renders a policy/v1 PodDisruptionBudget for one Deployment, only when enabled and the
+Deployment keeps more than one Pod: minReplicas under autoscaling, else replicas. With one Pod,
+maxUnavailable: 1 would allow the outage it is meant to stop, and a stricter budget would block drains.
+*/}}
+{{- define "redis-onprem.pdb" -}}
+{{- $root := .root -}}
+{{- $replicas := .replicas -}}
+{{- if .autoscalingEnabled }}{{ $replicas = .minReplicas }}{{ end -}}
+{{- if and .enabled (gt (int $replicas) 1) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .name }}
+  labels:
+    {{- include .labelsTemplate $root | nindent 4 }}
+    app.kubernetes.io/component: {{ .component }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include .selectorLabelsTemplate $root | nindent 6 }}
+      app.kubernetes.io/component: {{ .component }}
 {{- end }}
 {{- end }}
 
