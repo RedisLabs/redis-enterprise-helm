@@ -1,0 +1,135 @@
+{{- $_ := required "image.tag is required" .Values.image.tag -}}
+{{- /*
+Under redis-iris (TDD MOD-19479, "Admin Token fallback mode"): IdP login needs the IdP once for the
+whole suite and the UI's client, session store and public URL. This chart renders before the
+umbrella's own guards, so it names the umbrella fields; Admin Token mode needs none of them.
+*/ -}}
+{{- $umbrella := include "redis-onprem.suite.enabled" . -}}
+{{- if and $umbrella .Values.sso.enabled -}}
+{{- $iris := include "redis-onprem.suite.iris" . | fromJson -}}
+{{- $off := "or set ui.sso.enabled=false for Admin Token mode" -}}
+{{- range $field := list "issuer" "jwksURI" -}}
+{{- if not (dig "auth" "oidc" $field "" $iris) -}}
+{{- fail (printf "global.iris.auth.oidc.%s: required with ui.sso.enabled, the IdP every Iris service validates; set it, %s" $field $off) -}}
+{{- end -}}
+{{- end -}}
+{{- if not $iris.publicURL -}}
+{{- fail (printf "global.iris.publicURL: required with ui.sso.enabled, the IdP redirect URI is <publicURL>/auth/callback; set it, %s" $off) -}}
+{{- end -}}
+{{- range $field, $value := dict "clientId" .Values.sso.clientId "clientCredential.existingSecret" .Values.sso.clientCredential.existingSecret "redis.existingSecret" .Values.sso.redis.existingSecret -}}
+{{- if not $value -}}
+{{- fail (printf "ui.sso.%s: required with ui.sso.enabled; set it, %s" $field $off) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $seenKeys := dict -}}
+{{- range (include "ui.resolved" $ | fromJson).products -}}
+{{- if hasKey $seenKeys .key -}}
+{{- fail (printf "products[%s].key is declared more than once -- each product's key must be unique, since it names both its /api/<key>/* location and its ConfigMap/Secret volumes" .key) -}}
+{{- end -}}
+{{- $_ := set $seenKeys .key true -}}
+{{- /* default "": Helm before v3.10 evaluates every and argument, and derived routes have no host. */ -}}
+{{- if and .upstream.host (not (contains "." (default "" .upstream.host))) -}}
+{{- fail (printf "products[%s].upstream.host must be a fully-qualified Service host (e.g. <service>.<namespace>.svc.cluster.local), not a bare name like %q -- nginx's own resolver (unlike the OS resolver) never applies Kubernetes' DNS search-domain suffixing, so a bare Service name only happens to resolve on Docker's own embedded DNS, not in a real cluster" .key .upstream.host) -}}
+{{- end -}}
+{{- if hasSuffix "/" .upstream.basePath -}}
+{{- fail (printf "products[%s].upstream.basePath must not end with \"/\" (got %q) -- the reverse-proxy block already appends a trailing slash, so a trailing slash here doubles it and breaks upstream path matching" .key .upstream.basePath) -}}
+{{- end -}}
+{{- if and (eq .product "lens") (ne .upstream.basePath "") -}}
+{{- fail (printf "products[%s].upstream.basePath must be empty for a lens route (got %q) -- the Lens SDK paths already include /iris/data/v1beta1/lens/instances/<instanceId>, so set basePath: \"\" and put the Lens chart's instance.id in instanceId" .key .upstream.basePath) -}}
+{{- end -}}
+{{- if ne .upstream.scheme "https" -}}
+{{- if or .upstream.caSecretName .upstream.insecureSkipVerify -}}
+{{- fail (printf "products[%s].upstream: caSecretName and insecureSkipVerify only apply to scheme: https" .key) -}}
+{{- end -}}
+{{- else -}}
+{{- if and .upstream.caSecretName .upstream.insecureSkipVerify -}}
+{{- fail (printf "products[%s].upstream: caSecretName and insecureSkipVerify are mutually exclusive" .key) -}}
+{{- end -}}
+{{- if and (not .upstream.caSecretName) (not .upstream.insecureSkipVerify) -}}
+{{- fail (printf "products[%s].upstream: scheme: https requires either caSecretName or insecureSkipVerify: true -- there is no silent default trust" .key) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if and .Values.ingress.enabled (not (include "ui.resolved" $ | fromJson).ingress.host) -}}
+{{- if $umbrella -}}
+{{- fail "global.iris.publicURL: required with ui.ingress.enabled, whose host it names; set it, or set ui.ingress.enabled=false" -}}
+{{- end -}}
+{{- fail "ingress.host is required when ingress.enabled is true" -}}
+{{- end -}}
+{{- if and .Values.ingress.enabled (not (regexMatch "^[^/:@[:space:]]+$" (include "ui.resolved" $ | fromJson).ingress.host)) -}}
+{{- fail (printf "ingress.host must be a bare hostname such as iris.corp.example, with no scheme, port or path, got %q" (include "ui.resolved" $ | fromJson).ingress.host) -}}
+{{- end -}}
+{{- with (include "ui.resolved" $ | fromJson).publicURL -}}
+{{- if not (or (regexMatch "^https://" .) (regexMatch "^http://localhost([:/?#]|$)" .)) -}}
+{{- fail (printf "publicURL must start with https:// (http://localhost[:port] is allowed for local development), got %q" .) -}}
+{{- end -}}
+{{- if not (regexMatch "^https?://[^/?#@:[:space:]]+(:[0-9]{1,5})?/?$" .) -}}
+{{- fail (printf "publicURL must be a dedicated hostname with an optional numeric port and no path, query, fragment or credentials (e.g. https://iris.example.internal), got %q" .) -}}
+{{- end -}}
+{{- range regexFindAll ":[0-9]+" (trimSuffix "/" (regexReplaceAll "^https?://" . "")) 1 -}}
+{{- $port := atoi (trimPrefix ":" .) -}}
+{{- if or (lt $port 1) (gt $port 65535) -}}
+{{- fail (printf "publicURL port must be between 1 and 65535, got %d" $port) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if .Values.sso.enabled -}}
+{{- if not (include "ui.resolved" $ | fromJson).publicURL -}}
+{{- fail "sso.enabled requires publicURL: the IdP redirect URI is <publicURL>/auth/callback" -}}
+{{- end -}}
+{{- /*
+The service refuses an issuer with credentials, a query or a fragment (OIDCConfig.validateIssuer), and
+would then crash-loop: the host is everything up to the first / ? or #, and must hold no @.
+*/ -}}
+{{- $issuer := (include "ui.resolved" $ | fromJson).sso.issuer | default "" -}}
+{{- $httpsIssuer := regexMatch "^https://[^/?#@[:space:]]+(/[^?#[:space:]]*)?$" $issuer -}}
+{{- $httpIssuer := regexMatch "^http://[^/?#@[:space:]]+(/[^?#[:space:]]*)?$" $issuer -}}
+{{- if not (or $httpsIssuer (and (include "ui.resolved" $ | fromJson).sso.allowInsecureTransport $httpIssuer)) -}}
+{{- fail (printf "sso.issuer must be an https:// URL with a host and no credentials, query or fragment when sso.enabled is true (an http:// issuer needs sso.allowInsecureTransport, development only), got %q" $issuer) -}}
+{{- end -}}
+{{- if not .Values.sso.clientId -}}
+{{- fail "sso.clientId is required when sso.enabled is true" -}}
+{{- end -}}
+{{- if not (has "openid" .Values.sso.scopes) -}}
+{{- fail "sso.scopes must include openid: the UI auth service refuses to start without it. Setting sso.scopes replaces the default list, so keep openid (and offline_access) when adding the Iris API scope" -}}
+{{- end -}}
+{{- if not .Values.sso.clientCredential.existingSecret -}}
+{{- fail "sso.clientCredential.existingSecret is required when sso.enabled is true: the IdP client credential is always supplied by the operator" -}}
+{{- end -}}
+{{- if and (not .Values.sso.clientCredential.clientSecretKey) (not .Values.sso.clientCredential.privateKeyKey) -}}
+{{- fail "set sso.clientCredential.clientSecretKey (a client secret) or sso.clientCredential.privateKeyKey (a private key for private_key_jwt)" -}}
+{{- end -}}
+{{- if not .Values.sso.redis.existingSecret -}}
+{{- fail "sso.redis.existingSecret is required when sso.enabled is true: the session store URL carries credentials and must come from a Secret" -}}
+{{- end -}}
+{{- if not (include "ui.resolved" $ | fromJson).products -}}
+{{- fail "sso.enabled requires at least one entry in products: the UI auth service only authorises the routes it is given" -}}
+{{- end -}}
+{{- $bufferParts := splitList " " .Values.nginx.limits.authProxyBuffers -}}
+{{- $bufferCount := int (index $bufferParts 0) -}}
+{{- $bufferBytes := include "ui.sizeBytes" (index $bufferParts 1) | int64 -}}
+{{- if ge (include "ui.authBusyBuffersBytes" . | int64) (mul (sub $bufferCount 1) $bufferBytes) -}}
+{{- fail (printf "nginx.limits.authProxyBufferSize (%s) is too large for nginx.limits.authProxyBuffers (%s): nginx needs the larger of the two sizes to stay below all the buffers minus one. Raise the number or size of the buffers, or lower authProxyBufferSize" .Values.nginx.limits.authProxyBufferSize .Values.nginx.limits.authProxyBuffers) -}}
+{{- end -}}
+{{- with (include "ui.resolved" $ | fromJson).sso.accessTokenIssuer -}}
+{{- /* ui-auth refuses credentials, a query or a fragment (OIDCConfig.validateAccessToken), and would crash-loop. */ -}}
+{{- if not (regexMatch "^https?://[^/?#@[:space:]]+(/[^?#[:space:]]*)?$" .) -}}
+{{- fail (printf "sso.accessTokenIssuer must be an http:// or https:// URL with a host and no credentials, query or fragment, got %q" .) -}}
+{{- end -}}
+{{- end -}}
+{{- range (include "ui.resolved" $ | fromJson).products -}}
+{{- if eq .authScheme "apiKey" -}}
+{{- fail (printf "products[%s].authScheme: apiKey is not supported with sso.enabled: nginx sends the session's access token as Authorization: Bearer, which an X-API-Key product would reject. Use bearer, or leave SSO off" .key) -}}
+{{- end -}}
+{{- end -}}
+{{- $usedProducts := list -}}
+{{- range (include "ui.resolved" $ | fromJson).products -}}
+{{- $usedProducts = append $usedProducts .product -}}
+{{- end -}}
+{{- range $product, $_ := (include "ui.resolved" $ | fromJson).sso.roleMappings -}}
+{{- if not (has $product $usedProducts) -}}
+{{- fail (printf "sso.roleMappings key %q is not a product value used in products (%s)" $product (join ", " ($usedProducts | uniq | sortAlpha))) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

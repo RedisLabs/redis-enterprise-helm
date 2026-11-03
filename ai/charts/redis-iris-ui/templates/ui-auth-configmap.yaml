@@ -1,0 +1,12 @@
+{{- if .Values.sso.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ui.auth.configName" . }}
+  labels:
+    {{- include "ui.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ui-auth
+data:
+  config.yaml: |
+    {{- include "ui.auth.config" . | nindent 4 }}
+{{- end }}

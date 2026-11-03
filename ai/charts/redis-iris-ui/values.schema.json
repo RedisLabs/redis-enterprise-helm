@@ -1,0 +1,255 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "image",
+    "serviceAccount",
+    "service"
+  ],
+  "properties": {
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "image": {
+      "type": "object",
+      "required": ["repository", "tag"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"]
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "serviceAccount": {
+      "type": "object",
+      "required": ["create"],
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": { "type": "object" }
+      }
+    },
+    "service": {
+      "type": "object",
+      "required": ["type", "port"],
+      "properties": {
+        "type": { "type": "string", "enum": ["ClusterIP"] },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "products": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key"],
+        "properties": {
+          "product": {
+            "type": "string",
+            "enum": ["agent_memory", "playbook", "lens", "identity", "context_gateway", "intent"],
+            "description": "The Iris product this route belongs to. Routes of one product (for example playbook and playbook-dp) share its value. identity is the Identity Service control API, which backs the SPA's API keys page."
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+          },
+          "label": { "type": "string", "minLength": 1 },
+          "authScheme": { "type": "string", "enum": ["bearer", "apiKey"] },
+          "healthPath": { "type": "string", "pattern": "^/" },
+          "showInNavigation": { "type": "boolean" },
+          "protectedResourceMetadata": {
+            "type": "boolean",
+            "description": "Serve GET /api/<key>/.well-known/oauth-protected-resource/... (RFC 9728 metadata) without a session check, and pass no credential or session cookie to the product. Every other path of the route stays session-checked with sso.enabled. Set it on context-gateway-dp, whose sign-in metadata the console reads."
+          },
+          "instanceId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+            "description": "Lens routes only: the Lens chart's instance.id. The SPA reads this instance. Defaults to default."
+          },
+          "maxRequestBodyBytes": {
+            "type": "integer", "minimum": 1,
+            "description": "Per-product gateway request-body limit; defaults to 1 MiB. Match the upstream product's request limit: 8388608 for Playbook DP."
+          },
+          "upstream": {
+            "type": "object",
+            "required": ["port", "basePath", "scheme"],
+            "anyOf": [{ "required": ["host"] }, { "required": ["service"] }],
+            "properties": {
+              "host": { "type": "string", "minLength": 1 },
+              "service": {
+                "type": "string",
+                "pattern": "^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$",
+                "description": "A Service in the release namespace. Used when host is unset: the host becomes <service>.<release namespace>.svc.<clusterDomain>."
+              },
+              "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+              "basePath": { "type": "string", "pattern": "^(/.*)?$" },
+              "scheme": { "type": "string", "enum": ["http", "https"] },
+              "caSecretName": { "type": "string" },
+              "insecureSkipVerify": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "publicURL": {
+      "type": "string",
+      "description": "Public HTTPS URL operators use to reach the UI. Empty by default; the https:// rule is enforced at render time."
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "host": { "type": "string" },
+        "annotations": { "type": "object" },
+        "tls": {
+          "type": "object",
+          "properties": {
+            "secretName": { "type": "string" }
+          }
+        }
+      }
+    },
+    "clusterDomain": { "type": "string", "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$", "description": "The cluster DNS domain; completes the UI auth Service name for nginx's resolver. Empty means cluster.local (global.iris.clusterDomain under redis-iris)." },
+    "sso": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "issuer": { "type": "string" },
+        "allowInsecureTransport": { "type": ["boolean", "null"] },
+        "clientId": { "type": "string" },
+        "clientCredential": {
+          "type": "object",
+          "properties": {
+            "existingSecret": { "type": "string" },
+            "clientSecretKey": { "type": "string", "pattern": "^[-._a-zA-Z0-9]*$" },
+            "privateKeyKey": { "type": "string", "pattern": "^[-._a-zA-Z0-9]*$" },
+            "privateKeyID": { "type": "string" }
+          }
+        },
+        "scopes": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "claims": {
+          "type": "object",
+          "properties": {
+            "user": { "type": "string", "minLength": 1 },
+            "email": { "type": "string", "minLength": 1 }
+          }
+        },
+        "roleClaims": { "type": ["array", "null"], "items": { "type": "string", "minLength": 1 } },
+        "audience": { "type": "string" },
+        "audienceParameter": { "type": "string", "enum": ["none", "audience", "resource"] },
+        "accessTokenIssuer": { "type": "string" },
+        "session": {
+          "type": "object",
+          "properties": {
+            "existingSecret": { "type": "string" },
+            "secretKey": { "type": "string", "minLength": 1, "pattern": "^[-._a-zA-Z0-9]+$" },
+            "idleTimeout": { "type": "string", "pattern": "^([1-9][0-9]*h([1-9][0-9]*m)?([1-9][0-9]*s)?|[1-9][0-9]*m([1-9][0-9]*s)?|[1-9][0-9]*s)$" },
+            "absoluteLifetime": { "type": "string", "pattern": "^([1-9][0-9]*h([1-9][0-9]*m)?([1-9][0-9]*s)?|[1-9][0-9]*m([1-9][0-9]*s)?|[1-9][0-9]*s)$" }
+          }
+        },
+        "redis": {
+          "type": "object",
+          "properties": {
+            "existingSecret": { "type": "string" },
+            "urlsKey": { "type": "string", "minLength": 1, "pattern": "^[-._a-zA-Z0-9]+$" }
+          }
+        },
+        "tls": {
+          "type": "object",
+          "properties": {
+            "caCertSecret": { "type": "string" },
+            "caCertKey": { "type": "string", "minLength": 1, "pattern": "^[-._a-zA-Z0-9]+$" }
+          }
+        },
+        "roleMappings": {
+          "type": ["object", "null"],
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": { "type": "string", "enum": ["suite_admin", "product_admin", "operator", "viewer"] }
+          }
+        }
+      }
+    },
+    "nginx": {
+      "type": "object",
+      "properties": {
+        "limits": {
+          "type": "object",
+          "properties": {
+            "authClientMaxBodySize": { "type": "string", "pattern": "^[0-9]+[kKmM]?$" },
+            "authProxyBufferSize": { "type": "string", "pattern": "^[0-9]+[kKmM]?$" },
+            "authProxyBuffers": { "type": "string", "pattern": "^([4-9]|[1-9][0-9]+) [0-9]+[kKmM]?$", "description": "At least 4 buffers: nginx refuses a smaller set with its default proxy_busy_buffers_size." },
+            "authProxyConnectTimeout": { "type": "string", "pattern": "^[0-9]+(ms|s|m)?$" },
+            "authProxyReadTimeout": { "type": "string", "pattern": "^[0-9]+(ms|s|m)?$" }
+          }
+        }
+      }
+    },
+    "uiAuth": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string", "minLength": 1 },
+            "tag": { "type": "string" },
+            "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+          }
+        },
+        "replicas": { "type": "integer", "minimum": 1 },
+        "resources": { "type": "object" },
+        "podSecurityContext": { "type": "object" },
+        "securityContext": { "type": "object" },
+        "livenessProbe": { "type": "object" },
+        "networkPolicy": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "egress": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+          }
+        },
+        "podAnnotations": { "type": "object" },
+        "nodeSelector": { "type": "object" },
+        "tolerations": { "type": "array" },
+        "affinity": { "type": "object" }
+      }
+    },
+    "resources": { "type": "object" },
+    "tests": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" }
+      }
+    },
+    "podSecurityContext": { "type": "object" },
+    "securityContext": { "type": "object" },
+    "livenessProbe": { "type": "object" },
+    "readinessProbe": { "type": "object" },
+    "podAnnotations": { "type": "object" },
+    "podLabels": { "type": "object" },
+    "nodeSelector": { "type": "object" },
+    "tolerations": { "type": "array" },
+    "affinity": { "type": "object" }
+  },
+  "allOf": [
+    {
+      "description": "Standalone (no global.iris) every products entry is a complete route; under redis-iris an entry overrides a derived route by key.",
+      "if": { "not": { "required": ["global"], "properties": { "global": { "required": ["iris"] } } } },
+      "then": {
+        "properties": {
+          "products": { "items": { "required": ["key", "label", "product", "authScheme", "healthPath", "upstream"] } }
+        }
+      }
+    }
+  ]
+}

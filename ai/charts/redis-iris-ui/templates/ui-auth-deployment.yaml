@@ -1,0 +1,35 @@
+{{- if .Values.sso.enabled }}
+{{- /*
+The UI auth service. It shares the chart's name and instance labels with the gateway and is told
+apart by app.kubernetes.io/component: ui-auth, so neither Service selects the other's pods.
+Container port 9000 is the service's default (common/infrastructure/server.Config).
+*/ -}}
+{{- include "redis-onprem.deployment" (dict
+  "root" .
+  "name" (include "ui.auth.fullname" .)
+  "component" "ui-auth"
+  "labelsTemplate" "ui.labels"
+  "selectorLabelsTemplate" "ui.selectorLabels"
+  "replicas" .Values.uiAuth.replicas
+  "annotationsTemplate" "ui.auth.annotations"
+  "podAnnotations" .Values.uiAuth.podAnnotations
+  "imagePullSecrets" (include "redis-onprem.suite.imagePullSecrets" . | fromJsonArray)
+  "serviceAccountName" (include "ui.serviceAccountName" .)
+  "automountServiceAccountToken" false
+  "podSecurityContext" .Values.uiAuth.podSecurityContext
+  "containerName" "ui-auth"
+  "argsTemplate" "ui.auth.args"
+  "envTemplate" "ui.auth.env"
+  "containerSecurityContext" .Values.uiAuth.securityContext
+  "image" (include "ui.auth.image" . | fromJson)
+  "port" 9000
+  "livenessProbe" .Values.uiAuth.livenessProbe
+  "readinessProbe" (dict "httpGet" (dict "path" "/readyz" "port" "http"))
+  "resources" .Values.uiAuth.resources
+  "volumeMountsTemplate" "ui.auth.volumeMounts"
+  "volumesTemplate" "ui.auth.volumes"
+  "nodeSelector" .Values.uiAuth.nodeSelector
+  "affinity" .Values.uiAuth.affinity
+  "tolerations" .Values.uiAuth.tolerations
+) }}
+{{- end }}
