@@ -436,4 +436,27 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-iris-onprem-lib-0.1.0/redis-iris-onprem-lib-0.1.0.tgz
     version: 0.1.0
-generated: "2026-11-03T09:08:37.484404701Z"
+  redis-iris-ui:
+  - apiVersion: v2
+    appVersion: 0.1.0
+    created: "2026-11-03T18:44:19.594681062Z"
+    dependencies:
+    - name: redis-iris-onprem-lib
+      repository: https://helm.redis.io/ai
+      version: 0.4.2
+    description: 'On-prem UI gateway for Iris products: an nginx-served SPA, its runtime
+      product config, and a reverse proxy to each deployed product''s control plane.'
+    digest: 8c0334759521d39a51dfc13232c4e46e0f879a3b81d1fa41a7bee3666aca3126
+    home: https://github.com/Redislabsdev/iris
+    icon: https://raw.githubusercontent.com/RedisLabs/redis-enterprise-helm/main/ai/charts/redis-iris-ui/icon.svg
+    keywords:
+    - redis
+    - ui
+    - ai
+    - on-prem
+    name: redis-iris-ui
+    type: application
+    urls:
+    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-iris-ui-0.1.0/redis-iris-ui-0.1.0.tgz
+    version: 0.1.0
+generated: "2026-11-03T18:44:19.59471295Z"
