@@ -156,6 +156,30 @@ expect "$out" ids.roleBindings '[{"claim_value":"admins","role":"suite_admin","s
 expect_fail 'group "admins" is bound to both "suite_admin" and "viewer" for agent_memory' "duplicate group per product" \
   "${UMBRELLA[@]}" --set-json 'global.iris.auth.roleBindings=[{"group":"admins","role":"suite_admin"},{"group":"admins","role":"viewer","product":"agent_memory"}]'
 
+echo "== redis-onprem.deployment strategy and redis-onprem.pdb =="
+has() { grep -qxF -- "$2" <<<"$1" || fail "$3: missing [$2]"; }
+lacks() { ! grep -qF -- "$2" <<<"$1" || fail "$3: unexpected [$2]"; }
+workload() { render -s templates/workloads.yaml --set workload.replicas=2 "$@"; }
+STRATEGY='workload.strategy={"type":"RollingUpdate","rollingUpdate":{"maxUnavailable":0,"maxSurge":1}}'
+out=$(workload)
+lacks "$out" "strategy:" "strategy unset renders no strategy key"
+lacks "$out" "kind: PodDisruptionBudget" "PDB disabled renders nothing"
+out=$(workload --set-json "$STRATEGY")
+has "$out" "  strategy:" "strategy set renders a strategy key"
+has "$out" "    type: RollingUpdate" "strategy type verbatim"
+has "$out" "      maxUnavailable: 0" "strategy maxUnavailable verbatim"
+has "$out" "      maxSurge: 1" "strategy maxSurge verbatim"
+out=$(workload --set workload.pdbEnabled=true --set workload.replicas=1)
+lacks "$out" "kind: PodDisruptionBudget" "PDB enabled with one replica renders nothing"
+out=$(workload --set workload.pdbEnabled=true)
+has "$out" "kind: PodDisruptionBudget" "PDB enabled with two replicas"
+has "$out" "  maxUnavailable: 1" "PDB allows one unavailable Pod"
+has "$out" "      app.kubernetes.io/component: server" "PDB selects the Deployment component"
+out=$(workload --set workload.pdbEnabled=true --set workload.autoscalingEnabled=true --set workload.minReplicas=2 --set workload.replicas=1)
+has "$out" "kind: PodDisruptionBudget" "autoscaling minReplicas 2 renders a PDB"
+out=$(workload --set workload.pdbEnabled=true --set workload.autoscalingEnabled=true --set workload.minReplicas=1)
+lacks "$out" "kind: PodDisruptionBudget" "autoscaling minReplicas 1 renders nothing, whatever replicas says"
+
 if (( failures > 0 )); then
   echo "$failures suite helper assertion(s) failed" >&2
   exit 1
