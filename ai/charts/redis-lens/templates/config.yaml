@@ -1,0 +1,112 @@
+{{- $suite := include "redis-lens.suite" . | fromJson -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "redis-lens.dataplaneName" . }}-config
+  labels:
+    {{- include "redis-lens.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dataplane
+data:
+  lens-dataplane.yaml: |
+    profile: prod
+    tenant_id: {{ $suite.tenantId | quote }}
+    server:
+      host: 0.0.0.0
+      port: {{ .Values.dataplane.service.port }}
+      timeout: 30s
+    auth:
+      method: agent_key
+      agent_keys:
+        enabled: true
+        product: lens
+        introspection:
+          base_url: {{ include "redis-lens.identityServiceBaseURL" . | quote }}
+          product: lens
+          allow_insecure_transport: {{ $suite.allowInsecureTransport }}
+          credential:
+            token_file: /etc/identity-service/runtime/lens-dataplane/token
+      {{- if $suite.dataplaneOIDC.enabled }}
+      oidc:
+        {{- include "redis-lens.oidcValidation" . | nindent 8 }}
+      {{- end }}
+    license:
+      license_path: /etc/lens/license/{{ $suite.license.secretKey }}
+    ingest:
+      enabled: {{ .Values.ingest.enabled }}
+      region: {{ .Values.ingest.region | quote }}
+      content_ttl: {{ .Values.instance.retention.contentTTL | quote }}
+      active_requests: 100
+      waiting_requests: 100
+      admission_wait: 5s
+      quota:
+        span_rate: 10000
+        span_burst: 10000
+        byte_rate: 104857600
+        byte_burst: 104857600
+    storage:
+      key_prefix: {{ .Values.storage.keyPrefix | quote }}
+    assembler:
+      instance_ids:
+        - {{ .Values.instance.id | quote }}
+      # Each worker pod overrides this with its own name (LENS_ASSEMBLER_CONSUMER)
+      # so replicas never share a consumer in the group.
+      consumer: lens-worker
+      poll_interval: 100ms
+      sweep_interval: 1s
+      read_block: 100ms
+      claim_min_idle: 1m
+      batch_size: 64
+      quiescence: 1s
+      orphan_horizon: 10m
+      max_spans_per_turn: 1000
+      max_assembly_bytes: 8388608
+      max_replay_entries: 10000
+      max_delivery_ids_per_turn: 10000
+      max_text_bytes: 512
+      score_bands:
+        - band: high
+          at_least: 0.8
+        - band: medium
+          at_least: 0.5
+        - band: low
+          at_least: 0
+    opentelemetry:
+      enable_tracing: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "redis-lens.controlplaneName" . }}-config
+  labels:
+    {{- include "redis-lens.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controlplane
+data:
+  lens-controlplane.yaml: |
+    profile: prod
+    tenant_id: {{ $suite.tenantId | quote }}
+    server:
+      host: 0.0.0.0
+      port: {{ .Values.controlplane.service.port }}
+      timeout: 30s
+    auth:
+      type: admin-token
+      admin_token:
+        token_file: /etc/lens/credentials/admin/token
+      internal_token:
+        token_file: /etc/lens/credentials/internal/token
+      {{- if $suite.controlplaneOIDC }}
+      oidc:
+        {{- include "redis-lens.oidcValidation" . | nindent 8 }}
+      {{- end }}
+    license:
+      license_path: /etc/lens/license/{{ $suite.license.secretKey }}
+    storage:
+      key_prefix: {{ .Values.storage.keyPrefix | quote }}
+    instance:
+      id: {{ .Values.instance.id | quote }}
+      retention:
+        stream_trim: {{ .Values.instance.retention.streamTrim | quote }}
+        content_ttl: {{ .Values.instance.retention.contentTTL | quote }}
+        index_retention: {{ .Values.instance.retention.indexRetention | quote }}
+    opentelemetry:
+      enable_tracing: false

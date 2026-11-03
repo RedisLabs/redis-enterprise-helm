@@ -1,0 +1,14 @@
+# Twin of intent/tools/release/release-redis-intent-router.yaml and playbook/tools/release/release-redis-agent-playbook.yaml; keep in sync.
+name: Release Redis Lens Chart
+
+on:
+  workflow_dispatch:
+
+jobs:
+  call-release-workflow:
+    uses: ./.github/workflows/release-chart-reusable.yaml
+    with:
+      chart_name: redis-lens
+      chart_path: ai/charts/redis-lens
+      tag_prefix: redis-lens
+    secrets: inherit

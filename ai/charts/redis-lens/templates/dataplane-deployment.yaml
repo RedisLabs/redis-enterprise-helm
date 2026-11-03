@@ -1,0 +1,160 @@
+{{- define "redis-lens.dataplaneAnnotations" -}}
+checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum | quote }}
+{{- with .Values.storage.existingSecretChecksum }}
+checksum/storage-secret: {{ . | quote }}
+{{- end }}
+{{- with .Values.identityService.credential.existingSecretChecksum }}
+checksum/identity-credential: {{ . | quote }}
+{{- end }}
+{{- with .Values.license.existingSecretChecksum }}
+checksum/license: {{ . | quote }}
+{{- end }}
+{{- include "redis-lens.tlsCaAnnotation" . }}
+{{- end }}
+
+{{- define "redis-lens.workerAnnotations" -}}
+checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum | quote }}
+{{- with .Values.storage.existingSecretChecksum }}
+checksum/storage-secret: {{ . | quote }}
+{{- end }}
+{{- with .Values.license.existingSecretChecksum }}
+checksum/license: {{ . | quote }}
+{{- end }}
+{{- include "redis-lens.tlsCaAnnotation" . }}
+{{- end }}
+
+{{- define "redis-lens.dataplaneArgs" -}}
+- --mode
+- server
+- --config
+- /etc/lens/config/lens-dataplane.yaml
+- --config
+- /etc/lens/storage/storage.yaml
+{{- end }}
+
+{{- define "redis-lens.workerArgs" -}}
+- --mode
+- worker
+- --config
+- /etc/lens/config/lens-dataplane.yaml
+- --config
+- /etc/lens/storage/storage.yaml
+{{- end }}
+
+{{- define "redis-lens.dataplaneEnv" -}}
+{{ include "redis-lens.commonEnv" . }}
+{{- end }}
+
+{{- define "redis-lens.workerEnv" -}}
+- name: LENS_ASSEMBLER_CONSUMER
+  valueFrom:
+    fieldRef:
+      fieldPath: metadata.name
+{{ include "redis-lens.commonEnv" . }}
+{{- end }}
+
+{{- define "redis-lens.dataplaneSharedMounts" -}}
+- name: config
+  mountPath: /etc/lens/config
+  readOnly: true
+- name: storage
+  mountPath: /etc/lens/storage
+  readOnly: true
+{{ include "redis-lens.licenseMount" . }}
+{{- include "redis-lens.tlsCaMount" . }}
+{{- end }}
+
+{{- define "redis-lens.dataplaneSharedVolumes" -}}
+- name: config
+  configMap:
+    name: {{ include "redis-lens.dataplaneName" . }}-config
+- name: storage
+  secret:
+    secretName: {{ required "storage.existingSecret is required" .Values.storage.existingSecret }}
+    items:
+      - key: {{ .Values.storage.dataplaneKey }}
+        path: storage.yaml
+{{ include "redis-lens.licenseVolume" . }}
+{{- include "redis-lens.tlsCaVolume" . }}
+{{- end }}
+
+{{- define "redis-lens.dataplaneVolumeMounts" -}}
+{{ include "redis-lens.dataplaneSharedMounts" . }}
+- name: identity-credential
+  mountPath: /etc/identity-service/runtime/lens-dataplane
+  readOnly: true
+{{- end }}
+
+{{- define "redis-lens.dataplaneVolumes" -}}
+{{ include "redis-lens.dataplaneSharedVolumes" . }}
+- name: identity-credential
+  secret:
+    secretName: {{ (include "redis-lens.suite" . | fromJson).credential.existingSecret }}
+    items:
+      - key: {{ (include "redis-lens.suite" . | fromJson).credential.secretKey }}
+        path: token
+{{- end }}
+
+{{- $probes := dict
+  "livenessProbe" (dict "httpGet" (dict "path" "/health/liveness" "port" "http") "initialDelaySeconds" 5 "periodSeconds" 10)
+  "readinessProbe" (dict "httpGet" (dict "path" "/health/readiness" "port" "http") "initialDelaySeconds" 3 "periodSeconds" 5) -}}
+
+{{- include "redis-onprem.dataplane.deployment" (merge (dict
+  "root" .
+  "name" (include "redis-lens.dataplaneName" .)
+  "component" "dataplane"
+  "labelsTemplate" "redis-lens.labels"
+  "selectorLabelsTemplate" "redis-lens.selectorLabels"
+  "replicas" .Values.dataplane.server.replicaCount
+  "annotationsTemplate" "redis-lens.dataplaneAnnotations"
+  "podAnnotations" .Values.dataplane.server.podAnnotations
+  "podLabels" .Values.dataplane.server.podLabels
+  "imagePullSecrets" (include "redis-lens.suite" . | fromJson).imagePullSecrets
+  "serviceAccountName" (include "redis-lens.serviceAccountName" .)
+  "automountServiceAccountToken" false
+  "podSecurityContext" .Values.podSecurityContext
+  "containerName" "dataplane"
+  "argsTemplate" "redis-lens.dataplaneArgs"
+  "containerSecurityContext" .Values.securityContext
+  "image" .Values.dataplane.image
+  "envTemplate" "redis-lens.dataplaneEnv"
+  "port" .Values.dataplane.service.port
+  "resources" .Values.dataplane.server.resources
+  "volumeMountsTemplate" "redis-lens.dataplaneVolumeMounts"
+  "volumesTemplate" "redis-lens.dataplaneVolumes"
+  "nodeSelector" .Values.dataplane.server.nodeSelector
+  "affinity" .Values.dataplane.server.affinity
+  "tolerations" .Values.dataplane.server.tolerations
+) $probes) }}
+---
+{{- /* The worker runs the same image in --mode worker. It serves only probes on
+  the same port, takes no customer traffic, and so gets no Service and no
+  Identity Service credential. Its own component label keeps it out of the
+  data-plane Service's selector. */}}
+{{ include "redis-onprem.dataplane.deployment" (merge (dict
+  "root" .
+  "name" (include "redis-lens.workerName" .)
+  "component" "worker"
+  "labelsTemplate" "redis-lens.labels"
+  "selectorLabelsTemplate" "redis-lens.selectorLabels"
+  "replicas" .Values.dataplane.worker.replicaCount
+  "annotationsTemplate" "redis-lens.workerAnnotations"
+  "podAnnotations" .Values.dataplane.worker.podAnnotations
+  "podLabels" .Values.dataplane.worker.podLabels
+  "imagePullSecrets" (include "redis-lens.suite" . | fromJson).imagePullSecrets
+  "serviceAccountName" (include "redis-lens.serviceAccountName" .)
+  "automountServiceAccountToken" false
+  "podSecurityContext" .Values.podSecurityContext
+  "containerName" "worker"
+  "argsTemplate" "redis-lens.workerArgs"
+  "containerSecurityContext" .Values.securityContext
+  "image" .Values.dataplane.image
+  "envTemplate" "redis-lens.workerEnv"
+  "port" .Values.dataplane.service.port
+  "resources" .Values.dataplane.worker.resources
+  "volumeMountsTemplate" "redis-lens.dataplaneSharedMounts"
+  "volumesTemplate" "redis-lens.dataplaneSharedVolumes"
+  "nodeSelector" .Values.dataplane.worker.nodeSelector
+  "affinity" .Values.dataplane.worker.affinity
+  "tolerations" .Values.dataplane.worker.tolerations
+) $probes) }}
