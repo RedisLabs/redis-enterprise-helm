@@ -1,20 +1,19 @@
 apiVersion: v2
-name: redis-iris-ui
-description: >-
-  On-prem UI gateway for Iris products: an nginx-served SPA, its runtime
-  product config, and a reverse proxy to each deployed product's control
-  plane.
-type: application
-version: 0.1.0
-appVersion: "0.1.0"
-icon: https://raw.githubusercontent.com/RedisLabs/redis-enterprise-helm/main/ai/charts/redis-iris-ui/icon.svg
-home: https://github.com/Redislabsdev/iris
-keywords:
-  - redis
-  - ui
-  - ai
-  - on-prem
+appVersion: 1.0.0
 dependencies:
-  - name: redis-iris-onprem-lib
-    version: 0.4.2
-    repository: https://helm.redis.io/ai
+- name: redis-iris-onprem-lib
+  repository: https://helm.redis.io/ai
+  version: 0.5.0
+description: 'On-prem UI gateway for Iris products: an nginx-served SPA, its runtime
+  product config, and a reverse proxy to each deployed product''s control plane.'
+home: https://github.com/Redislabsdev/iris
+icon: https://raw.githubusercontent.com/RedisLabs/redis-enterprise-helm/main/ai/charts/redis-iris-ui/icon.svg
+keywords:
+- redis
+- ui
+- ai
+- on-prem
+kubeVersion: '>=1.28.0-0'
+name: redis-iris-ui
+type: application
+version: 1.0.0

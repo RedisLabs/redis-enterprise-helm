@@ -1,5 +1,5 @@
-# Representative override fixture for template-render.sh — fills in the
-# fields values.yaml deliberately leaves empty (image.tag) and exercises
+# Representative override fixture for template-render.sh — pins image.tag
+# (values.yaml defaults it to the chart version) and exercises
 # all three upstream shapes (http, https+CA, https+insecureSkipVerify),
 # without changing any structural default.
 image:
