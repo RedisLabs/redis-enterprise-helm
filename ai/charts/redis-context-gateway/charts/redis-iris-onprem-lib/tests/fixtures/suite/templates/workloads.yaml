@@ -1,0 +1,18 @@
+{{- /* Renders redis-onprem.deployment and redis-onprem.pdb from .Values.workload; nothing when unset. */ -}}
+{{- define "fixture.labels" -}}
+app.kubernetes.io/name: fixture
+{{- end -}}
+{{- define "fixture.args" -}}
+- serve
+{{- end -}}
+{{- with .Values.workload }}
+{{- $w := dict "root" $ "name" "fixture" "component" "server" "labelsTemplate" "fixture.labels" "selectorLabelsTemplate" "fixture.labels"
+  "replicas" .replicas "autoscalingEnabled" .autoscalingEnabled "minReplicas" .minReplicas "enabled" .pdbEnabled "strategy" .strategy
+  "serviceAccountName" "fixture" "containerName" "fixture" "argsTemplate" "fixture.args" "port" 8080
+  "image" (dict "repository" "fixture" "tag" "1" "pullPolicy" "IfNotPresent") }}
+{{ include "redis-onprem.deployment" $w }}
+{{- with (include "redis-onprem.pdb" $w | trim) }}
+---
+{{ . }}
+{{- end }}
+{{- end }}

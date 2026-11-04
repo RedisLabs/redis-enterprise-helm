@@ -2,4 +2,4 @@ apiVersion: v2
 description: Internal Helm library for Redis AI on-prem workloads.
 name: redis-iris-onprem-lib
 type: library
-version: 0.3.0
+version: 0.5.0

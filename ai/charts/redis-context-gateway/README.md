@@ -81,8 +81,14 @@ database separation; check the actual Redis deployment.
    content belongs in a Helm `--set` argument.
 4. Copy `examples/kubernetes-secret.yaml` and set the tenant, public data-plane
    URL, and external Identity Service URL. The public URL must be reachable by
-   MCP clients. The chart exposes ClusterIP Services; configure your own ingress
-   or gateway. Preserve both the MCP request and response headers.
+   MCP clients. The chart exposes ClusterIP Services. Either configure your own
+   ingress or gateway, or enable `dataplane.ingress`: one of its hosts must be
+   the `publicBaseURL` host, route path `/` with `pathType: Prefix` and no
+   rewrite annotation, and, for an `https` URL, have a `tls` entry with a
+   `secretName`. The render fails otherwise. Preserve both the MCP request and
+   response headers. `fullnameOverride` replaces the
+   `<release>-redis-context-gateway` name prefix, and `security.profile` takes
+   `""` (standard, the default; `standard` is an alias) or `fips`.
 5. Install the selected public release after verifying publication through the
    runbook. Set `GATEWAY_VERSION` to that version. The package includes its pinned
    published library and needs no checkout or local image build:
@@ -162,6 +168,32 @@ productValidation:
 When the Identity Service release also serves Memory or Playbook, add these
 entries to its existing `serviceCredentials` list and `productValidation.products`
 map; every product uses the one `singleTenantID`.
+
+## Running under redis-iris
+
+When the chart runs as the `contextGateway` dependency of the `redis-iris`
+umbrella (`global.iris` is set), the umbrella sets `fullnameOverride:
+redis-context-gateway` and the suite-wide settings come from `global.iris`
+(TDD MOD-19479, "Values precedence"):
+
+| Value | Under redis-iris |
+| --- | --- |
+| `tenantId` | `global.iris.tenantId` (default `default`) |
+| `license.existingSecret`, `license.secretKey` | `global.iris.license.*` (defaults `iris-license`, `license.key`) |
+| `identityService.baseURL`, `identityService.allowInsecureTransport` | the suite's Identity Service, `http://iris-identity-service.<namespace>.svc.<clusterDomain>:9200` |
+| `dataplane.runtimeToken` | `global.iris.secrets.dataplaneServiceCredentials.existingSecret`, else generated `iris-context-gateway-dataplane-credential`; key `context-gateway-dp` |
+| `controlplane.internalToken` | `global.iris.secrets.controlplaneInternalTokens.existingSecret`, else generated `iris-context-gateway-internal-token`; key `context-gateway` |
+| `tls.caBundle` | `global.tls.caCertSecret` (key `ca.crt`) when the local bundle is unset |
+| `imagePullSecrets`, `security.profile` | `global.imagePullSecrets`, `global.security.profile` when unset locally |
+| `controlplane.config.auth.oidc` | from `global.iris.auth.oidc` when an issuer is set: the access-token issuer, JWKS, audience, role claims, and `role_mappings` from `global.iris.auth.roleBindings` for `context_gateway` |
+
+Leave these unset: a value that differs fails the render and names the
+`contextGateway.` field. The suite supplies the license and both credentials as
+Kubernetes Secrets, so a `secretProviderClass` on them fails too. Each plane
+mounts only its own credential key. `publicBaseURL`, `controlplane.adminToken`
+(the umbrella points it at `iris-context-gateway-admin-token`), the metadata
+and credential storage, and MCP caller sign-in (`dataplane.config.auth.oidc`,
+`oauth`) stay yours to set. Without `global.iris` nothing changes.
 
 ## Choose the credential backend and file-delivery method
 
@@ -367,15 +399,16 @@ control-plane discovery, authentication, and data-plane result limits.
 
 A registry entry's map key is its database ID. Put its display `name` and optional
 `account_id` and `subscription_id` in `shared.config.databases`. Supply authenticated
-URLs through `databaseConnections` with the same IDs. For example, create a
-protected `databases.yaml` file:
+URLs through `databaseConnections` with the same IDs. An on-prem deployment uses
+two registry entries: a Gateway database, `gateway-db`, and a Surface database,
+`surface-db`. For example, create a protected `databases.yaml` file:
 
 ```yaml
 databases:
-  customer:
-    urls: ["rediss://customer-user:REPLACE@customer.example.com:6379"]
-  analytics:
-    urls: ["rediss://analytics-user:REPLACE@analytics.example.com:6379"]
+  gateway-db:
+    urls: ["rediss://gateway-user:REPLACE@gateway.example.com:6379"]
+  surface-db:
+    urls: ["rediss://surface-user:REPLACE@surface.example.com:6379"]
 ```
 
 Create its external Secret:
@@ -384,31 +417,94 @@ Create its external Secret:
 kubectl create secret generic gateway-database-connections --from-file=config.yaml=databases.yaml
 ```
 
-Then configure the registry and file reference:
+Then configure the registry, the file reference, and the two defaults:
 
 ```yaml
 shared:
   config:
     databases:
-      customer: {name: Customer database}
-      analytics: {name: Analytics database}
+      gateway-db: {name: Gateway database}
+      surface-db: {name: Surface database}
 databaseConnections:
   - existingSecret: gateway-database-connections
     secretKey: config.yaml
+defaultDatabases:
+  gatewayDb: gateway-db
+  surfaceDb: surface-db
 ```
+
+`defaultDatabases` is optional, and each key is optional. The chart renders it as
+`default_databases.gateway` and `default_databases.surface` in the shared
+configuration of both planes. Each key must name a `shared.config.databases`
+entry, or both planes refuse to start with an error that names the key.
+
+| Value | Used when | Without it |
+| --- | --- | --- |
+| `defaultDatabases.gatewayDb` | A Gateway create sends no `databaseId`. The Gateway takes this database, the response returns the resolved database as `databaseBinding`, and `cache` and `compression` default to `enabled` as if you had sent it. An explicit `databaseId` always wins. | A Gateway created without `databaseId` has no database, and both features are `disabled`. |
+| `defaultDatabases.surfaceDb` | A context-surface Upstream create sends no `contextSurface.databaseId`. An explicit ID always wins. | That create is refused with 400 on `contextSurface.databaseId`. |
+
+The two databases have different jobs:
+
+- **Gateway database** (`gateway-db`): cache entries and compression
+  handles. Only the Gateway writes it. Set `maxmemory-policy noeviction` on it.
+  Compression also needs the JSON module (Redis 8 or later includes it).
+  The cache and handles each have their own share of `maxmemory`,
+  `cache.max_memory_share` (default 0.4) and `compression.max_memory_share`
+  (default 0.5), at most 0.95 together. Each stops writing at its own share,
+  so neither can take the other's, and both stop above 90 percent of
+  `maxmemory` as a last backstop. Size `maxmemory` so each share holds what
+  that side needs.
+- **Surface database** (`surface-db`): the customer data your Context Surfaces
+  read. The Gateway never writes it.
+
+Do not point both at one Redis when compression is on. Compression requires
+`noeviction`, and on one Redis that policy would also apply to your customer
+data, which Redis would then never evict and would refuse writes to once full.
+The data plane logs a warning at startup when the two defaults reach the same
+Redis endpoint. The warning does not stop startup. The control plane runs no
+startup check of the defaults. It checks the Gateway database only when
+compression is enabled through the API (see below).
+
+Checks that use the Gateway database:
+
+- **Startup, with `dataplane.config.compression.enabled: true` (data plane
+  only):** the data
+  plane refuses to start when the default Gateway database does not use
+  `noeviction` or lacks JSON. The error names the database ID and the policy
+  found. Fix it with `CONFIG SET maxmemory-policy noeviction` (and the same
+  value in `redis.conf`), or set `compression.enabled` to `false`.
+- **Startup, with handles disabled:** a database that does not use `noeviction`
+  only logs a warning. `noeviction` is the documented policy either way.
+- **Compression on:** a Gateway create or update that sends `compression:
+  ENABLED`, and an update that changes `databaseId` while compression stays
+  `ENABLED`, checks the Gateway database first. A database with another policy
+  or without JSON is refused with a 400 whose `errors` entry points at
+  `/compression` and gives the reason, for example `database
+  gateway-db uses allkeys-lru, compression needs noeviction`. An unreachable
+  database answers 503, so retry. A create that omits `compression` never
+  fails on this: when the `databaseId` default would enable compression but the
+  database fails the check or cannot be reached, the Gateway is stored with
+  compression `DISABLED` and the control plane logs why (info for a failed
+  check, warn for an unreachable database). A plain create from the console
+  therefore works against a cache-only database, with the cache on and
+  compression off. The JSON check is the data plane's own (`JSON.TYPE` on a
+  probe key), so both planes agree.
+- **Always:** the data plane keeps its runtime check, and returns results whole
+  when the database stops meeting the requirements.
 
 One file can hold all connection URLs, or use multiple references for different
 ownership and rotation schedules. Do not put the same ID in multiple files unless
-you intend the later file to override it. The Gateway operator selects `databaseId`
-through the administration API; registration alone does not select it for every
-Gateway. These databases store result state, not metadata or Upstream credentials.
+you intend the later file to override it. Registration alone does not select a
+database for every Gateway: the operator sets `defaultDatabases.gatewayDb` or sends
+`databaseId` through the administration API. These databases store result state and
+Surface data, not metadata or Upstream credentials.
 Do not use removed `results_db` or `result_policies` settings.
 
-Result caching and result handles each turn on at two levels. The
-deployment switch in `dataplane.config` (`result_cache.enabled` and
-`result_handles.enabled`, both `false` by default) is the operator's global
-flag for every Gateway. Each Gateway then has its own `resultCache` and
-`resultHandles` toggle, set through the administration API. A Gateway serves a
+Result caching and handles each turn on at two levels. The
+deployment switch in `dataplane.config` (`cache.enabled` and
+`compression.enabled`, both `false` by default) is the operator's global
+flag for every Gateway. Each Gateway then has its own `cache` and
+`compression` toggle, set through the administration API. A Gateway serves a
 feature only when both are on. Configure either capability through
 `dataplane.config`, and no overlay is needed. For example, enable both for this
 deployment:
@@ -416,27 +512,29 @@ deployment:
 ```yaml
 dataplane:
   config:
-    result_cache:
+    cache:
       enabled: true
-    result_handles:
+    compression:
       enabled: true
 ```
 
-Caching still requires a per-tool result-cache policy. Result handles apply to
+Caching still requires a per-tool cache policy. Handles apply to
 eligible results above the configured size threshold unless a tool policy
 excludes them. Enabling these capabilities alone does not select a database.
 
 Both features store state in the Gateway database, so register that database in
-`shared.config.databases` and `databaseConnections` as above, then select it as
-the Gateway's `databaseId` through the administration API. A Gateway created
-with a `databaseId` has both toggles `enabled` unless the request sets them,
+`shared.config.databases` and `databaseConnections` as above, then select it
+with `defaultDatabases.gatewayDb` or as the Gateway's `databaseId` through the
+administration API. A Gateway created with a `databaseId`, sent or defaulted,
+has both toggles `enabled` unless the request sets them,
 and one created without a database has both `disabled`. The API refuses to
-enable a toggle on a Gateway without a `databaseId`. Handles need that
-database to run with `maxmemory-policy noeviction` and JSON support. A Gateway
+enable a toggle on a Gateway without a `databaseId`. The Gateway database
+should run `maxmemory-policy noeviction`, and handles need that policy and
+JSON support. A Gateway
 without a database, or with a toggle `disabled`, is served uncached, returns
-results whole, and lists no result handle tools. Turning a toggle off deletes
-nothing: stored entries expire on their TTL. The `result_cache` and
-`result_handles` blocks in `dataplane.config` tune limits and timeouts once the
+results whole, and lists no handle tools. Turning a toggle off deletes
+nothing: stored entries expire on their TTL. The `cache` and
+`compression` blocks in `dataplane.config` tune limits and timeouts once the
 features are enabled.
 
 `metadata_db.client.client_name` optionally names Redis connections for diagnosis
@@ -450,12 +548,43 @@ Follow the [paired control-plane and UI example](#enable-idp-administration-and-
 `dataplane.config.auth.oidc` enables MCP caller sign-in alongside agent keys. Supply
 the issuer, the API's audience, and JWKS URI. The chart uses `tenantId` as the static
 tenant for MCP caller sign-in; Identity Service grants authorize Gateway access.
+Give the data plane an audience of its own, for example `api://context-gateway-dp`,
+registered as a separate API at the IdP (on Entra ID, a second app registration). Do
+not use the shared `api://redis-iris` that the control plane and the UI use: MCP clients
+hold this token, and the shared audience would also open Agent Memory and Playbook for
+the user. The data plane refuses to start with `api://redis-iris`; it cannot see a
+renamed shared audience, so choose a different value there too.
+Do not give the MCP client the shared audience or its scope: a token that carries both
+audiences still opens Agent Memory and Playbook.
+
+> **Upgrading with `dataplane.config.auth.oidc` enabled on the shared audience.** An
+> earlier version of this chart told operators to use `api://redis-iris` here, and
+> the data plane now fails at startup with that value. Before the upgrade, register
+> the separate API at the IdP, assign roles on it, and set
+> `dataplane.config.auth.oidc.audience` to it. MCP clients then need to sign in
+> again to receive tokens for the new audience.
+The data plane publishes the issuer as the authorization server clients fetch
+sign-in metadata from, so `dataplane.config.auth.oidc.issuer` must be `https://`
+(an `http://` issuer such as AD FS's identifier is accepted only for
+`controlplane.config.auth.oidc`, where it is only compared with the token's `iss`).
 The data plane's OAuth public URL defaults to `publicBaseURL`.
 
 Each component exposes `startupProbe`, `livenessProbe`, and `readinessProbe` using
 native Kubernetes probe fields. Set a probe to `null` to disable it; `{}` merges
 with defaults. To replace HTTP with another probe action, set `httpGet: null`.
 Startup probes allow 150 seconds by default before liveness checks begin.
+
+The data plane sets the Go runtime's soft memory limit (`GOMEMLIMIT`) at
+startup to `config.memory_limit_ratio` of the container's memory limit
+(default 0.7), read from the cgroup (`memory.max` on cgroup v2,
+`memory.limit_in_bytes` on v1). The garbage collector then works harder as the
+heap nears the limit instead of the pod being OOMKilled. The startup log line
+`Go memory limit set from the container memory limit` shows the value. A
+`GOMEMLIMIT` set in the pod environment wins, and a container without a memory
+limit is left alone, so set `resources.limits.memory` on the data plane. The
+default leaves room for what the Go runtime does not count, such as stacks,
+buffers in the kernel and the page cache: in the bug-bash agent replay at
+512Mi, a ratio of 0.85 let the heap reach 425 MB and the working set 500 MiB.
 
 Each component's `autoscaling` can create an HPA with CPU and/or memory targets
 and native `behavior` policies. It is off by default. Enable Metrics Server and
@@ -537,8 +666,8 @@ hostname below if your release, namespace or cluster domain differs.
 
 4. Save `/secure/ui-gateway-oidc.yaml`. Keep all existing product routes in this
    file's `products` list: Helm replaces lists instead of appending to them.
-   Preserve existing products' role mappings too. The example shows the Gateway
-   entry to add to that complete list:
+   Preserve existing products' role mappings too. The example shows the two Gateway
+   entries to add to that complete list:
 
    ```yaml
    publicURL: https://iris.example.com
@@ -570,25 +699,43 @@ hostname below if your release, namespace or cluster domain differs.
        label: Context Gateway
        product: context_gateway
        authScheme: bearer
-       showInNavigation: false
        healthPath: /health/readiness
        upstream:
          host: gateway-redis-context-gateway-controlplane.redis-ai.svc.cluster.local
          port: 9100
          basePath: ""
          scheme: http
+     - key: context-gateway-dp
+       label: Context Gateway DP
+       product: context_gateway
+       authScheme: bearer
+       healthPath: /health/liveness
+       showInNavigation: false
+       protectedResourceMetadata: true
+       upstream:
+         host: gateway-redis-context-gateway-dataplane.redis-ai.svc.cluster.local
+         port: 8083
+         basePath: ""
+         scheme: http
    ```
 
-   The route key `context-gateway` sends `/api/context-gateway/v1/...` to
-   `/v1/...` on the control plane. The UI permission prefix is `context_gateway`;
-   the backend product identity remains `context-gateway`. No Gateway management
-   screen is registered. Keep the UI and control-plane group mappings identical.
+   The route key `context-gateway` sends `/api/context-gateway/iris/v1/context-gateway/...`
+   to `/iris/v1/context-gateway/...` on the control plane, and registers the Context Gateway console at
+   `/context-gateway` in the UI navigation. The hidden `context-gateway-dp` route
+   serves only the console's Connect sign-in status: the console probes
+   `/api/context-gateway-dp/health/liveness` and reads a Gateway's sign-in metadata at
+   `/api/context-gateway-dp/.well-known/oauth-protected-resource/iris/data/v1/context-gateway/gateways/<id>/mcp`.
+   `protectedResourceMetadata: true` opens only that metadata path without a session.
+   Every other data plane path under the route, `/iris/data/v1/context-gateway/gateways/<id>/mcp` included, stays
+   session-checked. Leave the data plane route out to hide the sign-in status. The UI
+   permission prefix is `context_gateway`; the backend product identity remains
+   `context-gateway`. Keep the UI and control-plane group mappings identical.
 
 5. Upgrade both releases from the repository root, using the Gateway package
    prepared in the installation steps above and the UI chart's pinned dependency:
 
    ```bash
-   helm upgrade gateway /tmp/gateway-charts/redis-context-gateway-0.1.1.tgz -n redis-ai \
+   helm upgrade gateway /tmp/gateway-charts/redis-context-gateway-0.2.0.tgz -n redis-ai \
      -f /secure/gateway-values.yaml -f /secure/gateway-oidc.yaml --wait
    helm dependency build iris/ui/helm
    helm upgrade iris-ui iris/ui/helm -n redis-ai \
@@ -606,14 +753,14 @@ In another terminal, supply the token through `GATEWAY_ACCESS_TOKEN` without
 printing it, then run this Bash command. A viewer or higher role receives `200`:
 
 ```bash
-curl --fail-with-body http://127.0.0.1:19100/v1/gateways \
+curl --fail-with-body http://127.0.0.1:19100/iris/v1/context-gateway/gateways \
   --header @<(printf 'Authorization: Bearer %s\n' "$GATEWAY_ACCESS_TOKEN")
 ```
 
 For browser verification, open `https://iris.example.com/auth/login`, sign in,
 then open `/auth/me` on the same origin. A mapped viewer has
 `context_gateway_get` in `permissions`. Open
-`https://iris.example.com/api/context-gateway/v1/gateways` in that browser: it
+`https://iris.example.com/api/context-gateway/iris/v1/context-gateway/gateways` in that browser: it
 returns `200` without entering a token. UI Auth keeps access tokens in its
 server-side session; nginx forwards the token to Gateway. Do not retrieve or
 store access tokens in browser JavaScript. Browser writes retain the shared
@@ -697,3 +844,58 @@ Chart `0.1.1` uses `/health/liveness` and `/health/readiness` for the
 services changed in this chart. Deploy matching service images that expose these
 routes; older images and newer chart probes must not be mixed. Update custom
 monitoring URLs at the same time.
+
+## Cache and compression key migration
+
+Chart `0.2.0` renames the `dataplane.config` blocks `result_cache` to `cache`
+and `result_handles` to `compression`. Every nested key keeps its name. Move
+the settings before you upgrade. The old blocks have no alias and are not
+read: the values schema rejects them as unknown keys at render, and a data
+plane that still finds them in a config file or environment ignores them.
+Deploy the chart with data-plane images that read the new keys, because an
+older image ignores them and leaves both features off. Upgrade the chart and
+images together.
+
+The same release renames what the data plane reports and stores. Update
+dashboards, alerts and any reader of these names when you upgrade:
+
+- Metrics `context_gateway_result_cache_*` are `context_gateway_cache_*`, and
+  `context_gateway_result_handles_*` are `context_gateway_compression_*`.
+- Span attributes `iris.gateway.result_cache.*` are `iris.gateway.cache.*`, and
+  `iris.gateway.result_handle.*` are `iris.gateway.handle.*`. The operation
+  value `result_handle` is `handle`.
+- The invocation `_meta` hit mark `resultCache` is `cache`.
+- The Gateway fields `resultCache` and `resultHandles` and the stored tool
+  policy members `resultCache` and `resultHandle` are `cache` and
+  `compression`. Gateways stored under the old names lose their toggles and
+  tool policies, so set them again.
+
+Surface capture paging is bounded by `dataplane.config.compression.paged_capture_time_budget` (default `2s`), including the wait for a paging slot. It stops earlier when the request deadline needs time for the handle write. A stopped capture returns a partial handle with the reason in its existing warning.
+
+### Metadata resolution cache
+
+`dataplane.config.metadata_cache.resolution.enabled` defaults to `false`. Enable it only after every control plane raises the Gateway generation after Upstream mutation attempts. `max_age` defaults to `30s` and must be positive. It bounds stale resolutions when a generation raise fails. Credentials and caller permissions are checked on each invocation. See `docs/specs/MOD-20511-gateway-metadata-cache.md` for rollout order.
+
+## Metric name migration
+
+The images released after chart `0.2.0` prefix every Context Gateway metric
+name with `iris`, as the other Iris products do. The labels keep their names.
+There is no alias, so update dashboards, alerts and any reader of these names
+when you upgrade the images:
+
+- `context_gateway_cache_*` is `iris_context_gateway_cache_*`.
+- `context_gateway_compression_*` is `iris_context_gateway_compression_*`.
+- `context_gateway_mcp_outcomes_total` is
+  `iris_context_gateway_mcp_outcomes_total`.
+- `context_gateway_upstreams_unreadable_total` is
+  `iris_context_gateway_upstreams_unreadable_total`.
+- `context_gateway_upstream_reencoded_total` is
+  `iris_context_gateway_upstream_reencoded_total`.
+- `context_gateway_controlplane_gateway_inventory_skipped_total` is
+  `iris_context_gateway_controlplane_gateway_inventory_skipped_total`.
+- `context_gateway_metadata_cache_*` is `iris_context_gateway_metadata_cache_*`.
+- `context_gateway_controlplane_gateway_metering_skipped_total` is
+  `iris_context_gateway_controlplane_gateway_metering_skipped_total`.
+
+The MCP metrics `mcp_server_operation_duration_seconds` and
+`mcp_client_operation_duration_seconds` keep their OpenTelemetry names.
