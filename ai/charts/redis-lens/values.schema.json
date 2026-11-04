@@ -126,6 +126,16 @@
       },
       "additionalProperties": false
     },
+    "podDisruptionBudget": {
+      "type": "object",
+      "description": "PodDisruptionBudgets (maxUnavailable: 1) for every Deployment that keeps more than one Pod. Off by default; redis-iris turns it on.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
     "podSecurityContext": {
       "type": "object"
     },
@@ -264,6 +274,10 @@
             "replicaCount": {
               "type": "integer",
               "minimum": 0
+            },
+            "strategy": {
+              "type": "object",
+              "description": "Deployment spec.strategy, rendered verbatim when set. redis-iris fixes it to RollingUpdate with maxUnavailable 0 and maxSurge 1."
             },
             "resources": {
               "type": "object"
