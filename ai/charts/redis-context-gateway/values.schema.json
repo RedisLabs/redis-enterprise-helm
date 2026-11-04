@@ -7,11 +7,16 @@
     },
     "tenantId": {
       "type": "string",
-      "pattern": "^[A-Za-z0-9_-]+$"
+      "pattern": "^([A-Za-z0-9_-]+)?$"
     },
     "publicBaseURL": {
       "type": "string",
-      "pattern": "^https?://[^@?#]+$"
+      "pattern": "^(https?://[^@?#]+)?$"
+    },
+    "fullnameOverride": {
+      "type": "string",
+      "maxLength": 48,
+      "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?)?$"
     },
     "imagePullSecrets": {
       "type": "array"
@@ -23,6 +28,7 @@
         "profile": {
           "type": "string",
           "enum": [
+            "",
             "standard",
             "fips"
           ]
@@ -87,10 +93,10 @@
       "properties": {
         "baseURL": {
           "type": "string",
-          "pattern": "^https?://[^@?#]+$"
+          "pattern": "^(https?://[^@?#]+)?$"
         },
         "allowInsecureTransport": {
-          "type": "boolean"
+          "type": ["boolean", "null"]
         }
       }
     },
@@ -303,11 +309,58 @@
           "type": "integer",
           "minimum": 1
         },
+        "strategy": {
+          "type": "object",
+          "description": "Deployment spec.strategy, rendered verbatim when set. redis-iris fixes it to RollingUpdate with maxUnavailable 0 and maxSurge 1."
+        },
         "image": {
           "$ref": "#/definitions/image"
         },
         "service": {
           "$ref": "#/definitions/service"
+        },
+        "ingress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "className": {"type": "string"},
+            "annotations": {"type": "object", "additionalProperties": {"type": "string"}},
+            "hosts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["host"],
+                "properties": {
+                  "host": {"type": "string", "minLength": 1},
+                  "paths": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["path"],
+                      "properties": {
+                        "path": {"type": "string", "minLength": 1},
+                        "pathType": {"type": "string", "enum": ["Prefix", "Exact", "ImplementationSpecific"]}
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "tls": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "secretName": {"type": "string"},
+                  "hosts": {"type": "array", "items": {"type": "string"}}
+                }
+              }
+            }
+          }
         },
         "config": {
           "type": "object",
@@ -319,7 +372,7 @@
             "opentelemetry": {
               "$ref": "#/definitions/telemetry"
             },
-            "result_cache": {
+            "cache": {
               "type": "object",
               "additionalProperties": false,
               "properties": {
@@ -329,6 +382,11 @@
                 "max_entry_bytes": {
                   "type": "integer",
                   "minimum": 1
+                },
+                "max_memory_share": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 1
                 },
                 "lookup_timeout": {
                   "type": "string",
@@ -341,9 +399,37 @@
                   "description": "Duration, for example 100ms, 2s, or 5m."
                 }
               },
-              "description": "Deployment limits for tool result caching."
+              "description": "Deployment switch and limits for the tool cache."
             },
-            "result_handles": {
+            "memory_limit_ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            },
+            "profiling": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "host": {
+                  "type": "string"
+                },
+                "port": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                "block_profile_rate": {
+                  "type": "integer"
+                },
+                "mutex_profile_fraction": {
+                  "type": "integer"
+                }
+              },
+              "additionalProperties": false
+            },
+            "compression": {
               "type": "object",
               "additionalProperties": false,
               "properties": {
@@ -358,6 +444,23 @@
                   "type": "integer",
                   "minimum": 1
                 },
+                "max_surface_items": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "max_paged_capture_bytes_in_flight": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "max_concurrent_paged_captures": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "paged_capture_time_budget": {"type": "string"},
+                "paged_capture_wait": {
+                  "type": "string",
+                  "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$"
+                },
                 "preview_items": {
                   "type": "integer",
                   "minimum": 0,
@@ -370,6 +473,11 @@
                 "max_query_response_bytes": {
                   "type": "integer",
                   "minimum": 1
+                },
+                "max_memory_share": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 1
                 },
                 "ttl": {
                   "type": "string",
@@ -387,7 +495,7 @@
                   "description": "Duration, for example 100ms, 2s, or 5m."
                 }
               },
-              "description": "Deployment defaults and limits for result handles; per-tool policies may override TTL."
+              "description": "Deployment switch, defaults and limits for compression, which holds large tool results as handles; per-tool policies may override TTL."
             },
             "auth": {
               "type": "object",
@@ -418,6 +526,27 @@
                   "type": "array",
                   "items": {
                     "type": "string"
+                  }
+                }
+              }
+            },
+            "metadata_cache": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "resolution": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "default": false
+                    },
+                    "max_age": {
+                      "type": "string",
+                      "default": "30s",
+                      "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$"
+                    }
                   }
                 }
               }
@@ -474,6 +603,16 @@
     "redis-iris-onprem-lib": {
       "type": "object"
     },
+    "podDisruptionBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "PodDisruptionBudgets (maxUnavailable: 1) for every Deployment that keeps more than one Pod. Off by default; redis-iris turns it on.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
     "profile": {
       "type": "string",
       "enum": [
@@ -499,6 +638,23 @@
     "metadataDB": {
       "$ref": "#/definitions/fileReference",
       "description": "Configuration file containing metadata_db.urls, consumed by both planes."
+    },
+    "defaultDatabases": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gatewayDb": {
+          "type": "string",
+          "pattern": "^([A-Za-z0-9-]{1,32})?$",
+          "description": "Registry database ID a Gateway create without databaseId uses as its Gateway database. Empty means none."
+        },
+        "surfaceDb": {
+          "type": "string",
+          "pattern": "^([A-Za-z0-9-]{1,32})?$",
+          "description": "Registry database ID a context-surface Upstream create without contextSurface.databaseId uses as its Surface database. Empty means none."
+        }
+      },
+      "description": "Default databases, each naming a shared.config.databases entry."
     },
     "databaseConnections": {
       "type": "array",
@@ -629,7 +785,7 @@
         },
         "secretKey": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_.-]*$"
+          "pattern": "^([A-Za-z0-9_-][A-Za-z0-9_.-]*)?$"
         },
         "fileName": {
           "type": "string",

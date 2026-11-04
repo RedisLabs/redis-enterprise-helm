@@ -11,6 +11,9 @@ tenantId: ""
 # publicBaseURL is the data-plane URL advertised to MCP clients.
 publicBaseURL: ""
 
+# Fixed resource-name prefix; empty uses <release>-redis-context-gateway.
+fullnameOverride: ""
+
 # -----------------------------------------------------------------------------
 # Shared Kubernetes deployment
 # -----------------------------------------------------------------------------
@@ -18,8 +21,9 @@ publicBaseURL: ""
 imagePullSecrets: []
 
 security:
-  # standard or fips; fips also requires compatible application TLS settings.
-  profile: standard
+  # "" (standard) or fips; fips also requires compatible application TLS settings.
+  # standard is accepted as an alias of "".
+  profile: ""
 
 # Additional Kubernetes volumes and mounts for both planes. Component entries
 # are appended. Names must not collide with config or a managed volume.
@@ -38,8 +42,9 @@ profile: prod
 identityService:
   # Required: an existing Identity Service. This chart does not install one.
   baseURL: ""
-  # Set true only when intentionally using an HTTP endpoint.
-  allowInsecureTransport: false
+  # Set true only when intentionally using an HTTP endpoint. False when unset;
+  # redis-iris turns it on for its in-cluster Identity Service.
+  allowInsecureTransport: null
 
 shared:
   # Application configuration ----------------------------------------------------
@@ -156,12 +161,17 @@ credentialStorage:
     kmsKeyId: ""
     timeout: 10s
 
+# PodDisruptionBudget (maxUnavailable: 1) for each Deployment that keeps more than one Pod
+# (minReplicas under autoscaling). Off by default; redis-iris turns it on.
+podDisruptionBudget:
+  enabled: false
+
 controlplane:
   # Kubernetes deployment -------------------------------------------------------
 
   image:
     repository: redislabs/iris-context-gateway-control
-    tag: "0.10.2"
+    tag: "1.0.0"
     pullPolicy: IfNotPresent
 
   replicaCount: 1
@@ -293,13 +303,36 @@ dataplane:
 
   image:
     repository: redislabs/iris-context-gateway-data
-    tag: "0.10.2"
+    tag: "1.0.0"
     pullPolicy: IfNotPresent
 
   replicaCount: 1
+  # Deployment spec.strategy, rendered verbatim when set. redis-iris fixes it to
+  # RollingUpdate with maxUnavailable 0 and maxSurge 1.
+  strategy: {}
 
   service:
     port: 8083
+
+  # Optional Ingress for MCP clients. When enabled, one host must equal the
+  # publicBaseURL hostname and route path / with pathType Prefix (no rewrite
+  # annotation); for an https publicBaseURL a tls entry with a secretName must
+  # cover that host. Leave it disabled when your own routing reaches the
+  # data-plane Service at publicBaseURL.
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    # hosts:
+    #   - host: mcp.example.com
+    #     paths:
+    #       - path: /
+    #         pathType: Prefix
+    tls: []
+    # tls:
+    #   - secretName: mcp-example-tls
+    #     hosts: [mcp.example.com]
 
   # For AWS Secrets Manager, configure workload identity for this ServiceAccount.
   # See examples/aws.yaml for IRSA; EKS Pod Identity uses an external association.
@@ -360,29 +393,48 @@ dataplane:
   # Durations use ms, s, m, or h; size limits are integer bytes.
   config: {}
   # config:
+  #   metadata_cache:
+  #     resolution:
+  #       enabled: false
+  #       max_age: 30s
   #   server:
   #     timeout: 30s
   #     read_timeout: 30s
   #     write_timeout: 35s
   #   # Both capabilities default to disabled. Caching still needs a tool policy.
   #   # Both need the Gateway's databaseId to select a configured database, and
-  #   # each serves only Gateways whose resultCache or resultHandles is enabled.
-  #   result_cache:
+  #   # each serves only Gateways whose cache or compression is enabled.
+  #   cache:
   #     enabled: false
   #     max_entry_bytes: 262144
   #     lookup_timeout: 100ms
   #     write_timeout: 1s
-  #   result_handles:
+  #     # Fraction of the Gateway database's maxmemory the cache may hold.
+  #     # With compression.max_memory_share, at most 0.95 together.
+  #     max_memory_share: 0.4
+  #   compression:
   #     enabled: false
   #     # Fallback TTL; a tool policy may override it. Maximum 24h.
   #     ttl: 15m
   #     inline_max_bytes: 32768
   #     max_capture_bytes: 8388608
+  #     # Rows a handle holds of a Context Surface query that matches more than one page.
+  #     max_surface_items: 10000
+  #     # Bytes every capture of a pod holds at once of the Surface pages it joins.
+  #     # A capture without room holds a partial handle. At least max_capture_bytes.
+  #     max_paged_capture_bytes_in_flight: 67108864
+  #     # Captures of a pod that page at once. Others hold their first page.
+  #     max_concurrent_paged_captures: 4
+  #     # How long a capture waits for a slot before it holds its first page.
+  #     paged_capture_wait: 2s
+  #     paged_capture_time_budget: 2s
   #     preview_items: 3
   #     preview_bytes: 2048
   #     write_timeout: 1s
   #     operation_timeout: 2s
   #     max_query_response_bytes: 32768
+  #     # Fraction of the Gateway database's maxmemory handles may hold.
+  #     max_memory_share: 0.5
   #   auth:
   #     agent_keys:
   #       introspection:
@@ -400,7 +452,9 @@ dataplane:
   #     # Optional MCP caller sign-in. Configure oauth below when enabled.
   #     oidc:
   #       enabled: false
-  #       # Required when enabled. Use the shared audience, e.g. api://redis-iris.
+  #       # Required when enabled. Use an audience of its own, e.g. api://context-gateway-dp,
+  #       # never the shared api://redis-iris: an MCP client holds this token, and the shared
+  #       # audience would give it the user's access on Agent Memory and Playbook too.
   #       issuer: ""
   #       audience: []
   #       jwks_uri: ""
@@ -466,6 +520,21 @@ metadataDB:
   # Optional for either method: change this value to trigger a rollout.
   # checksum: ""
 
+# Default databases, each naming a shared.config.databases entry. Both are
+# optional and both planes read them. A Gateway create without databaseId uses
+# gatewayDb. A context-surface Upstream create without contextSurface.databaseId
+# uses surfaceDb; without surfaceDb that request is refused with 400.
+# The Gateway database holds the cache and compression handles and only
+# the Gateway writes it. Set maxmemory-policy noeviction on it, and load JSON
+# for compression. The Surface database holds the customer data your Context
+# Surfaces read, and the Gateway never writes it. Do not point both at one
+# Redis when compression is on: noeviction would then apply to customer data.
+defaultDatabases:
+  gatewayDb: ""
+  surfaceDb: ""
+#   gatewayDb: gateway-db
+#   surfaceDb: surface-db
+
 # Connections for registered Gateway databases, consumed by both planes.
 # Configure at least one customer database for this deployment. Supply its URLs
 # here, or through an advanced configuration overlay. Leave this list empty only
@@ -476,7 +545,7 @@ metadataDB:
 #       urls: ["rediss://customer-user:PASSWORD@customer.example.com:6379"]
 # IDs must match shared.config.databases entries. Put display names there; put
 # authenticated URLs here. Gateway operators select an ID through databaseId.
-# These databases hold cached results and result handles, not Gateway metadata.
+# These databases hold cached results and handles, not Gateway metadata.
 # The application rejects customer databases sharing a host and port with
 # metadata_db, even when their URLs select different Redis database numbers.
 # One Secret can hold all connections. Add more files for separate ownership or
@@ -494,7 +563,7 @@ license:
   # Required license file covering Context Gateway for this deployment. Store the
   # license contents as issued, without a YAML wrapper. Both planes read it.
   existingSecret: ""
-  secretKey: license
+  secretKey: ""  # default license; redis-iris sets global.iris.license.secretKey
   # CSI alternative (existingSecret must stay empty):
   # secretProviderClass: gateway-license
   # fileName: license

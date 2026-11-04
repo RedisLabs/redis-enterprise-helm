@@ -1,0 +1,15 @@
+{{- /* One PodDisruptionBudget per plane that keeps more than one Pod; redis-onprem.pdb skips the rest. */ -}}
+{{- range $role := list "controlplane" "dataplane" }}
+{{- $settings := index $.Values $role -}}
+{{- with (include "redis-onprem.pdb" (dict
+  "root" (dict "root" $ "role" $role "settings" $settings)
+  "enabled" $.Values.podDisruptionBudget.enabled
+  "name" (printf "%s-%s" (include "gateway.fullname" $) $role) "component" $role
+  "labelsTemplate" "gateway.labels" "selectorLabelsTemplate" "gateway.labels"
+  "replicas" $settings.replicaCount
+  "autoscalingEnabled" $settings.autoscaling.enabled "minReplicas" $settings.autoscaling.minReplicas
+) | trim) }}
+---
+{{ . }}
+{{- end }}
+{{- end }}

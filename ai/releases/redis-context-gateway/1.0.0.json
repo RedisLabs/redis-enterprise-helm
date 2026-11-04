@@ -1,0 +1,39 @@
+{
+  "product": "redis-context-gateway",
+  "deployment": "on-prem",
+  "version": "1.0.0",
+  "release": true,
+  "commit": "e53035d633d535ea414565997345b32a7878832c",
+  "components": {
+    "controlplane": {
+      "candidateImage": "docker.io/redislabs/iris-context-gateway-control:1.0.0",
+      "registryDigest": "sha256:f39354a4a47220f55e65e8e0048dc836b813e5ff69ae3fe5c7aecb353611d694",
+      "publication": {
+        "status": "published",
+        "component": "controlplane",
+        "commit": "e53035d633d535ea414565997345b32a7878832c",
+        "image": "docker.io/redislabs/iris-context-gateway-control:1.0.0",
+        "digest": "sha256:f39354a4a47220f55e65e8e0048dc836b813e5ff69ae3fe5c7aecb353611d694",
+        "reference": "docker.io/redislabs/iris-context-gateway-control@sha256:f39354a4a47220f55e65e8e0048dc836b813e5ff69ae3fe5c7aecb353611d694"
+      }
+    },
+    "dataplane": {
+      "candidateImage": "docker.io/redislabs/iris-context-gateway-data:1.0.0",
+      "registryDigest": "sha256:6c2ccae1caf4950fe3e519d2e4fa7da4785eca2554ddf4bb4a98c07acb21e3df",
+      "publication": {
+        "status": "published",
+        "component": "dataplane",
+        "commit": "e53035d633d535ea414565997345b32a7878832c",
+        "image": "docker.io/redislabs/iris-context-gateway-data:1.0.0",
+        "digest": "sha256:6c2ccae1caf4950fe3e519d2e4fa7da4785eca2554ddf4bb4a98c07acb21e3df",
+        "reference": "docker.io/redislabs/iris-context-gateway-data@sha256:6c2ccae1caf4950fe3e519d2e4fa7da4785eca2554ddf4bb4a98c07acb21e3df"
+      }
+    }
+  },
+  "chart": "chart/redis-context-gateway-1.0.0.tgz",
+  "publication": {
+    "status": "published",
+    "sourceRun": "https://github.com/redislabsdev/iris/actions/runs/41896246816",
+    "chartSha256": "sha256:9b1f5a99435b208efad35a95b2db1f604dc196e27863a64a574023ca2030a855"
+  }
+}

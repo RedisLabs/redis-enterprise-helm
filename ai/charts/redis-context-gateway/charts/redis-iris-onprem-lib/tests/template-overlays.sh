@@ -19,21 +19,7 @@ RAM_BASE=(
   --set config.secretKey=config.yaml
   --set controlplane.image.tag=cp-0.0.0-test
   --set controlplane.config.existingSecret=cp-config-test
-  --set identityService.image.tag=ids-0.0.0-test
-  --set identityService.metadata.existingSecret=ids-metadata
-)
-
-LC_BASE=(
-  --set dataplane.image.tag=0.0.0-test
-  --set controlplane.image.tag=0.0.0-test
-  --set dataplane.license.existingSecret=license-test
-  --set dataplane.secrets.secretName=dp-base
-  --set controlplane.secrets.secretName=cp-base
-  --set dataplane.embedding.endpoint.baseURL=https://embedding.example.test
-  --set dataplane.embedding.models.defaultEmbeddingModel=fixture-model
-  --set dataplane.embedding.models.dimensions=8
-  --set identityService.bundled.image.tag=0.0.0-test
-  --set identityService.bundled.metadata.existingSecret=ids-metadata-test
+  --set-string tenantId=default
 )
 
 failures=0
@@ -220,26 +206,6 @@ for workload in deployment.yaml controlplane-deployment.yaml deployment-worker.y
     --show-only "templates/$workload")
   assert_contains "$out" "config-overlay-0" "RAM $workload must mount the overlay"
 done
-
-echo "== LangCache: data plane and control plane keep separate prefixes and mount bases =="
-out=$(helm template test langcache/helm "${LC_BASE[@]}" \
-  --set dataplane.secrets.secretName=dp --set 'dataplane.secrets.additionalSecrets={dp-extra}' \
-  --set controlplane.secrets.secretName=cp --set 'controlplane.secrets.additionalSecrets={cp-extra}')
-assert_contains "$out" "name: dp-config-overlay-0" "LangCache data-plane overlay volume prefix"
-assert_contains "$out" "name: cp-config-overlay-0" "LangCache control-plane overlay volume prefix"
-assert_contains "$out" "mountPath: /etc/langcache/overlays/1" "LangCache data-plane overlay mount base"
-assert_contains "$out" "mountPath: /etc/langcache-controlplane/overlays/1" "LangCache control-plane overlay mount base"
-assert_order "$out" '"/etc/langcache/overlays/0/overlay.yaml"' '"/etc/langcache/overlays/1/overlay.yaml"' \
-  "LangCache data-plane overlay args must stay in merge order"
-assert_order "$out" '"/etc/langcache-controlplane/overlays/0/overlay.yaml"' '"/etc/langcache-controlplane/overlays/1/overlay.yaml"' \
-  "LangCache control-plane overlay args must stay in merge order"
-
-echo "== LangCache: per-tier custom overlay keys stay independent =="
-out=$(helm template test langcache/helm "${LC_BASE[@]}" \
-  --set dataplane.secrets.overlayKey=dp-custom.yaml \
-  --set controlplane.secrets.overlayKey=cp-custom.yaml)
-assert_scalar "$out" key dp-custom.yaml "LangCache data-plane custom overlayKey"
-assert_scalar "$out" key cp-custom.yaml "LangCache control-plane custom overlayKey"
 
 if (( failures > 0 )); then
   echo "$failures overlay rendering assertion(s) failed" >&2

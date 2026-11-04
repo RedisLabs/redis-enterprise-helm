@@ -8,11 +8,12 @@
   "labelsTemplate" "gateway.labels"
   "selectorLabelsTemplate" "gateway.labels"
   "replicas" $settings.replicaCount
+  "strategy" $settings.strategy
   "autoscalingEnabled" $settings.autoscaling.enabled
   "annotationsTemplate" "gateway.annotations"
   "podAnnotations" $settings.podAnnotations
   "podLabels" $settings.podLabels
-  "imagePullSecrets" .Values.imagePullSecrets
+  "imagePullSecrets" (include "gateway.suite" . | fromJson).imagePullSecrets
   "serviceAccountName" (include "gateway.serviceAccount" $context)
   "automountServiceAccountToken" $settings.serviceAccount.automount
   "podSecurityContext" (dict "runAsNonRoot" true "runAsUser" 65532 "runAsGroup" 65532 "fsGroup" 65532)

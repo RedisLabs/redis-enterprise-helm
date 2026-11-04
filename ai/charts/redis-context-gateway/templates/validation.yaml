@@ -1,8 +1,37 @@
-{{- $_ := required "tenantId is required" .Values.tenantId -}}
-{{- $_ := required "publicBaseURL is required" .Values.publicBaseURL -}}
-{{- $_ := required "identityService.baseURL is required" .Values.identityService.baseURL -}}
-{{- if and (hasPrefix "http://" .Values.identityService.baseURL) (not .Values.identityService.allowInsecureTransport) -}}
+{{- $at := include "gateway.at" . -}}
+{{- $s := include "gateway.suite" . | fromJson -}}
+{{- $_ := required (printf "%stenantId is required" $at) $s.tenantId -}}
+{{- $_ := required (printf "%spublicBaseURL is required" $at) .Values.publicBaseURL -}}
+{{- $_ := required (printf "%sidentityService.baseURL is required" $at) $s.identityService.baseURL -}}
+{{- if and (hasPrefix "http://" $s.identityService.baseURL) (not $s.identityService.allowInsecureTransport) -}}
   {{- fail "HTTP Identity Service requires explicit allowInsecureTransport" -}}
+{{- end -}}
+{{- $ingress := .Values.dataplane.ingress -}}
+{{- if $ingress.enabled -}}
+  {{- /* The Ingress must serve publicBaseURL as is: its host, every path, and TLS for https. */ -}}
+  {{- $url := urlParse .Values.publicBaseURL -}}
+  {{- $rule := dict -}}
+  {{- range $ingress.hosts -}}{{- if eq .host $url.hostname -}}{{- $rule = . -}}{{- end -}}{{- end -}}
+  {{- if not $rule -}}
+    {{- fail (printf "%sdataplane.ingress.hosts must include the %spublicBaseURL host %q" $at $at $url.hostname) -}}
+  {{- end -}}
+  {{- $routesAll := false -}}
+  {{- range $rule.paths -}}{{- if and (eq .path "/") (eq (default "Prefix" .pathType) "Prefix") -}}{{- $routesAll = true -}}{{- end -}}{{- end -}}
+  {{- if not $routesAll -}}
+    {{- fail (printf "%sdataplane.ingress.hosts: host %q must route path / with pathType Prefix" $at $url.hostname) -}}
+  {{- end -}}
+  {{- range $key, $_ := $ingress.annotations -}}
+    {{- if contains "rewrite" (lower $key) -}}
+      {{- fail (printf "%sdataplane.ingress.annotations: %s would change the paths MCP clients use; remove it" $at $key) -}}
+    {{- end -}}
+  {{- end -}}
+  {{- if eq $url.scheme "https" -}}
+    {{- $covered := false -}}
+    {{- range $ingress.tls -}}{{- if and .secretName (has $url.hostname (default (list) .hosts)) -}}{{- $covered = true -}}{{- end -}}{{- end -}}
+    {{- if not $covered -}}
+      {{- fail (printf "%sdataplane.ingress.tls needs an entry with a secretName covering %q, the host of the https %spublicBaseURL" $at $url.hostname $at) -}}
+    {{- end -}}
+  {{- end -}}
 {{- end -}}
 {{- include "gateway.safeConfig" .Values.shared.config -}}
 {{- include "gateway.safeConfig" .Values.credentialStorage.vault.address -}}
@@ -16,15 +45,15 @@
 {{- else if not (hasKey .Values.credentialStorage.redis.keyFiles .Values.credentialStorage.redis.activeKeyId) -}}
   {{- fail "the active encryption key must be in credentialStorage.redis.keyFiles" -}}
 {{- end -}}
-{{- if eq (include "gateway.referenceIdentity" .Values.controlplane.adminToken) (include "gateway.referenceIdentity" .Values.controlplane.internalToken) -}}
+{{- if eq (include "gateway.referenceIdentity" .Values.controlplane.adminToken) (include "gateway.referenceIdentity" $s.internalToken) -}}
   {{- fail "admin and grant-validation credentials must use separate files" -}}
 {{- end -}}
-{{- range $reference := list .Values.controlplane.adminToken .Values.controlplane.internalToken -}}
-  {{- if eq (include "gateway.referenceIdentity" $reference) (include "gateway.referenceIdentity" $.Values.dataplane.runtimeToken) -}}
+{{- range $reference := list .Values.controlplane.adminToken $s.internalToken -}}
+  {{- if eq (include "gateway.referenceIdentity" $reference) (include "gateway.referenceIdentity" $s.runtimeToken) -}}
     {{- fail "runtime credentials must use a separate file" -}}
   {{- end -}}
 {{- end -}}
-{{- $controlplaneCredentials := list .Values.controlplane.adminToken .Values.controlplane.internalToken -}}
+{{- $controlplaneCredentials := list .Values.controlplane.adminToken $s.internalToken -}}
 {{- if eq .Values.credentialStorage.provider "vault" -}}
   {{- $vaultCredentials := .Values.credentialStorage.vault.credentials -}}
   {{- $controlplaneCredentials = append $controlplaneCredentials $vaultCredentials.controlplane -}}
