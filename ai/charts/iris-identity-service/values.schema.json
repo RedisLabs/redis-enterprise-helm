@@ -4,7 +4,7 @@
   "type": "object",
   "additionalProperties": false,
   "definitions": {
-    "product": { "type": "string", "enum": ["memory", "langcache", "context", "playbook", "lens", "context-gateway"] },
+    "product": { "type": "string", "enum": ["memory", "langcache", "context", "playbook", "lens", "context-gateway", "intent"] },
     "operation": { "type": "string", "enum": ["api-key-introspect", "auth-introspect", "auth-me", "subject-grant-lookup"] },
     "secretRef": {
       "type": "object",
@@ -28,6 +28,12 @@
     "nameOverride": { "type": "string" },
     "fullnameOverride": { "type": "string" },
     "replicaCount": { "type": "integer", "minimum": 0 },
+    "podDisruptionBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "PodDisruptionBudgets (maxUnavailable: 1) for every Deployment that keeps more than one Pod. Off by default; redis-iris turns it on.",
+      "properties": { "enabled": { "type": "boolean" } }
+    },
     "image": {
       "type": "object",
       "additionalProperties": false,
@@ -114,7 +120,7 @@
           }
         },
         "serviceCredentials": {
-          "type": "array",
+          "type": ["array", "null"],
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -139,7 +145,7 @@
       "additionalProperties": false,
       "properties": {
         "products": {
-          "type": "object",
+          "type": ["object", "null"],
           "propertyNames": { "$ref": "#/definitions/product" },
           "additionalProperties": {
             "type": "object",
@@ -157,7 +163,14 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "maxRotateGraceSeconds": { "type": "integer", "minimum": 0 }
+        "maxRotateGraceSeconds": { "type": "integer", "minimum": 0 },
+        "userBinding": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" }
+          }
+        }
       }
     },
     "controlAuth": {
@@ -165,9 +178,9 @@
       "additionalProperties": false,
       "description": "Optional operator login to IdS Control. Empty renders nothing.",
       "properties": {
-        "oidc": { "type": "object", "description": "Copied as is into auth.oidc; the binary validates its fields." },
+        "oidc": { "type": ["object", "null"], "description": "Copied as is into auth.oidc; the binary validates its fields." },
         "roleBindings": {
-          "type": "array",
+          "type": ["array", "null"],
           "description": "Rendered as auth.role_bindings; requires oidc.enabled.",
           "items": {
             "type": "object",
@@ -176,7 +189,7 @@
             "properties": {
               "claim_value": { "type": "string", "minLength": 1 },
               "issuer": { "type": "string" },
-              "scope": { "type": "string", "enum": ["global", "product"] },
+              "scope": { "type": "string", "enum": ["global", "product", "deployment"] },
               "product": { "$ref": "#/definitions/product" },
               "role": { "type": "string", "minLength": 1 }
             }
