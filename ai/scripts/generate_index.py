@@ -15,31 +15,17 @@ from packaging.version import Version
 
 # Only these products appear on the page, in this order. The first value must
 # match the chart name in index.yaml; the second is the visible product name.
-PRODUCTS = (
-    ('redis-agent-memory', 'Redis Agent Memory'),
-    ('redis-agent-playbook', 'Redis Agent Playbook'),
-    ('redis-lens', 'Redis Lens'),
-    ('redis-context-gateway', 'Redis Context Gateway'),
-    ('redis-intent-router', 'Redis Intent Router'),
-    ('iris-identity-service', 'Iris Identity Service'),
-    ('redis-iris-ui', 'Redis Iris User Interface'),
-    ('redis-iris', 'Redis Iris'),
-    ('redis-iris-onprem-lib', 'Redis Iris On-Premises Library'),
-)
+PRODUCTS = (('redis-iris', 'Redis Iris'),)
 
 
 def generate_index_html(index_data: dict) -> str:
-    """Render published products from PRODUCTS as independent tab panels."""
+    """Render only the Redis Iris global chart."""
     entries = index_data.get('entries', {})
-    products = [(name, label) for name, label in PRODUCTS if entries.get(name)]
-    if not products:
-        raise ValueError('The Helm index has no published products from PRODUCTS')
+    products = [(name, label) for name, label in PRODUCTS
+                if name == 'redis-iris' or entries.get(name)]
     sections = []
     tabs = []
     for product_position, (name, label) in enumerate(products):
-        versions = entries[name]
-        versions = sorted(versions, key=lambda item: Version(item['version']), reverse=True)
-        latest = versions[0]
         chart = escape(name, quote=True)
         product_name = escape(label)
         active = product_position == 0
@@ -49,6 +35,14 @@ def generate_index_html(index_data: dict) -> str:
         tabs.append(f'''<button type="button" role="tab" id="tab-{chart}"
             aria-controls="{chart}" aria-selected="{selected_tab}" tabindex="{tab_index}"
             onclick="selectProduct(this)" onkeydown="navigateProducts(event)">{product_name}</button>''')
+        versions = entries.get(name, [])
+        if not versions:
+            sections.append(f'''<section class="container" id="{chart}" role="tabpanel"
+                aria-labelledby="tab-{chart}" tabindex="0">
+                <h2>{product_name}</h2><p>The Redis Iris Helm chart is not yet published.</p></section>''')
+            continue
+        versions = sorted(versions, key=lambda item: Version(item['version']), reverse=True)
+        latest = versions[0]
         rows = []
         for position, item in enumerate(versions):
             chart_version = escape(str(item['version']), quote=True)
@@ -266,7 +260,8 @@ function selectProduct(selectedTab) {
     }
 }
 function navigateProducts(event) {
-    const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+    const tabs = Array.from(document.querySelectorAll('[role="tab"]'))
+        .filter(tab => !tab.closest('[hidden]'));
     let position = tabs.indexOf(event.currentTarget);
     if (event.key === 'ArrowRight') position = (position + 1) % tabs.length;
     else if (event.key === 'ArrowLeft') position = (position - 1 + tabs.length) % tabs.length;

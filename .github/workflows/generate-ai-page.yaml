@@ -1,0 +1,159 @@
+name: Generate AI Helm Repository Page
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - ai/scripts/**
+      - .github/workflows/generate-ai-page.yaml
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Generator branch in this repository; master publishes, other branches preview.
+        required: true
+        default: master
+        type: string
+
+concurrency:
+  group: generate-ai-helm-page-${{ github.event.pull_request.number || 'manual' }}
+  cancel-in-progress: false
+
+jobs:
+  select-mode:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      publish: ${{ steps.mode.outputs.publish }}
+    steps:
+      - name: Select preview or publication
+        id: mode
+        env:
+          GENERATOR_BRANCH: ${{ inputs.branch }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$GITHUB_REF" != "refs/heads/master" ]; then
+            echo "::error::Run this workflow from master. Current ref: $GITHUB_REF"
+            exit 1
+          fi
+          # GitHub expression comparisons ignore case; branch names do not.
+          if [ "$GENERATOR_BRANCH" = "master" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  preview:
+    needs: select-mode
+    if: needs.select-mode.outputs.publish == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout preview generator
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || format('refs/heads/{0}', inputs.branch) }}
+          persist-credentials: false
+
+      - name: Checkout published chart index
+        uses: actions/checkout@v7
+        with:
+          ref: gh-pages
+          path: .ai-pages
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: false
+
+      - name: Generate preview
+        run: |
+          uv run --no-project --python 3.12 --with pyyaml --with packaging \
+            ai/scripts/generate_index.py .ai-pages/ai/index.yaml \
+            --output .ai-pages/ai/index.html
+
+      - name: Upload preview
+        uses: actions/upload-artifact@v7
+        with:
+          name: ai-helm-page-preview
+          path: .ai-pages/ai/index.html
+          if-no-files-found: error
+
+  generate-page:
+    needs: select-mode
+    if: github.event_name == 'workflow_dispatch' && needs.select-mode.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout generator
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      # Keep the generator from the selected master commit and publish only ai/index.html.
+      - name: Checkout AI Pages content
+        uses: actions/checkout@v7
+        with:
+          ref: gh-pages
+          path: .ai-pages
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          # Ad hoc `uv run --with` deps; there is no lockfile to key a cache on.
+          enable-cache: false
+
+      - name: Generate AI Helm Charts HTML
+        run: |
+          uv run --python 3.12 --with pyyaml --with packaging \
+            ai/scripts/generate_index.py .ai-pages/ai/index.yaml \
+            --output .ai-pages/ai/index.html
+
+      - name: Publish AI Helm Charts HTML
+        working-directory: .ai-pages
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+          git add ai/index.html
+          if ! git diff --cached --quiet; then
+            git commit -m "Update AI Helm charts page"
+            git push origin HEAD:gh-pages
+          fi
+
+  # shortcut: refresh and release deployments can overlap; coordinate all Pages
+  # deployment jobs if live refreshes must run during chart releases.
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      pages: write
+    needs:
+      - generate-page
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: gh-pages
+          fetch-depth: 0
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: .
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
