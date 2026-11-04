@@ -533,6 +533,30 @@ entries:
     version: 0.1.0
   redis-lens:
   - apiVersion: v2
+    appVersion: 1.0.0
+    created: "2026-11-04T21:01:28.134621281Z"
+    dependencies:
+    - name: redis-iris-onprem-lib
+      repository: https://helm.redis.io/ai
+      version: 0.5.0
+    description: Redis Iris Lens on-prem data plane, worker, and control plane (connects
+      to a standalone Identity Service)
+    digest: 2877d53afa11d3a4d523d1dcb6382c0d42b929768011243f05a6b9fdb0397b94
+    home: https://github.com/Redislabsdev/iris
+    icon: https://raw.githubusercontent.com/RedisLabs/redis-enterprise-helm/main/ai/charts/redis-lens/icon.svg
+    keywords:
+    - redis
+    - lens
+    - observability
+    - ai
+    - on-prem
+    kubeVersion: '>=1.28.0-0'
+    name: redis-lens
+    type: application
+    urls:
+    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-lens-1.0.0/redis-lens-1.0.0.tgz
+    version: 1.0.0
+  - apiVersion: v2
     appVersion: 0.10.2
     created: "2026-11-03T19:57:44.604412047Z"
     dependencies:
@@ -555,4 +579,4 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-lens-0.10.2/redis-lens-0.10.2.tgz
     version: 0.10.2
-generated: "2026-11-04T21:00:30.074524161Z"
+generated: "2026-11-04T21:01:28.134705949Z"
