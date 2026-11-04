@@ -2,8 +2,10 @@
 
 The AI release workflow generates `ai/index.html` from the published
 `ai/index.yaml` after updating the chart index, then deploys the entire Pages
-branch. Products appear as tabs, each with its own version selection, search,
-and install command. Switch tabs with a click or the arrow, Home, and End keys.
+branch. **Redis Iris** is the only visible product by default. **More** toggles the other
+published product tabs; collapsing it returns to Iris. Each published product
+has version selection, search, and an install command. Switch visible tabs with
+a click or the arrow, Home, and End keys.
 
 Edit `PRODUCTS` in `generate_index.py` to control which products appear, their
 display names, and their tab order. Each entry pairs a chart name from
@@ -12,8 +14,10 @@ and all its products: Agent Memory, Agent Playbook, Lens, Context Gateway,
 Intent Router, Identity Service, and the Iris user interface. It also retains
 the Redis Iris On-Premises Library. Keep this list aligned with the dependencies
 in [the Iris global chart](https://github.com/redislabsdev/iris/blob/main/iris/helm/Chart.yaml).
-Unlisted charts stay off the page; listed charts without published versions
-are skipped and appear automatically once published. Generation fails if no listed products are published.
+Unlisted charts stay off the page. Component charts without published versions
+are skipped and appear automatically once published. Iris remains visible with a
+"not yet published" message until its first release; no install command is shown
+for an unpublished chart.
 The root page and operator release workflow are independent.
 
 To preview using a local checkout of the `gh-pages` branch:
@@ -70,3 +74,9 @@ rerun the workflow to regenerate from the latest published index.
 Live refreshes and chart releases do not share a deployment lock. Avoid running
 a live refresh during a chart release: overlapping deployments can publish an
 older site snapshot. Preview runs do not deploy and are unaffected.
+
+Run the generator regression tests with:
+
+```bash
+uv run --no-project --with pyyaml --with packaging python -m unittest discover -s ai/scripts
+```
