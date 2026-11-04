@@ -16,15 +16,15 @@ from packaging.version import Version
 # Only these products appear on the page, in this order. The first value must
 # match the chart name in index.yaml; the second is the visible product name.
 PRODUCTS = (
-    ('redis-agent-memory', 'Redis Agent Memory'),
-    ('redis-agent-playbook', 'Redis Agent Playbook'),
-    ('redis-lens', 'Redis Lens'),
-    ('redis-context-gateway', 'Redis Context Gateway'),
-    ('redis-intent-router', 'Redis Intent Router'),
+    ('redis-agent-memory', 'Agent Memory'),
+    ('redis-agent-playbook', 'Agent Playbook'),
+    ('redis-lens', 'Lens'),
+    ('redis-context-gateway', 'Context Gateway'),
+    ('redis-intent-router', 'Intent Router'),
     ('iris-identity-service', 'Iris Identity Service'),
-    ('redis-iris-ui', 'Redis Iris User Interface'),
-    ('redis-iris', 'Redis Iris'),
-    ('redis-iris-onprem-lib', 'Redis Iris On-Premises Library'),
+    ('redis-iris-ui', 'Iris User Interface'),
+    ('redis-iris', 'Iris'),
+    ('redis-iris-onprem-lib', 'Iris On-Premises Library'),
 )
 
 
