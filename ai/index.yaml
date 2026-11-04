@@ -270,6 +270,23 @@ entries:
     version: 0.1.0-alpha.3
   redis-context-gateway:
   - apiVersion: v2
+    appVersion: 1.0.0
+    created: "2026-11-04T20:57:08.189838104Z"
+    dependencies:
+    - name: redis-iris-onprem-lib
+      repository: https://helm.redis.io/ai
+      version: 0.5.0
+    description: Single-tenant Context Gateway control plane and data plane with external
+      Identity Service
+    digest: 13934a177ff713b32cf894b3b8289b41ad7aace1174d791410d1b7e05429323f
+    icon: https://raw.githubusercontent.com/RedisLabs/redis-enterprise-helm/main/ai/charts/redis-context-gateway/icon.svg
+    kubeVersion: '>=1.28.0-0'
+    name: redis-context-gateway
+    type: application
+    urls:
+    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-context-gateway-1.0.0/redis-context-gateway-1.0.0.tgz
+    version: 1.0.0
+  - apiVersion: v2
     appVersion: 0.10.2
     created: "2026-10-23T20:58:27.463700501Z"
     dependencies:
@@ -500,4 +517,4 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-lens-0.10.2/redis-lens-0.10.2.tgz
     version: 0.10.2
-generated: "2026-11-04T19:04:51.89987112Z"
+generated: "2026-11-04T20:57:08.189876442Z"
