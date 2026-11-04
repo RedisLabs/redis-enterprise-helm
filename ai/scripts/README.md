@@ -2,22 +2,13 @@
 
 The AI release workflow generates `ai/index.html` from the published
 `ai/index.yaml` after updating the chart index, then deploys the entire Pages
-branch. **Redis Iris** is the only visible product by default. **More** toggles the other
-published product tabs; collapsing it returns to Iris. Each published product
-has version selection, search, and an install command. Switch visible tabs with
-a click or the arrow, Home, and End keys.
+branch. **Redis Iris** is the only product displayed. Component charts are not
+listed, and there is no More toggle. Published Iris versions have version
+selection, search, and installation commands.
 
-Edit `PRODUCTS` in `generate_index.py` to control which products appear, their
-display names, and their tab order. Each entry pairs a chart name from
-`index.yaml` with a display name. The list covers the Redis Iris global chart
-and all its products: Agent Memory, Agent Playbook, Lens, Context Gateway,
-Intent Router, Identity Service, and the Iris user interface. It also retains
-the Redis Iris On-Premises Library. Keep this list aligned with the dependencies
-in [the Iris global chart](https://github.com/redislabsdev/iris/blob/main/iris/helm/Chart.yaml).
-Unlisted charts stay off the page. Component charts without published versions
-are skipped and appear automatically once published. Iris remains visible with a
-"not yet published" message until its first release; no install command is shown
-for an unpublished chart.
+The `PRODUCTS` entry in `generate_index.py` maps the `redis-iris` chart identifier
+to the **Redis Iris** label. Until its first release, the page shows a
+"not yet published" message without an installation command.
 The root page and operator release workflow are independent.
 
 To preview using a local checkout of the `gh-pages` branch:
@@ -64,7 +55,7 @@ To test before merging:
    Page / preview**, then open the workflow run summary.
 3. Download **ai-helm-page-preview** from **Artifacts**, extract it, and open
    `index.html` in your browser.
-4. Check the product tabs, version selection, search, and installation commands.
+4. Check the Redis Iris heading, version selection, search, and installation commands.
    Confirm that **generate-page** and **deploy** were skipped in the run.
 
 AI chart releases continue to regenerate and publish the page automatically.

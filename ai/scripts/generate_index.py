@@ -15,21 +15,11 @@ from packaging.version import Version
 
 # Only these products appear on the page, in this order. The first value must
 # match the chart name in index.yaml; the second is the visible product name.
-PRODUCTS = (
-    ('redis-iris', 'Redis Iris'),
-    ('redis-agent-memory', 'Agent Memory'),
-    ('redis-agent-playbook', 'Agent Playbook'),
-    ('redis-lens', 'Lens'),
-    ('redis-context-gateway', 'Context Gateway'),
-    ('redis-intent-router', 'Intent Router'),
-    ('iris-identity-service', 'Iris Identity Service'),
-    ('redis-iris-ui', 'Iris User Interface'),
-    ('redis-iris-onprem-lib', 'Iris On-Premises Library'),
-)
+PRODUCTS = (('redis-iris', 'Redis Iris'),)
 
 
 def generate_index_html(index_data: dict) -> str:
-    """Show Iris first and keep published component charts behind More."""
+    """Render only the Redis Iris global chart."""
     entries = index_data.get('entries', {})
     products = [(name, label) for name, label in PRODUCTS
                 if name == 'redis-iris' or entries.get(name)]
@@ -85,13 +75,7 @@ def generate_index_html(index_data: dict) -> str:
             <div class="table-scroll"><table class="versions-table"><thead><tr><th>Version</th>
             <th>App Version</th><th>Created</th><th>Digest</th><th>Download</th></tr></thead>
             <tbody>{''.join(rows)}</tbody></table></div></section>''')
-    navigation = '<div class="product-tabs" role="tablist" aria-label="Products">' + tabs[0]
-    if len(tabs) > 1:
-        navigation += '<div id="more-products" hidden>' + ''.join(tabs[1:]) + '</div>'
-    navigation += '</div>'
-    if len(tabs) > 1:
-        navigation += '''<button type="button" class="more-toggle" aria-expanded="false"
-            aria-controls="more-products" onclick="toggleMore(this)">More</button>'''
+    navigation = '<div class="product-tabs" role="tablist" aria-label="Products">' + ''.join(tabs) + '</div>'
     return HEADER + navigation + ''.join(sections) + FOOTER
 
 
@@ -254,11 +238,9 @@ HEADER = '''<!DOCTYPE html>
 
 .container { margin-bottom: 24px; }
 .product-tabs { display: flex; gap: 8px; overflow-x: auto; padding: 8px 2px; margin: 24px 0 12px; }
-.product-tabs button, .more-toggle { flex-shrink: 0; border: 1px solid #ddd; border-radius: 6px; padding: 12px 16px; background: white; color: #333; font: inherit; cursor: pointer; }
+.product-tabs button { flex-shrink: 0; border: 1px solid #ddd; border-radius: 6px; padding: 12px 16px; background: white; color: #333; font: inherit; cursor: pointer; }
 .product-tabs button[aria-selected="true"] { background: #0366d6; color: white; border-color: #0366d6; }
-.product-tabs button:focus-visible, .more-toggle:focus-visible { outline: 3px solid #2a2a2a; outline-offset: 2px; }
-#more-products:not([hidden]) { display: flex; gap: 8px; }
-.more-toggle { margin-bottom: 16px; cursor: pointer; }
+.product-tabs button:focus-visible { outline: 3px solid #2a2a2a; outline-offset: 2px; }
 .command { white-space: pre-wrap; overflow-wrap: anywhere; padding-right: 70px; }
 .table-scroll { overflow-x: auto; }
 .search-section { flex-wrap: wrap; align-items: center; }
@@ -275,14 +257,6 @@ function selectProduct(selectedTab) {
         tab.setAttribute('aria-selected', String(active));
         tab.tabIndex = active ? 0 : -1;
         document.getElementById(tab.getAttribute('aria-controls')).hidden = !active;
-    }
-}
-function toggleMore(button) {
-    const products = document.getElementById('more-products');
-    products.hidden = !products.hidden;
-    button.setAttribute('aria-expanded', String(!products.hidden));
-    if (products.hidden) {
-        selectProduct(document.getElementById('tab-redis-iris'));
     }
 }
 function navigateProducts(event) {
