@@ -37,7 +37,7 @@ then set the **branch** input to the generator branch in this repository:
 
 Both modes use the published `gh-pages/ai/index.yaml`. The branch input accepts
 branch names in this repository, not tags, commit identifiers, or fork branches.
-The workflow must be merged into `master` before it appears in Actions.
+The manual **Run workflow** button becomes available after merging into `master`.
 
 ```bash
 # Publish using master.
@@ -46,6 +46,22 @@ gh workflow run generate-ai-page.yaml --repo RedisLabs/redis-enterprise-helm --r
 # Preview a feature branch.
 gh workflow run generate-ai-page.yaml --repo RedisLabs/redis-enterprise-helm --ref master -f branch=my-feature
 ```
+
+Pull requests from branches in this repository targeting `master` automatically
+produce the same preview when they change `ai/scripts/**` or this workflow.
+The preview uses the pull request's exact head commit and the published chart
+index. Fork pull requests are skipped. Publication and deployment are always
+skipped for pull request runs.
+
+To test before merging:
+
+1. Push the generator or workflow changes to your pull request branch.
+2. Open the pull request's **Checks** tab and select **Generate AI Helm Repository
+   Page / preview**, then open the workflow run summary.
+3. Download **ai-helm-page-preview** from **Artifacts**, extract it, and open
+   `index.html` in your browser.
+4. Check the product tabs, version selection, search, and installation commands.
+   Confirm that **generate-page** and **deploy** were skipped in the run.
 
 AI chart releases continue to regenerate and publish the page automatically.
 If another publisher updates `gh-pages` during generation, the push fails safely;
