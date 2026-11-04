@@ -2,6 +2,23 @@ apiVersion: v1
 entries:
   iris-identity-service:
   - apiVersion: v2
+    appVersion: 1.0.0
+    created: "2026-11-04T19:04:51.899835977Z"
+    dependencies:
+    - name: redis-iris-onprem-lib
+      repository: https://helm.redis.io/ai
+      version: 0.5.0
+    description: Helm chart to deploy the standalone Iris Identity Service for on-premises
+      deployment.
+    digest: ce7e121f6eaf3ade70014b733897fc685ebf158081e44c0bb3ff815ce6f0985b
+    icon: https://raw.githubusercontent.com/RedisLabs/redis-enterprise-helm/main/ai/charts/iris-identity-service/icon.svg
+    kubeVersion: '>=1.28.0-0'
+    name: iris-identity-service
+    type: application
+    urls:
+    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/iris-identity-service-1.0.0/iris-identity-service-1.0.0.tgz
+    version: 1.0.0
+  - apiVersion: v2
     appVersion: 0.10.2
     created: "2026-10-22T14:38:22.342947201Z"
     dependencies:
@@ -483,4 +500,4 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-lens-0.10.2/redis-lens-0.10.2.tgz
     version: 0.10.2
-generated: "2026-11-03T19:57:44.604502374Z"
+generated: "2026-11-04T19:04:51.89987112Z"
