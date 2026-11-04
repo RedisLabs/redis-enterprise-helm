@@ -1,0 +1,25 @@
+{{- if .Values.tests.enabled }}
+{{ include "redis-onprem.securityProfileTest" (dict
+  "root" .
+  "enabled" true
+  "name" (include "redis-intent-router.controlplaneSecurityTestName" .)
+  "labelsTemplate" "redis-intent-router.labels"
+  "serviceAccountName" (include "redis-intent-router.testServiceAccountName" .)
+  "deploymentName" (include "redis-intent-router.controlplaneName" .)
+  "securityProfile" (include "redis-intent-router.securityProfile" .)
+  "image" (printf "%s:%s" .Values.tests.securityProfileImage.repository .Values.tests.securityProfileImage.tag)
+  "imagePullPolicy" .Values.tests.securityProfileImage.pullPolicy
+) }}
+---
+{{ include "redis-onprem.securityProfileTest" (dict
+  "root" .
+  "enabled" true
+  "name" (include "redis-intent-router.dataplaneSecurityTestName" .)
+  "labelsTemplate" "redis-intent-router.labels"
+  "serviceAccountName" (include "redis-intent-router.testServiceAccountName" .)
+  "deploymentName" (include "redis-intent-router.dataplaneName" .)
+  "securityProfile" (include "redis-intent-router.securityProfile" .)
+  "image" (printf "%s:%s" .Values.tests.securityProfileImage.repository .Values.tests.securityProfileImage.tag)
+  "imagePullPolicy" .Values.tests.securityProfileImage.pullPolicy
+) }}
+{{- end }}

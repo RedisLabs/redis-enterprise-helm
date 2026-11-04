@@ -1,0 +1,29 @@
+{{- $suite := include "redis-intent-router.suite" . | fromJson -}}
+Redis Intent Router has been rendered as independently scalable services:
+
+  Control plane:    {{ include "redis-intent-router.controlplaneName" . }}:{{ .Values.controlplane.service.port }}
+  Data plane:       {{ include "redis-intent-router.dataplaneName" . }}:{{ .Values.dataplane.service.port }}
+
+The chart lookup-generates the control-plane admin and internal tokens unless a BYO
+existingSecret is configured for a credential. Generated credential Secrets
+carry helm.sh/resource-policy=keep and remain stable across upgrades. The
+chart does not create license material or Redis databases; confirm those
+existing Secrets are present before rollout.
+
+Identity Service : separate release (this chart deploys none)
+  URL             : {{ include "redis-intent-router.identityServiceBaseURL" . }}
+  DP credential   : Secret {{ $suite.credential.existingSecret }} (key: {{ $suite.credential.secretKey }})
+  Validator       : set productValidation.products.intent on the Identity Service release to
+    baseURL       : http://{{ include "redis-intent-router.controlplaneName" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.controlplane.service.port }}
+{{- if eq (include "redis-intent-router.securityProfile" .) "fips" }}
+                    (fips: the Identity Service refuses http://; front the control plane with TLS and use that https:// URL)
+{{- end }}
+    credential    : Secret {{ include "redis-intent-router.controlplaneInternalTokenSecretName" . }} (key: {{ $suite.internalToken.secretKey }}), the internal token
+
+{{ if .Values.tests.enabled }}
+Run the chart's post-install smoke test with:
+  helm test {{ .Release.Name }} --namespace {{ .Release.Namespace }}
+{{ else }}
+Chart smoke-test hooks are disabled. Set tests.enabled=true at install or upgrade
+to enable them, then run helm test {{ .Release.Name }} --namespace {{ .Release.Namespace }}.
+{{ end }}

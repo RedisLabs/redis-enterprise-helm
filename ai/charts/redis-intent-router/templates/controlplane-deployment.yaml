@@ -1,0 +1,124 @@
+{{- define "redis-intent-router.controlplaneAnnotations" -}}
+{{- if .Values.controlplane.config.existingSecret }}
+checksum/config: {{ .Values.controlplane.config.existingSecretChecksum | quote }}
+{{- else }}
+{{- $s := include "redis-intent-router.suite" . | fromJson }}
+{{- $config := dict "tenantId" $s.tenantId "oidc" (dict "controlplane" (dict "enabled" $s.controlplaneOIDC) "dataplane" $s.dataplaneOIDC "audience" $s.audience) "service" .Values.controlplane.service "keyPrefix" .Values.storage.keyPrefix "maxRoutersPerTenant" .Values.storage.maxRoutersPerTenant "reconcile" .Values.controlplane.reconcile "requireDatabase" .Values.controlplane.requireDatabase "models" .Values.inference.models "allowLocalModels" .Values.inference.allowLocalModels "licenseKey" $s.license.secretKey "tracing" .Values.tracing "securityProfile" (include "redis-intent-router.securityProfile" .) }}
+checksum/config: {{ toJson $config | sha256sum | quote }}
+{{- end }}
+{{- with .Values.storage.existingSecretChecksum }}
+checksum/storage-secret: {{ . | quote }}
+{{- end }}
+{{- with .Values.controlplane.adminToken.existingSecretChecksum }}
+checksum/admin-token: {{ . | quote }}
+{{- end }}
+{{- with .Values.controlplane.internalToken.existingSecretChecksum }}
+checksum/internal-token: {{ . | quote }}
+{{- end }}
+{{- with .Values.license.existingSecretChecksum }}
+checksum/license: {{ . | quote }}
+{{- end }}
+{{- if and (include "redis-intent-router.tlsCaCertSecret" .) (default (dict) .Values.tls).caCertSecretChecksum }}
+checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
+{{- end }}
+{{- end }}
+
+{{- define "redis-intent-router.controlplaneArgs" -}}
+- --config
+- /etc/intent/config/intent-controlplane.yaml
+- --config
+- /etc/intent/storage/storage.yaml
+{{- end }}
+
+{{- define "redis-intent-router.controlplaneEnv" -}}
+{{ include "redis-intent-router.commonEnv" . }}
+{{- end }}
+
+{{- define "redis-intent-router.controlplaneVolumeMounts" -}}
+- name: config
+  mountPath: /etc/intent/config
+  readOnly: true
+- name: storage
+  mountPath: /etc/intent/storage
+  readOnly: true
+- name: admin-token
+  mountPath: /etc/intent/credentials/admin
+  readOnly: true
+- name: internal-token
+  mountPath: /etc/intent/credentials/internal
+  readOnly: true
+- name: license
+  mountPath: /etc/intent/license
+  readOnly: true
+{{ include "redis-intent-router.commonTLSMount" . }}
+{{- end }}
+
+{{- define "redis-intent-router.controlplaneVolumes" -}}
+{{- $s := include "redis-intent-router.suite" . | fromJson }}
+- name: config
+  {{- if .Values.controlplane.config.existingSecret }}
+  secret:
+    secretName: {{ .Values.controlplane.config.existingSecret }}
+    items:
+      - key: {{ .Values.controlplane.config.secretKey }}
+        path: intent-controlplane.yaml
+  {{- else }}
+  configMap:
+    name: {{ include "redis-intent-router.controlplaneName" . }}-config
+  {{- end }}
+- name: storage
+  secret:
+    secretName: {{ required (printf "%sstorage.existingSecret is required" (include "redis-intent-router.at" .)) .Values.storage.existingSecret }}
+    items:
+      - key: {{ .Values.storage.controlplaneKey }}
+        path: storage.yaml
+- name: admin-token
+  secret:
+    secretName: {{ include "redis-intent-router.controlplaneAdminTokenSecretName" . }}
+    items:
+      - key: {{ .Values.controlplane.adminToken.secretKey }}
+        path: token
+- name: internal-token
+  secret:
+    secretName: {{ include "redis-intent-router.controlplaneInternalTokenSecretName" . }}
+    items:
+      - key: {{ $s.internalToken.secretKey }}
+        path: token
+- name: license
+  secret:
+    secretName: {{ required (printf "%slicense.existingSecret is required" (include "redis-intent-router.at" .)) $s.license.existingSecret }}
+    items:
+      - key: {{ $s.license.secretKey }}
+        path: {{ $s.license.secretKey }}
+{{ include "redis-intent-router.commonTLSVolume" . }}
+{{- end }}
+
+{{- include "redis-onprem.controlplane.deployment" (dict
+  "root" .
+  "name" (include "redis-intent-router.controlplaneName" .)
+  "component" "controlplane"
+  "labelsTemplate" "redis-intent-router.labels"
+  "selectorLabelsTemplate" "redis-intent-router.selectorLabels"
+  "replicas" .Values.controlplane.replicaCount
+  "annotationsTemplate" "redis-intent-router.controlplaneAnnotations"
+  "podAnnotations" .Values.controlplane.podAnnotations
+  "podLabels" .Values.controlplane.podLabels
+  "imagePullSecrets" (include "redis-intent-router.imagePullSecrets" . | fromJsonArray)
+  "serviceAccountName" (include "redis-intent-router.serviceAccountName" .)
+  "automountServiceAccountToken" false
+  "podSecurityContext" .Values.podSecurityContext
+  "containerName" "controlplane"
+  "argsTemplate" "redis-intent-router.controlplaneArgs"
+  "containerSecurityContext" .Values.securityContext
+  "image" .Values.controlplane.image
+  "envTemplate" "redis-intent-router.controlplaneEnv"
+  "port" .Values.controlplane.service.port
+  "livenessProbe" (merge (dict "httpGet" (dict "path" "/health/liveness" "port" "http")) (include "redis-intent-router.liveness" . | fromJson))
+  "readinessProbe" (dict "httpGet" (dict "path" "/health/readiness" "port" "http") "initialDelaySeconds" 3 "periodSeconds" 5)
+  "resources" .Values.controlplane.resources
+  "volumeMountsTemplate" "redis-intent-router.controlplaneVolumeMounts"
+  "volumesTemplate" "redis-intent-router.controlplaneVolumes"
+  "nodeSelector" .Values.controlplane.nodeSelector
+  "affinity" .Values.controlplane.affinity
+  "tolerations" .Values.controlplane.tolerations
+) }}

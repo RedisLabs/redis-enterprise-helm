@@ -1,0 +1,37 @@
+{{- if .Values.tests.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "redis-intent-router.fullname" . }}-health-test
+  labels:
+    {{- include "redis-intent-router.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: health
+      image: curlimages/curl:8.17.0
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+      command:
+        - sh
+        - -ec
+        - |
+          curl --fail --silent --show-error http://{{ include "redis-intent-router.controlplaneName" . }}:{{ .Values.controlplane.service.port }}/health/readiness
+          curl --fail --silent --show-error http://{{ include "redis-intent-router.dataplaneName" . }}:{{ .Values.dataplane.service.port }}/health/readiness
+{{- end }}
