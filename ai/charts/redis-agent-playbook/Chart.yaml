@@ -1,16 +1,18 @@
 apiVersion: v2
-appVersion: 0.10.2
+appVersion: 1.0.0
 dependencies:
 - name: redis-iris-onprem-lib
   repository: https://helm.redis.io/ai
-  version: 0.3.0
+  version: 0.5.0
 description: Redis Playbook on-prem control plane and data plane
 home: https://github.com/Redislabsdev/iris
+icon: https://raw.githubusercontent.com/RedisLabs/redis-enterprise-helm/main/ai/charts/redis-agent-playbook/icon.svg
 keywords:
 - redis
 - playbook
 - ai
 - on-prem
+kubeVersion: '>=1.28.0-0'
 name: redis-agent-playbook
 type: application
-version: 0.10.2
+version: 1.0.0

@@ -54,28 +54,11 @@ spec:
               kubernetes.io/metadata.name: <ui-gateway-namespace>
           podSelector:
             matchLabels:
-              app.kubernetes.io/name: ui
+              app.kubernetes.io/name: redis-iris-ui
               app.kubernetes.io/instance: <ui-release-name>
       ports:
         - {protocol: TCP, port: 9200}
   egress:
-    # Binding grant preparation/revocation through Identity Service Control with
-    # the control plane's own ServiceAccount JWT (MOD-19110), including when
-    # extraction.enabled=false. Remove this rule if no RAM connection is
-    # configured. If RAM or the control plane uses a different Identity Service
-    # release (extraction.connection.identityServiceBaseURL or
-    # destinationIdentityServiceBaseURL), add a rule for it too.
-    # NetworkPolicy permits the port; the Identity Service enforces credentials.
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: <identity-service-namespace>
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: iris-identity-service
-              app.kubernetes.io/instance: <identity-service-release-name>
-      ports:
-        - {protocol: TCP, port: 9200}
     # Live store discovery through RAM CP (MOD-19110). Remove this rule
     # without extraction.connection.ramControlPlaneBaseURL.
     - to:
@@ -134,7 +117,7 @@ spec:
               kubernetes.io/metadata.name: <ui-gateway-namespace>
           podSelector:
             matchLabels:
-              app.kubernetes.io/name: ui
+              app.kubernetes.io/name: redis-iris-ui
               app.kubernetes.io/instance: <ui-release-name>
       ports:
         - {protocol: TCP, port: 9201}

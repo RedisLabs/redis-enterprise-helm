@@ -1,5 +1,14 @@
 {{- define "redis-agent-playbook.dataplaneAnnotations" -}}
-checksum/config: {{ toJson (dict "tenantId" .Values.tenantId "service" .Values.dataplane.service "oidc" .Values.dataplane.oidc "connection" .Values.extraction.connection "workerEnabled" .Values.worker.enabled "keyPrefix" .Values.storage.keyPrefix "models" .Values.inference.models "identityServiceBaseURL" (include "redis-agent-playbook.identityServiceBaseURL" .) "securityProfile" (include "redis-agent-playbook.securityProfile" .) "tracing" .Values.tracing) | sha256sum | quote }}
+{{- $config := dict "tenantId" (include "redis-agent-playbook.suite" $ | fromJson).tenantId "service" .Values.dataplane.service "oidc" (include "redis-agent-playbook.suite" $ | fromJson).dataplaneOIDC "connection" (include "redis-agent-playbook.suite" $ | fromJson).extraction.connection "workerEnabled" (include "redis-agent-playbook.suite" $ | fromJson).worker.enabled "keyPrefix" .Values.storage.keyPrefix "models" .Values.inference.models "identityServiceBaseURL" (include "redis-agent-playbook.identityServiceBaseURL" .) "securityProfile" (include "redis-agent-playbook.securityProfile" .) "tracing" .Values.tracing "adminToken" (dict "secretName" (include "redis-agent-playbook.controlplaneAdminTokenSecretName" .) "secretKey" .Values.controlplane.adminToken.secretKey) }}
+{{- /* Under redis-iris the license key and audience come from global.iris; standalone renders stay unchanged. */}}
+{{- if include "redis-onprem.suite.enabled" . }}
+{{- $_ := set $config "license" (include "redis-agent-playbook.suite" $ | fromJson).license }}
+{{- $_ := set $config "audience" (include "redis-agent-playbook.suite" $ | fromJson).audience }}
+{{- end }}
+checksum/config: {{ toJson $config | sha256sum | quote }}
+{{- with .Values.controlplane.adminToken.existingSecretChecksum }}
+checksum/admin-token: {{ . | quote }}
+{{- end }}
 {{- with .Values.storage.existingSecretChecksum }}
 checksum/storage-secret: {{ . | quote }}
 {{- end }}
@@ -47,6 +56,9 @@ checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
 - name: identity-credential
   mountPath: /etc/identity-service/runtime/playbook-dp
   readOnly: true
+- name: admin-token
+  mountPath: /etc/playbook/credentials/admin
+  readOnly: true
 - name: license
   mountPath: /etc/playbook/license
   readOnly: true
@@ -73,16 +85,22 @@ checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
 {{- end }}
 - name: identity-credential
   secret:
-    secretName: {{ .Values.identityService.credential.existingSecret }}
+    secretName: {{ (include "redis-agent-playbook.dpCredential" . | fromJson).secret }}
     items:
-      - key: {{ .Values.identityService.credential.secretKey }}
+      - key: {{ (include "redis-agent-playbook.dpCredential" . | fromJson).key }}
+        path: token
+- name: admin-token
+  secret:
+    secretName: {{ include "redis-agent-playbook.controlplaneAdminTokenSecretName" . }}
+    items:
+      - key: {{ .Values.controlplane.adminToken.secretKey }}
         path: token
 - name: license
   secret:
-    secretName: {{ required "license.existingSecret is required" .Values.license.existingSecret }}
+    secretName: {{ required "license.existingSecret is required" (include "redis-agent-playbook.suite" $ | fromJson).license.existingSecret }}
     items:
-      - key: {{ .Values.license.secretKey }}
-        path: {{ .Values.license.secretKey }}
+      - key: {{ (include "redis-agent-playbook.suite" $ | fromJson).license.secretKey }}
+        path: {{ (include "redis-agent-playbook.suite" $ | fromJson).license.secretKey }}
 {{ include "redis-agent-playbook.commonTLSVolume" . }}
 {{- end }}
 
@@ -93,6 +111,7 @@ checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
   "labelsTemplate" "redis-agent-playbook.labels"
   "selectorLabelsTemplate" "redis-agent-playbook.selectorLabels"
   "replicas" .Values.dataplane.replicaCount
+  "strategy" .Values.dataplane.strategy
   "annotationsTemplate" "redis-agent-playbook.dataplaneAnnotations"
   "podAnnotations" .Values.dataplane.podAnnotations
   "podLabels" .Values.dataplane.podLabels

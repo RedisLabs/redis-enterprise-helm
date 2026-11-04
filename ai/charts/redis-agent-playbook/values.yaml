@@ -14,7 +14,7 @@ tenantId: ""
 # worker tokens keep their own fixed audience.
 auth:
   oidc:
-    audience: api://redis-iris
+    audience: ""  # default api://redis-iris; redis-iris sets global.iris.auth.oidc.audience
 
 # Playbook CP, DP, and extraction workers send spans to a deployment-owned OTLP collector.
 # The shared exporter uses plaintext gRPC; use a trusted local collector hop.
@@ -64,7 +64,7 @@ tls:
 
 license:
   existingSecret: ""
-  secretKey: license
+  secretKey: ""  # default license; redis-iris sets global.iris.license.secretKey
   existingSecretChecksum: ""
 
 storage:
@@ -90,66 +90,34 @@ inference:
   # Development fixtures explicitly opt into the noop provider.
   models: []
 
-# CP owns the deployment gate; deploying workers alone never enables extraction.
+# The CP validates whole-store consent and ownership; workers use static JWT access.
+# Under redis-iris, global.iris.extraction.enabled derives enabled, connection.enabled, issuer,
+# jwksURI, ramControlPlaneBaseURL and allowInsecureTransport (and worker.enabled, worker.sourceURL).
 extraction:
-  # Gate creation/activation/policy changes. Leave connection.enabled=true
-  # during shutdown so inspection, pause, deletion and grant cleanup still work.
-  enabled: false
-  sources: []
-  # Connect bindings to Redis Agent Memory (MOD-19110). When enabled, the
-  # control plane grants workerSubjects read on each bound store through the
-  # Identity Service that RAM uses, and prepares destination read/propose
-  # through the Playbook control plane's Identity Service. Both default to
-  # dataplane.identityServiceBaseURL; normally one Identity Service release
-  # serves both products. Workers validate both APIs with separate projected
-  # audiences.
+  enabled: null  # false when unset; redis-iris derives it
   connection:
-    enabled: false
-    # Issuer of this cluster's ServiceAccount tokens, as the RAM data plane
-    # validates them (its auth.service_subjects.issuer).
+    enabled: null  # false when unset; redis-iris derives it
     issuer: ""
-    # Destination DP verifies worker JWTs with this issuer's explicit JWKS URI.
     jwksURI: ""
-    # Additional external worker subjects. This chart adds its own worker automatically.
+    # Additional ordinary IdS-authenticated workers, separate from this chart's extractor.
     workerSubjects: []
-    # Identity Service that RAM uses. The control plane grants workers read on
-    # each bound store there (source grants). Empty uses
-    # dataplane.identityServiceBaseURL.
-    identityServiceBaseURL: ""
-    # Playbook control plane's Identity Service, where it grants workers
-    # read/propose on Playbook (destination grants). Despite living under
-    # connection, it is not RAM's. Empty uses dataplane.identityServiceBaseURL.
-    # It must be the same Identity Service release as
-    # dataplane.identityServiceBaseURL, because the data plane looks up these
-    # grants there; set it only when the control plane reaches that release at
-    # a different URL (for example on Neptune).
-    destinationIdentityServiceBaseURL: ""
-    # The control plane provisions grants with its own projected ServiceAccount
-    # JWT, one audience for each grant authority, and holds no Control token.
-    # Each Identity Service release must trust the subject
-    # system:serviceaccount:<namespace>:<fullname>-controlplane as
-    # subject_grant_admin through controlAuth.workloadIdentity; a shared release
-    # lists both audiences below.
-    # RAM control plane for live store discovery (MOD-19110). It replaces
-    # `sources`, so do not set both. Empty keeps `sources`. RAM's control plane
-    # must trust the control-plane subject with the viewer role in tenantId
-    # (auth.workload_identity in its config).
+    # RAM CP trusts the dedicated CP ServiceAccount as viewer in tenantId.
     ramControlPlaneBaseURL: ""
     ramControlPlaneAudience: api://memory-cp
-    sourceControlAudience: api://memory-identity-control
-    destinationControlAudience: api://playbook-identity-control
-    controlTokenExpirationSeconds: 3600
-    # Accept http:// for the worker JWKS (issuer/jwksURI) and the RAM control
-    # plane. An http:// Identity Service URL needs
-    # identityService.allowInsecureTransport.
-    allowInsecureTransport: false
+    ramControlPlaneTokenExpirationSeconds: 3600
+    allowInsecureTransport: null  # false when unset; redis-iris derives it
+
+# PodDisruptionBudget (maxUnavailable: 1) for each Deployment that keeps more than one Pod
+# (minReplicas under autoscaling). Off by default; redis-iris turns it on.
+podDisruptionBudget:
+  enabled: false
 
 controlplane:
   replicaCount: 1
   image:
-    repository: "redislabs/iris-agent-playbook-control"
-    # Must be set explicitly at install or upgrade time.
-    tag: "0.10.2"
+    repository: redislabs/iris-agent-playbook-control
+    # The image release this chart version ships; override to run another.
+    tag: "1.0.0"
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
@@ -163,6 +131,7 @@ controlplane:
     secretKey: playbook-controlplane.yaml
     existingSecretChecksum: ""
   adminToken:
+    # Shared CP/DP recovery credential with full Playbook access in tenantId.
     # BYO existingSecret takes precedence. Otherwise the chart creates a
     # stable random token Secret and preserves it across Helm upgrades.
     existingSecret: ""
@@ -177,7 +146,7 @@ controlplane:
   # Operator bearer tokens validated locally by the control plane against the
   # dataplane.oidc issuer, JWKS, tenant source, and roleMappings.
   oidc:
-    enabled: false
+    enabled: null  # false when unset; redis-iris derives it
     # The audience is auth.oidc.audience, the same value as the data plane.
   resources: {}
   podAnnotations: {}
@@ -188,10 +157,13 @@ controlplane:
 
 dataplane:
   replicaCount: 1
+  # Deployment spec.strategy, rendered verbatim when set. redis-iris fixes it to
+  # RollingUpdate with maxUnavailable 0 and maxSurge 1.
+  strategy: {}
   image:
-    repository: "redislabs/iris-agent-playbook-data"
-    # Must be set explicitly at install or upgrade time.
-    tag: "0.10.2"
+    repository: redislabs/iris-agent-playbook-data
+    # The image release this chart version ships; override to run another.
+    tag: "1.0.0"
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
@@ -205,18 +177,22 @@ dataplane:
   # enabled. The resolved tenant must equal tenantId. Explicitly mapped human
   # product_admin/suite_admin roles receive tenant-wide Playbook full access.
   oidc:
-    enabled: false
+    enabled: null  # false when unset; redis-iris derives it
+    # An identifier compared with a token's iss, never fetched, so it may be http://
+    # without allowInsecureTransport. On AD FS it is the discovery document's
+    # access_token_issuer (http://<host>/adfs/services/trust).
     issuer: ""
+    # Fetched for signing keys: must be https:// unless allowInsecureTransport (refused under FIPS).
     jwksURI: ""
     # Set exactly one tenant source; chart validation rejects configurations with both.
     tenantIDClaim: ""
     staticTenantID: ""
     # Empty uses the shared defaults: roles and groups.
-    roleClaims: []
+    roleClaims: null
     # Trusted human IdP group -> Iris role, also used by controlplane.oidc.
     # Empty grants no admin access; raw role names are never accepted implicitly.
-    roleMappings: {}
-    allowInsecureTransport: false
+    roleMappings: null
+    allowInsecureTransport: null  # false when unset
   resources: {}
   podAnnotations: {}
   podLabels: {}
@@ -230,10 +206,9 @@ identityService:
   # Accept http:// Identity Service URLs (dataplane.identityServiceBaseURL and
   # the extraction.connection overrides), for example the in-cluster Service.
   # Refused under the fips security profile.
-  allowInsecureTransport: false
+  allowInsecureTransport: null  # false when unset; redis-iris turns it on for its in-cluster Identity Service
   # The data plane's runtime credential (subject playbook-dp, operation
-  # api-key-introspect, plus subject-grant-lookup with extraction.connection;
-  # product playbook). Deployment automation provisions the Secret and
+  # api-key-introspect, product playbook). Deployment automation provisions the Secret and
   # registers it on the Identity Service release. Mounted at
   # /etc/identity-service/runtime/playbook-dp/token. Required.
   credential:
@@ -252,16 +227,21 @@ tests:
     pullPolicy: IfNotPresent
 
 worker:
-  enabled: false
+  enabled: null  # false when unset; redis-iris derives it
   replicaCount: 1
   region: ""
+  # Queues are <queuePrefix>:<region>:scan/extract across every replica.
+  # Override for independent deployments sharing the same queue Redis.
+  queuePrefix: playbook-extraction
+  # Atomic unfinished-task bound per queue, shared by all submitters.
+  maxPending: 1000
   # Private worker.redis, worker.target_token, worker.llm, inference_providers overlay.
   existingSecret: ""
   secretKey: worker.yaml
   existingSecretChecksum: ""
   # RAM data-plane endpoint used only by the worker; required when enabled.
   sourceURL: ""
-  # Projected worker token must match RAM's auth.service_subjects audience.
+  # Projected worker token must match RAM's auth.jwt_subjects audience.
   sourceTokenAudience: api://memory-dp
   sourceTokenExpirationSeconds: 3600
   # Empty uses this release's data-plane service.
@@ -272,6 +252,8 @@ worker:
   maxInputTokens: 8192
   maxCompletionTokens: 4096
   dispatchInterval: 5s
+  # Binding discovery recurrence; independent of dispatcher polling and session idle policy.
+  scanInterval: 300s
   shutdownTimeoutSeconds: 30
   # Includes HTTP shutdown, dispatcher stop, consumer drain and telemetry flush.
   terminationGracePeriodSeconds: 90

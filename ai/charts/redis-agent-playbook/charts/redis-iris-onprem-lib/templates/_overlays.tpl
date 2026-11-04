@@ -4,9 +4,9 @@ charts. Each product owns which Secrets carry its overlays and where they mount;
 only the mechanics live here.
 
 Every helper takes an explicit dict rather than the chart context, so a consumer
-can render overlays for more than one workload in the same chart (LangCache
-renders a Data Plane and a Control Plane set) without the helper guessing which
-values sub-tree it is looking at.
+can render overlays for more than one workload in the same chart (for example a
+Data Plane and a Control Plane set) without the helper guessing which values
+sub-tree it is looking at.
 
 Overlays are mounted as whole volumes rather than with subPath, so Kubernetes'
 atomic ..data swap propagates a rotated Secret; subPath mounts would pin the
