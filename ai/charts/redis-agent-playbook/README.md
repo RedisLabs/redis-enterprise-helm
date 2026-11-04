@@ -41,7 +41,7 @@ For calls through Context Gateway, configure Gateway and Playbook to export thei
 own spans to the same collector or backend. Gateway propagates its upstream
 CLIENT span context in MCP `_meta`; Playbook emits the child SERVER span and the
 backend joins them by trace ID. Gateway does not relay Playbook spans or baggage.
-Cache hits and result-handle operations that do not reach Playbook have no
+Cache hits and handle operations that do not reach Playbook have no
 Playbook span. Each service's content-capture policy is independent. Playbook's
 combined captured JSON/text values are limited to 64 KiB per serving span;
 oversized values are omitted whole, with REST retaining document metadata when
@@ -49,12 +49,13 @@ content does not fit.
 
 ## Prerequisites
 
-- Helm 3 and a Kubernetes cluster. Local validation uses KinD; a supported EKS
-  and Kubernetes version matrix is not yet qualified.
+- A [supported Helm version](../../AGENTS.md#supported-helm-versions) and a Kubernetes
+  cluster. Local validation uses KinD; a supported EKS and Kubernetes version matrix is not yet qualified.
 - Two physically distinct Redis deployments. Metadata requires core Redis and
-  Lua support; content requires RedisJSON plus RediSearch / Query Engine for
-  JSON and vector indexes. The services reject aliased endpoints. The chart's
-  KinD gate validates `redis:8` for both.
+  Lua support; extraction also requires RedisJSON for binding persistence. Content
+  requires RedisJSON plus RediSearch / Query Engine for JSON and vector indexes.
+  The services reject aliased endpoints. The chart's KinD gate validates `redis:8`
+  for both.
 - Two explicitly tagged images: Playbook CP and Playbook DP.
 - An `iris-identity-service` release (chart `0.10.0` or later) with the
   Playbook entries registered, and the data plane's runtime credential Secret
@@ -72,6 +73,24 @@ otherwise `autoGenerate: true` creates a random Secret with
 upgrade. Set `autoGenerate: false` when platform policy requires BYO credentials.
 Use existing Secrets for offline rendering or GitOps systems that do not perform
 live Helm `lookup`; otherwise a fresh render can generate different credentials.
+
+The Playbook admin token is a shared recovery credential for **both planes**.
+The chart mounts the same `controlplane.adminToken` Secret/key into CP and DP;
+`Authorization: Bearer <token>` grants full Playbook resource access within
+`tenantId`, including content, proposals, and skill uploads with SSO disabled.
+It also works alongside OIDC. It grants no authority to other Iris products and
+retains resource ownership and lifecycle checks. Keep the token private: audits
+identify shared recovery use, not an individual operator. Verification is local,
+although operations still require their ordinary storage/processing dependencies.
+
+Both planes reread the mounted admin-token file for each request. Kubernetes
+Secret projection is eventual, so rotation is not atomic across pods. Setting
+`controlplane.adminToken.existingSecretChecksum` rolls both planes; changed
+Secret names/keys also update their pod templates. An unavailable/empty DP token
+file returns 503 when no other provider authenticates; wrong tokens return 401.
+Standalone DP deployments must explicitly configure `auth.admin_token.token_file`
+to enable this behavior. Inline tokens are development-only. See
+[MOD-20262](../../docs/specs/MOD-20262-playbook-admin-token.md).
 
 Start from
 `examples/basic/prerequisites.example.yaml`, substitute values through your
@@ -158,7 +177,7 @@ helm upgrade --install playbook playbook/helm \
 helm test playbook --namespace redis-ai
 ```
 
-The chart pins the published `redis-iris-onprem-lib` 0.3.0 from
+The chart pins the published `redis-iris-onprem-lib` 0.4.0 from
 `https://helm.redis.io/ai`. Run `helm dependency build playbook/helm` before
 linting, rendering, or local installation. Dependency resolution also works
 when the package workflow copies the chart outside this repository.
@@ -178,8 +197,7 @@ Services default to ClusterIP:
 ## Connecting to the Identity Service
 
 The **Iris Identity Service (IdS)** mints Playbook agent keys, answers the data
-plane's introspection calls and, with `extraction.connection`, holds the
-extraction workers' subject grants. This chart deploys none: install the
+plane's customer-key introspection calls and optional ordinary service-subject grants. This chart deploys none: install the
 [`iris-identity-service`](../../identity-service/helm/README.md) chart as its
 own release, then connect this release to it. The minimum Identity Service
 chart version validated with this chart is `0.10.0`.
@@ -226,7 +244,7 @@ file for this layout.
 
 | Key | Default | Purpose |
 | --- | --- | --- |
-| `dataplane.identityServiceBaseURL` | `""` | The Identity Service release's URL. The data plane introspects agent keys and looks up worker grants there; the extraction connection's source and destination Identity Service URLs default to it. Required. Must be `https://` unless `identityService.allowInsecureTransport=true`. |
+| `dataplane.identityServiceBaseURL` | `""` | The Identity Service release's URL. The data plane introspects customer agent keys there. Required. Must be `https://` unless `identityService.allowInsecureTransport=true`. |
 | `identityService.allowInsecureTransport` | `false` | Accept an `http://` Identity Service URL, for example the in-cluster Service. Refused under the fips profile. |
 | `identityService.credential.existingSecret` | `""` | The data plane's runtime credential (`playbook-dp`), mounted at `/etc/identity-service/runtime/playbook-dp/token`. Required. |
 | `identityService.credential.secretKey` | `token` | Key in that Secret. |
@@ -250,13 +268,43 @@ reaches each chart as `existingSecret` + `secretKey`.
 | --- | --- | --- | --- |
 | Data-plane runtime credential (`playbook-dp`) | Deployment automation | `identityService.credential.existingSecret` | `runtime.serviceCredentials[].existingSecret` |
 | Control-plane internal token | Deployment automation (this chart generates `<fullname>-controlplane-internal-token` in development only) | `controlplane.internalToken.existingSecret` | `productValidation.products.playbook.credential.existingSecret` |
-| Control-plane admin token | Deployment automation, or this chart | `controlplane.adminToken.existingSecret` | None |
+| Playbook admin token (CP and DP recovery) | Deployment automation, or this chart | `controlplane.adminToken.existingSecret` | None |
 | Identity Service metadata Redis config | You | None | `metadata.existingSecret` |
 | Identity Service Control token | The Identity Service release, or you | None | `control.*` |
 
 Keep every token distinct: the internal token must not reuse the admin token,
 and the chart refuses to mount one Secret key as two of its credentials. It
 cannot compare values held in differently named Secrets.
+
+### Running under redis-iris
+
+When the chart runs as the `playbook` dependency of the `redis-iris` umbrella
+(`global.iris` is set), both Identity Service credentials come from the suite:
+the supplied aggregate Secrets, or else the umbrella's generated Secrets for
+Playbook. Each Deployment mounts only Playbook's key:
+
+| Reference | Secret | Key |
+| --- | --- | --- |
+| `identityService.credential` | `global.iris.secrets.dataplaneServiceCredentials.existingSecret`, generated `iris-playbook-dataplane-credential` | `playbook-dp` |
+| `controlplane.internalToken` | `global.iris.secrets.controlplaneInternalTokens.existingSecret`, generated `iris-playbook-internal-token` | `playbook` |
+
+The chart generates no internal token then. Leave both `existingSecret` values
+empty: one naming another Secret fails the render and names the field.
+
+The suite-wide settings also come from `global.iris` (TDD MOD-19479, "Values
+precedence"):
+
+| Value | Under redis-iris |
+| --- | --- |
+| `tenantId` | `global.iris.tenantId` (default `default`) |
+| `license.existingSecret`, `license.secretKey` | `global.iris.license.*` (defaults `iris-license`, `license.key`) |
+| `auth.oidc.audience` | `global.iris.auth.oidc.audience` (default `api://redis-iris`) |
+| `dataplane.identityServiceBaseURL`, `identityService.allowInsecureTransport` | the suite's Identity Service, `http://iris-identity-service.<namespace>.svc.<clusterDomain>:9200` |
+| `dataplane.oidc` | `global.iris.auth.oidc` (issuer = access-token issuer), `staticTenantID` = the tenant, `roleMappings` from `global.iris.auth.roleBindings` for `playbook`, only when an issuer is set |
+| `controlplane.oidc.enabled` | on when those `roleMappings` are not empty |
+
+Leave these unset: a value that differs fails the render and names the field.
+Without `global.iris` nothing changes.
 
 ### Product contracts
 
@@ -270,12 +318,10 @@ port, restate them on both releases.
 | Set on this release | Value | Matching Identity Service value |
 | --- | --- | --- |
 | `dataplane.identityServiceBaseURL` | `http://iris-identity-service:9200` (the release's Service on its `service.port`, default `9200`) | None |
-| `identityService.credential.existingSecret` + `secretKey` | The data plane's runtime credential | `runtime.serviceCredentials[]` entry `name: playbook-dp`, `subject: playbook-dp`, `allowedOperations: [api-key-introspect]` (plus `subject-grant-lookup` with `extraction.connection.enabled`), `allowedProducts: [playbook]`, the same `existingSecret` + `secretKey` |
+| `identityService.credential.existingSecret` + `secretKey` | The data plane's runtime credential | `runtime.serviceCredentials[]` entry `name: playbook-dp`, `subject: playbook-dp`, `allowedOperations: [api-key-introspect]` (plus `subject-grant-lookup` only for ordinary service subjects), `allowedProducts: [playbook]`, the same `existingSecret` + `secretKey` |
 | `controlplane.internalToken.existingSecret` + `secretKey` | The control plane's internal token | `productValidation.products.playbook.credential` |
 | `controlplane.service.port` | `9200` | `productValidation.products.playbook.baseURL`: `http://playbook-redis-agent-playbook-controlplane:9200` |
 | `tenantId` | `default` | `runtime.apiKeyTenant.singleTenantID` |
-| `extraction.connection.enabled` | `true` | `subjectGrants.allowed` entry `{product: playbook, resourceType: playbook, actions: [read, propose]}` |
-| `extraction.connection.destinationControlAudience` | `api://playbook-identity-control` | `controlAuth.workloadIdentity` trusts `system:serviceaccount:<namespace>:playbook-redis-agent-playbook-controlplane` with `roles: [subject_grant_admin]` and this audience |
 
 The matching Identity Service values, without extraction:
 
@@ -307,18 +353,14 @@ token from its mounted file; with `controlplane.config.existingSecret`, include
 
 Every agent key carries a tenant. Set the Identity Service release's
 `runtime.apiKeyTenant.singleTenantID` to this chart's `tenantId`; the control
-plane also requests every extraction grant in `tenantId`. Neither chart can
+plane validates extraction source ownership in `tenantId`. Neither chart can
 check that the two values match. If the same release serves Agent Memory, both
 products use one tenant, and Memory's `runtime.unscopedGrantsProduct: memory`
 stays; Playbook needs no unscoped-grants product.
 
-For extraction, one Identity Service release can serve both Agent Memory and
-Playbook. It then carries both products' entries, `subject-grant-lookup` on
-both data-plane credentials, both `subjectGrants.allowed` entries
-(`memory/mem-store [read]` and `playbook/playbook [read, propose]`), and one
-`controlAuth.workloadIdentity` subject for this control plane with
-`audience: [api://memory-identity-control, api://playbook-identity-control]`.
-See [Deploy and enable the extraction stack](#deploy-and-enable-the-extraction-stack).
+One Identity Service release can serve ordinary customer authentication for both
+Agent Memory and Playbook. Extraction itself needs no IdS subject-grant policy,
+lookup operation or Control trust. RAM CP viewer trust is configured separately.
 
 ### Cross-namespace
 
@@ -383,7 +425,7 @@ unsupported. The following manual migration is untested guidance:
 ## MCP endpoint exposure
 
 The existing DP Service on port `9201` serves both REST and the first-class MCP
-URL `/v1/playbooks/{playbookId}/mcp`. There is no separate MCP workload, Service,
+URL `/iris/data/v1/agent-playbooks/playbooks/{playbookId}/mcp`. There is no separate MCP workload, Service,
 port, or enable flag. The chart creates no ingress: expose this path through your
 platform's TLS ingress/gateway and retain the complete path, bearer Authorization
 header, request body, and MCP/Accept headers. Route it to the data-plane Service,
@@ -400,7 +442,7 @@ kubectl -n redis-ai port-forward --address 127.0.0.1 \
 ```
 
 For this local tunnel, configure a standard MCP client with
-`http://127.0.0.1:9201/v1/playbooks/<playbook-id>/mcp` and a read-scoped Playbook
+`http://127.0.0.1:9201/iris/data/v1/agent-playbooks/playbooks/<playbook-id>/mcp` and a read-scoped Playbook
 agent key. Use the platform HTTPS origin for remote callers. See the
 [client configuration and retrieval flow](../README.md#connect-an-mcp-client).
 
@@ -480,7 +522,8 @@ Validate a real operator token against both services before rollout. Explicitly
 mapped human `product_admin` and `suite_admin` roles receive tenant-wide
 `playbook:*` full access at DP after its tenant check. New Playbooks are usable
 immediately. This MVP policy needs Teo's approval. Nonadmin human grants
-remain MOD-18385 work. The UI currently accepts a pasted access token.
+remain MOD-18385 work. The UI supports a pasted access token and configured
+integrated sign-in; see the [UI SSO guide](../../docs/iris-onprem-ui-sso-guide.md).
 
 Keep CP administration and IdS Control routes private; exposing an entire IdS
 Service also exposes its administrative routes. Use the platform ingress or
@@ -496,7 +539,15 @@ Identity Service agent keys enabled for callers without a corporate identity.
 This preview is disabled by default. Enable it with the IdP issuer and JWKS
 endpoint, plus either a claim that identifies the Playbook tenant or a fixed
 tenant for a single-tenant installation. Set exactly one of `tenantIDClaim`
-and `staticTenantID`; chart validation rejects configurations that set both:
+and `staticTenantID`; chart validation rejects configurations that set both.
+
+`issuer` may be `http://` or `https://`: it is an identifier compared with the
+token's `iss` and never fetched, so an `http://` issuer needs no
+`allowInsecureTransport` and is accepted under the FIPS profile. On AD FS (2019+)
+set it to the discovery document's `access_token_issuer`
+(`http://<host>/adfs/services/trust`). `jwksURI` is fetched, so it must stay
+`https://` unless `allowInsecureTransport=true`, which the FIPS profile refuses.
+`extraction.connection` is unchanged and still requires HTTPS.
 
 ```yaml
 tenantId: customer-tenant
@@ -548,7 +599,7 @@ contains the configured value, and rejected otherwise.
 | Entra ID, v2 tokens | the API's Application (client) ID GUID |
 | Entra ID, v1 tokens | the Application ID URI, for example `api://redis-iris` |
 
-Use the same value in every Iris chart (the UI sign-in setting for it arrives with MOD-19450). If you
+Use the same value in every Iris chart, including UI sign-in. If you
 supply your own data-plane or control-plane config Secret, set the audience in
 its `auth.oidc` block yourself. The chart refuses an empty or wildcard value, and warns
 in the release notes when the value differs from the default.
@@ -561,196 +612,116 @@ JWKS cache TTL, 5-minute clock skew, and 30-second JWKS HTTP timeout. A signed
 token normally remains usable through its expiration. Account for these fixed
 defaults when setting token lifetimes and retiring an issuer key.
 
-HTTP issuer or JWKS URLs require the explicit
-`allowInsecureTransport: true` development opt-in. The FIPS profile rejects
-that opt-in and requires HTTPS for both endpoints. Mount private CA material
-through `tls.caCertSecret` when the IdP uses an internal certificate authority.
+Only a fetched HTTP JWKS URL requires the explicit
+`allowInsecureTransport: true` development opt-in; the issuer is an identifier.
+The FIPS profile rejects that opt-in and requires HTTPS for JWKS. Mount private CA
+material through `tls.caCertSecret` when the IdP uses an internal certificate authority.
 
-## Reading Agent Memory for extraction (MOD-19110)
+## Reading Agent Memory for extraction (MOD-20121)
 
-For an installation from scratch, follow the
-[deployment walkthrough](#deploy-and-enable-the-extraction-stack) below. It covers
-both charts, the worker's separate credentials, and binding activation.
-
-`extraction.connection` connects extraction bindings to a Redis Agent Memory
-(RAM) installation. The control plane uses the isolated Identity Service Control
-credential to grant `workerSubjects` read on each bound store. Identity Service
-asks RAM to validate store existence and ownership by the grant tenant before
-persisting a grant. The control
-plane has no RAM data-plane credential or route; workers validate live access with
-their own projected tokens during extraction. Deleting the last binding to a store
-withdraws the shared grants. See the
-[extraction ADR](../../docs/adr/MOD-18196-playbook-memory-extraction.md).
+For a fresh installation, follow the [deployment walkthrough](#deploy-and-enable-the-extraction-stack).
+The CP discovers current stores and validates exact source ownership through RAM
+CP before creating or enabling a binding. There is no extraction grant provisioner
+or per-account/store deployment catalog. See the
+[consent and lifecycle specification](../../docs/specs/MOD-20121-cp-owned-extraction-bindings.md).
 
 ```yaml
 extraction:
   enabled: true
   connection:
     enabled: true
-    issuer: https://kubernetes.default.svc.cluster.local   # this cluster's ServiceAccount issuer
-    jwksURI: https://kubernetes.default.svc.cluster.local/openid/v1/jwks
-    # Optional: defaults to dataplane.identityServiceBaseURL. Set it only when
-    # RAM uses a different Identity Service release.
-    # identityServiceBaseURL: https://ram-identity-service:9200
-    # Optional: the control plane's URL for the data plane's Identity Service
-    # release (destination grants); defaults to dataplane.identityServiceBaseURL.
-    # destinationIdentityServiceBaseURL: https://identity-service.example:9200
-    workerSubjects:
-      - system:serviceaccount:<namespace>:<worker-serviceaccount>
+    issuer: https://YOUR-CLUSTER-ISSUER
+    jwksURI: https://YOUR-CLUSTER-JWKS
+    ramControlPlaneBaseURL: https://ram-controlplane:9100
 ```
 
-The control plane does not hold an Identity Service Control token. It gets its
-own ServiceAccount, `<fullname>-controlplane`, and provisions grants with
-projected ServiceAccount JWTs: audience `sourceControlAudience` for the
-Identity Service RAM uses and `destinationControlAudience` for the control
-plane's Identity Service. Usually one release serves both and lists both
-audiences. Each Identity Service release trusts the subject
-`system:serviceaccount:<namespace>:<fullname>-controlplane` with the role
-`subject_grant_admin`. That role permits only subject-grant operations, in
-`tenantId`.
+The chart projects an `api://memory-cp` token for `<fullname>-controlplane`.
+Configure RAM CP `auth.workload_identity` to trust that subject with `roles: [viewer]`
+and the same tenant as Playbook `tenantId`. A suite-admin workload bypasses RAM
+ownership checks and must not be used for this proof. The Playbook caller must
+separately be the installation admin or same-tenant OIDC `suite_admin`/`product_admin`.
+Operator/viewer cannot list sources, create or enable bindings.
 
-On the Identity Service release, set `controlAuth.workloadIdentity` with this
-cluster's issuer and JWKS, the audiences `sourceControlAudience` and
-`destinationControlAudience`, and that subject with
-`roles: [subject_grant_admin]` (on separate releases, each gets its own
-audience). The Control tokens stay valid as rescue credentials, and only the
-Identity Service pods mount them. This chart no
-longer has the `controlToken` and `destinationControlToken` values. If you set
-them, rendering fails.
-
-An existing `0.1.x` install cannot be upgraded in place; see
-[Upgrading from `0.1.x`](#upgrading-from-01x).
-
-The subject's tenant
-in RAM must be this chart's `tenantId`, because the control plane requests every
-grant in that tenant.
-
-On the RAM side, list the same
-subjects under `memory.auth.service_subjects` with this issuer, its JWKS, and
-audience `api://memory-dp`, and add `subject-grant-lookup` to the RAM data
-plane's runtime credential on that Identity Service release. On that release,
-also configure `subjectGrants.allowed` with `product: memory`,
-`resourceType: mem-store`, and `actions: [read, read_all_owners]`; its empty
-default denies all subject grants (see the Identity Service chart README,
-"Product contracts"). The control plane requests both actions.
-`read_all_owners` lets the worker read the sessions of all owners in the store
-when RAM enforces ownership. Upgrade that Identity Service release and the RAM
-chart first: they bring the Identity Service and control plane images that know
-`read_all_owners`, and the wider allowed list.
-If RAM refuses the full grant, the control plane falls back to `read` and logs
-a warning. Then the worker cannot read personal sessions when RAM enforces
-ownership. The next reconcile after you widen the list installs the full grant. See the [RAM service-subject example](../../memory/helm/README.md#service-subject-authentication-playbook-extraction-mod-19110).
-The Playbook tenant must own the
-RAM store. RAM validates ownership during grant preparation and rechecks it when
-the worker reads. A foreign-tenant store blocks preparation as `source_grant_refused`.
-
-The RAM data plane must be able to fetch the issuer's JWKS. On a cluster whose
-ServiceAccount issuer is a public OIDC endpoint (for example EKS), no extra
-setup is needed. Otherwise RAM needs the cluster CA (`tls.caCertSecret`) and
-unauthenticated access to the issuer discovery documents, because the shared
-JWKS client sends no credential. `tests/integration/identity/kind/playbook-ram-e2e.sh`
-shows the complete setup on KinD.
-
-### Destination preparation and authentication
-
-When `extraction.connection.enabled=true`, Playbook DP accepts the configured
-issuer/subjects with audience `api://playbook-dp` and looks up their grants on
-`dataplane.identityServiceBaseURL`. The CP provisions destination grants on
-`extraction.connection.destinationIdentityServiceBaseURL`, which defaults to the
-same URL. Set it only when the control plane reaches the Identity Service at a
-different URL than the data plane (for example on Neptune); runtime lookup and
-CP mutation must still reach one authority. That
-release must carry the `playbook/playbook [read, propose]` subject-grant policy,
-`subject-grant-lookup` on the `playbook-dp` credential, and workload trust for
-the control-plane subject with the audience `destinationControlAudience`, the
-tenant `tenantId` and the role `subject_grant_admin` (see
-[Product contracts](#product-contracts)).
-
-The CP's `allow_insecure_transport` covers its source and destination Identity
-Service and RAM CP calls. It is on when `extraction.connection.allowInsecureTransport`
-or `identityService.allowInsecureTransport` is set; an `http://` source URL needs
-`identityService.allowInsecureTransport`. FIPS refuses both.
-
-Issuer and JWKS must use HTTPS unless insecure transport is explicitly allowed;
-FIPS requires HTTPS. Both data planes must trust the issuer CA and reach JWKS.
-Roll updated IdS readers to all replicas before enabling this capability. Durable
-management metadata makes old IdS rollback unsupported while it remains present.
-Destination cleanup preserves borrowed grants and administrator replacements.
-A retired binding management identity cannot be reused at the same subject/resource;
-reintroduce a retired worker with a new binding or separately administered access.
+Configure RAM DP static `memory.auth.jwt_subjects` trust for the dedicated
+`<fullname>-worker` subject with viewer and `mem-store:*` read. The Playbook chart
+renders static read/propose authority in its configured tenant when the worker is
+enabled. Separate projected DP audiences are `api://memory-dp` and `api://playbook-dp`.
+Ordinary customer IdS authentication and RAM's own worker remain configured as before.
+Optional external `workerSubjects` retain their ordinary IdS authentication;
+extraction does not create grants for them. The data plane recognizes this chart's worker
+and the external workers by issuer and subject (`extraction_workers` in its rendered
+config), so the consolidation searches such a worker makes through the search API are not
+counted as customer usage. A worker that instead presents a static `target_token` has no
+issuer and subject to match and is counted.
 
 ### Operator flow for the bindings API
 
-1. Deploy the Identity Service release RAM connects to, then RAM CP and RAM DP,
-   with the service-subject configuration above (RAM deploys no Identity
-   Service of its own). Create the source store through RAM CP under the same
-   tenant as the Playbook. Choose a tenant-specific worker ServiceAccount subject;
-   configure its grants and deploy the [extraction worker](#extraction-worker).
-2. Deploy Playbook CP and DP connected to that Identity Service release, with
-   metadata/content Redis and the usual Playbook storage, auth and inference
-   configuration. Do not copy the Identity Service Control token. The control plane uses its own ServiceAccount JWT.
-   The `controlAuth.workloadIdentity` of the Identity Service release RAM uses must trust its subject
-   before you enable the connection. Set `extraction.enabled: true` and
-   `extraction.connection.enabled: true` as shown above, with the exact worker
-   subjects (the source endpoint defaults to `dataplane.identityServiceBaseURL`). Roll every CP replica to the same configuration.
-3. Allow Playbook CP → Identity Service Control, Playbook DP → Identity Service
-   Runtime, and Identity Service → RAM CP and Playbook CP validation.
-   The [Playbook network-policy reference](networkpolicy.reference.yaml) supplies
-   the egress rule and the [RAM reference](../../memory/helm/networkpolicy.reference.yaml)
-   supplies the corresponding ingress rules. Replace namespaces, release labels,
-   TLS gateway selectors and ports for your deployment. CP reaches Playbook
-   metadata/content Redis directly for lifecycle/index administration; this flow
-   adds no CP → Playbook DP or CP → RAM DP HTTP call.
-4. Create a Playbook through Playbook CP, then POST its
-   `/v1/playbooks/{playbookId}/extraction/bindings` with
-   `source: {type: redis_agent_memory, storeId: ...}` and `job: {type: faq}`.
-   Poll GET until `ready`, then PATCH `enabled: true` with the current
-   `expectedVersion`. One binding per Playbook is supported. `ready` proves store
-   existence, tenant ownership validation and accepted source/destination grants; it does not prove
-   worker connectivity or model configuration. Configure the worker's destination and
-   model credentials as described in the [worker setup](#extraction-worker).
+1. Install RAM/Playbook with matching tenant configuration, fixed service URLs,
+   reachable issuer/JWKS and the CP viewer and DP static trust described above.
+2. Create a source store and ready destination. Discover stores through
+   `GET /iris/v1/agent-playbooks/playbooks/{playbookId}/extraction/stores`.
+3. POST the exact source and FAQ policy. Successful validation returns
+   `201 READY`, disabled. It does not prove model availability or worker capacity.
+4. Explicitly PATCH `enabled: true` with the current `revision` as `expectedRevision`.
+   The CP rechecks consent and source ownership. A denial or RAM outage leaves
+   the binding unchanged; successful recovery clears its blocked reason.
+5. Pause with `enabled: false` or DELETE using destination-management authority.
+   Both work with RAM unavailable or the global extraction gate off. Deletion
+   removes scheduling intent without deleting RAM data, proposals or FAQs.
 
-To stop the capability, set `extraction.enabled: false` and retain
-`extraction.connection.enabled: true`, the endpoint and RAM's workload trust.
-Inspection, pause, deletion and grant reconciliation still work; creation,
-resume and policy edits return `ExtractionDisabled` (409). Pause retains grants.
-Delete bindings and wait for GET to return 404 before disabling the connection
-or removing RAM's workload trust. Failed/unavailable cleanup leaves disabled deleting
-records for retry. With `controlplane.config.existingSecret`, supply both settings
-in that config and update `existingSecretChecksum` to trigger the CP rollout.
+Pause/delete fences subsequent cooperative work; already accepted requests may
+settle. Static worker access remains until trust is removed from both DPs and all
+replicas roll. No grant-admin credential, extraction journal or grant retirement
+procedure is required. This release qualifies fresh installs; existing-install
+migration and backward-compatible extraction config are outside scope.
 
-When retiring a worker, pause affected bindings and stop that workload. Remove
-its subject from `extraction.connection.workerSubjects` and finish the control
-plane rollout. Reconciliation of preparing/ready bindings revokes retired identities
-recorded in its durable tenant/store grant journal; deleting the last binding
-also revokes all recorded identities. Delete/recreate blocked bindings to retire
-their identities. Failed cleanup retains ownership history
-for retry. Verify current-worker access and retired-worker denial after RAM's
-hard cache TTL before resuming. Remove the retired subject from RAM's allowlist
-as well. Old replicas can regrant their configured subjects during a rollout.
+## Configure extraction scan recurrence
 
-The journal tracks grants this deployment attempts to install. It cannot discover
-historical or other deployments' grants. Changing the source Identity Service
-URL (`extraction.connection.identityServiceBaseURL`, or `dataplane.identityServiceBaseURL`
-while that is empty) fails closed for stores with recorded grants at the old authority. While CP still points
-to that authority, delete all affected bindings and wait for removal; confirmed
-cleanup clears their journal. Then switch endpoints and recreate bindings. Restore
-the old endpoint configuration first if the migration was started prematurely.
-Preserve metadata Redis
-and its grant journal when moving or restoring this deployment.
+The worker owns scan recurrence. The default remains five minutes; changing it
+does not change the binding's idle policy, extraction concurrency, model or
+publication workflow. On-prem Helm configuration is:
 
-RAM caches grants separately for each service subject. The worker retries HTTP
-403 responses for up to six minutes before blocking and pausing the binding;
-no extraction or proposal write runs while access is denied. This covers the
-default five-minute hard cache TTL. Keep RAM's hard cache TTL below that grace
-period. Invalid identity (401) blocks immediately. Cross-scope source data is
-rejected as `invalid_source` without disabling a healthy binding.
+```yaml
+worker:
+  scanInterval: 300s
+```
 
+The rendered worker key is `worker.scan_interval`. The environment override is
+`PLAYBOOK_DP_WORKER_SCAN_INTERVAL`. Precedence is runtime default, base file,
+mounted overlays in order, then a nonempty environment override. An empty
+environment value falls through. Go duration syntax such as `300s`, `5m` or `60s`
+is accepted, from `1ms` through `2562047h47m16.854775807s`; invalid values fail
+startup. The independent dispatcher poll still defaults to `5s` and limits
+scheduling resolution for sub-poll intervals.
+
+Neptune uses `worker.config.worker.scan_interval` for a server release with its
+worker enabled, or `config.worker.scan_interval` for a direct worker release.
+Omitting either setting preserves the `300s` runtime default.
+
+Use the same interval on all workers sharing a metadata schedule and regional
+queue, and restart them after changing it. Chart-owned configuration changes
+update the existing pod checksum. Already-recorded due times and scan-marker
+expirations stay intact; the new interval applies to future dispatches and newly
+written markers. One old due cycle may therefore remain after a change.
+
+Shortening to `60s` can produce roughly five times the source-listing requests
+and additional queue/Redis bookkeeping, even when completed sessions are skipped.
+Qualify that load before reducing the production interval. Restore `300s` and
+restart workers to reverse the cadence change. The separate binding idle window
+defaults to 1800 seconds; queue and model time also affect proposal visibility.
+Scan frequency is not an end-to-end freshness guarantee.
+
+This pre-GA change removes `job.intervalSeconds` from bindings and API responses.
+Old stored values are ignored; new writes omit them. Deploy matching CP/worker
+versions after stopping old writers and workers. Clients requiring the removed
+response field must be adjusted; mixed-version operation and image-only rollback
+after new-shape writes are unsupported. No data migration or cleanup is needed.
 
 ## Deploy and enable the extraction stack
 
-This walkthrough installs from a checkout containing MOD-18529. Use images built
-from that revision; enabling values on an older image does not add extraction.
+This walkthrough installs from a checkout containing MOD-20121 and its
+MOD-20115/MOD-20116 dependencies. Use matching Playbook images built from that
+checkout.
 It uses namespace `redis-ai`, RAM release `redis-agent-memory`, and Playbook
 release `playbook`, without name overrides. The resulting worker subject is
 `system:serviceaccount:redis-ai:playbook-redis-agent-playbook-worker`. Adjust that
@@ -785,7 +756,7 @@ identity. The overlay below supplies the projected token and matching callback
 settings; see [RAM worker service-account authentication](../../memory/helm/README.md#worker-service-account-authentication).
 `workerAuth` mounts the token; it does not configure the callback or grant access
 by itself. RAM's `redis-agent-memory` worker audience and write grants are
-separate from Playbook's `api://memory-dp` read-only service-subject grants.
+separate from Playbook's `api://memory-dp` static read-only policy.
 
 Create prerequisite Secrets in the namespace before installing. Configure
 verified TLS endpoints through your platform's mesh, gateway or ingress; neither
@@ -826,84 +797,53 @@ memory:
           resources:
             "mem-store:*":
               permissions: [write]
-    service_subjects:
-      enabled: true
-      issuer: https://YOUR-SERVICEACCOUNT-ISSUER
-      jwks_uri: https://YOUR-SERVICEACCOUNT-JWKS-ENDPOINT
-      audience: [api://memory-dp]
-      subjects:
-        - system:serviceaccount:redis-ai:playbook-redis-agent-playbook-worker
+    jwt_subjects:
+      - issuer: https://YOUR-SERVICEACCOUNT-ISSUER
+        jwks_uri: https://YOUR-SERVICEACCOUNT-JWKS-ENDPOINT
+        audience: [api://memory-dp]
+        subjects:
+          - subject: system:serviceaccount:redis-ai:playbook-redis-agent-playbook-worker
+            authority: static
+            roles: [viewer]
+            resources:
+              "mem-store:*": {permissions: [read]}
 ```
 
-Before installing RAM, install the Identity Service release both products
-connect to with RAM's and Playbook's entries from "Product contracts" in the
-[Identity Service chart README](../../identity-service/helm/README.md#product-contracts),
-plus both subject-grant policies, `subject-grant-lookup` on both data-plane
-credentials, and trust in the Playbook control-plane subject for both control
-audiences. Save this as `ids-extraction-values.yaml` and pass it after that
-release's own `ids-values.yaml`:
+Also configure RAM's existing CP workload identity with the viewer subject:
 
 ```yaml
-subjectGrants:
-  allowed:
-    - product: memory
-      resourceType: mem-store
-      actions: [read, read_all_owners]
-    - product: playbook
-      resourceType: playbook
-      actions: [read, propose]
-# The Playbook control plane provisions source and destination grants with its own
-# ServiceAccount JWT. The subject's tenant defaults to
-# runtime.apiKeyTenant.singleTenantID and must be the Playbook chart's tenantId.
-controlAuth:
-  workloadIdentity:
-    enabled: true
-    issuer: https://YOUR-SERVICEACCOUNT-ISSUER
-    jwks_uri: https://YOUR-SERVICEACCOUNT-JWKS-ENDPOINT
-    audience: [api://memory-identity-control, api://playbook-identity-control]
-    subjects:
-      - subject: system:serviceaccount:redis-ai:playbook-redis-agent-playbook-controlplane
-        roles: [subject_grant_admin]
-runtime:
-  serviceCredentials:
-    - name: memory-dp
-      subject: memory-dp
-      existingSecret: memory-dp-credential
-      secretKey: token
-      allowedOperations: [api-key-introspect, subject-grant-lookup]
-      allowedProducts: [memory]
-    - name: playbook-dp
-      subject: playbook-dp
-      existingSecret: playbook-dp-credential
-      secretKey: token
-      allowedOperations: [api-key-introspect, subject-grant-lookup]
-      allowedProducts: [playbook]
+controlplane:
+  configData:
+    auth:
+      workload_identity:
+        enabled: true
+        issuer: https://YOUR-SERVICEACCOUNT-ISSUER
+        jwks_uri: https://YOUR-SERVICEACCOUNT-JWKS-ENDPOINT
+        audience: [api://memory-cp]
+        subjects:
+          - subject: system:serviceaccount:redis-ai:playbook-redis-agent-playbook-controlplane
+            tenant: default
+            roles: [viewer]
 ```
 
-Helm replaces lists rather than merging their entries. Preserve any additional
-subjects, grant policies or runtime credentials your installation requires. Set
-RAM's connection values (`dataplane.identityServiceBaseURL`,
-`identityService.credential.existingSecret` pointing at the same
-`memory-dp-credential`, and `controlplane.internalToken.existingSecret`) in
-`ram-values.yaml`; see
-[Connecting to the Identity Service](../../memory/helm/README.md#connecting-to-the-identity-service).
+Use RAM's chart key `controlplane.configData.auth` and align its configured tenant
+with Playbook. Install the existing Identity Service and product registrations
+for ordinary customer keys; extraction needs no subject-grant policies, lookup
+credentials or IdS Control trust. Preserve unrelated identities and credentials.
 
 ```bash
 helm repo add redis-ai https://helm.redis.io/ai --force-update
 helm dependency build memory/helm
 helm dependency build playbook/helm
 helm upgrade --install iris-identity-service redis-ai/iris-identity-service \
-  --namespace redis-ai --create-namespace \
-  -f ids-values.yaml -f ids-extraction-values.yaml
+  --namespace redis-ai --create-namespace -f ids-values.yaml
 helm upgrade --install redis-agent-memory memory/helm \
   --namespace redis-ai --create-namespace \
   -f ram-values.yaml -f ram-extraction-values.yaml
 ```
 
-Wait for the Identity Service release and RAM CP and DP to be Ready. You do not
-copy any RAM credential to the Playbook namespace: that Identity Service release
-trusts the Playbook control-plane subject. Its Control token stays a rescue
-credential that only its own pod mounts.
+Wait for IdS and both RAM planes to be Ready. Only the projected RAM CP viewer
+credential is mounted in Playbook CP; it receives no RAM DP credential.
 
 ### 3. Install Playbook with bindings enabled and the worker stopped
 
@@ -917,8 +857,7 @@ extraction:
     enabled: true
     issuer: https://YOUR-SERVICEACCOUNT-ISSUER
     jwksURI: https://YOUR-SERVICEACCOUNT-JWKS
-    workerSubjects:
-      - system:serviceaccount:redis-ai:playbook-redis-agent-playbook-worker
+    ramControlPlaneBaseURL: https://ram-controlplane.internal.example
 worker:
   enabled: false
   replicaCount: 1
@@ -952,12 +891,12 @@ tenant. These requests require `curl` and `jq`. Keep response files private:
 ```bash
 umask 077
 TENANT_ID=default
-curl --fail-with-body -sS -X POST "$RAM_CP_URL/v1/stores" \
+curl --fail-with-body -sS -X POST "$RAM_CP_URL/iris/v1/agent-memory/stores" \
   -H "Authorization: Bearer $RAM_ADMIN" -H 'Content-Type: application/json' \
-  --data '{"name":"playbook-source"}' --output ram-store.json
+  --data '{"name":"playbook-source","database":{"databaseId":"1"}}' --output ram-store.json
 STORE_ID=$(jq -r '.storeId' ram-store.json)
 
-curl --fail-with-body -sS -X POST "$PLAYBOOK_CP_URL/v1/playbooks" \
+curl --fail-with-body -sS -X POST "$PLAYBOOK_CP_URL/iris/v1/agent-playbooks/playbooks" \
   -H "Authorization: Bearer $PLAYBOOK_ADMIN" -H 'Content-Type: application/json' \
   --data '{"name":"extracted-faqs","embedding":{"provider":"openai","model":"text-embedding-3-small","dimensions":1536}}' \
   --output playbook.json
@@ -967,8 +906,8 @@ PLAYBOOK_ID=$(jq -r '.playbookId' playbook.json)
 
 Replace the Playbook embedding identity above with an entry in your configured
 `inference.models` catalog, or reuse an existing Playbook and source store. The
-connected chart projects distinct RAM and Playbook worker tokens. Binding
-preparation provisions destination read/propose access automatically. Do not add
+connected chart projects distinct RAM and Playbook worker tokens and renders
+static destination read/propose trust when the worker is enabled. Do not add
 `worker.target_token` to that Secret; it conflicts with the chart's
 `worker.target_token_file`. Legacy manually configured workers may use either a
 static target token or a target token file, with their separately administered
@@ -987,29 +926,28 @@ RAM source authentication uses the worker's
 projected ServiceAccount token automatically; do not substitute a destination token
 or the Identity Service Control credential for it.
 
-### 5. Prepare the binding, start the worker, then activate
+### 5. Validate the binding, start the worker, then activate
 
 Create a binding; it starts disabled:
 
 ```bash
 jq -n --arg store "$STORE_ID" \
-  '{source:{type:"redis_agent_memory",storeId:$store},job:{type:"faq"}}' \
+  '{source:{kind:"REDIS_AGENT_MEMORY",storeId:$store},job:{kind:"FAQ"}}' \
   > binding-request.json
 curl --fail-with-body -sS -X POST \
-  "$PLAYBOOK_CP_URL/v1/playbooks/$PLAYBOOK_ID/extraction/bindings" \
+  "$PLAYBOOK_CP_URL/iris/v1/agent-playbooks/playbooks/$PLAYBOOK_ID/extraction/bindings" \
   -H "Authorization: Bearer $PLAYBOOK_ADMIN" -H 'Content-Type: application/json' \
   --data-binary @binding-request.json --output binding.json
 BINDING_ID=$(jq -r '.bindingId' binding.json)
 
 curl --fail-with-body -sS \
-  "$PLAYBOOK_CP_URL/v1/playbooks/$PLAYBOOK_ID/extraction/bindings/$BINDING_ID" \
+  "$PLAYBOOK_CP_URL/iris/v1/agent-playbooks/playbooks/$PLAYBOOK_ID/extraction/bindings/$BINDING_ID" \
   -H "Authorization: Bearer $PLAYBOOK_ADMIN" --output binding.json
 ```
 
-Repeat GET until `status` is `ready`; investigate `blocked` rather than activating
-it. Preparation validates product ownership and installs RAM read and Playbook
-read/propose grants. It does
-not check the model or live worker connectivity. Set `worker.enabled: true` in
+Successful create returns `state: READY` and `enabled: false` after validating
+source ownership and caller consent. It does not check model access or worker
+connectivity. Set `worker.enabled: true` in
 `playbook-extraction-values.yaml` and apply it:
 
 ```bash
@@ -1024,9 +962,9 @@ described in the [operations runbook](../../docs/runbooks/playbook-extraction-op
 GET the binding again for its latest version, then activate it:
 
 ```bash
-jq '{expectedVersion:.version,enabled:true}' binding.json > activation.json
+jq '{expectedRevision:.revision,enabled:true}' binding.json > activation.json
 curl --fail-with-body -sS -X PATCH \
-  "$PLAYBOOK_CP_URL/v1/playbooks/$PLAYBOOK_ID/extraction/bindings/$BINDING_ID" \
+  "$PLAYBOOK_CP_URL/iris/v1/agent-playbooks/playbooks/$PLAYBOOK_ID/extraction/bindings/$BINDING_ID" \
   -H "Authorization: Bearer $PLAYBOOK_ADMIN" -H 'Content-Type: application/json' \
   --data-binary @activation.json --output binding.json
 ```
@@ -1042,8 +980,9 @@ still requires human review and publication before it becomes published knowledg
 
 Keep the initial deployment at one replica and one extraction consumer. The
 [post-merge qualification plan](../../docs/runbooks/playbook-extraction-operations.md#agreed-post-merge-work)
-defers real-model sample-data quality assessment and scale/load qualification to
-the next sprint; a successful installation does not establish those results.
+records the real-model sample-data quality assessment and scale/load qualification
+required before production activation; a successful installation does not
+establish those results.
 For pause, cleanup and credential retirement, follow the
 [binding lifecycle instructions](#operator-flow-for-the-bindings-api).
 
@@ -1060,8 +999,9 @@ The standalone Compose stacks do not provide a connected extraction profile or
 a Kubernetes issuer/projected token. Prefer the Kubernetes walkthrough for this
 setup; the [KinD pipeline guide](../README.md#evaluate-the-connected-extraction-pipeline-locally)
 is the reproducible local integration path. A Compose setup additionally needs
-a reachable JWKS issuer, a signed worker JWT with the same issuer/subject/audience,
-RAM IdS grant policy and resource validation, and cross-stack networking.
+a reachable JWKS endpoint, signed worker JWTs with the configured issuer, subject
+and receiver-specific audiences, RAM/Playbook static worker trust, a RAM CP viewer
+credential, and cross-stack networking. Extraction needs no IdS subject grants.
 Robert's [review and local setup reference](https://github.com/redislabsdev/iris/pull/1510#pullrequestreview-5448010183)
 records the manually assembled Compose deployment; a packaged Compose profile
 remains follow-up work.
@@ -1081,8 +1021,7 @@ tls:
 ```
 
 The chart sets `GODEBUG=fips140=on` in every container. FIPS renders fail unless
-`dataplane.identityServiceBaseURL` (and any extraction Identity Service
-override) is an explicit HTTPS endpoint, and refuse
+`dataplane.identityServiceBaseURL` is an explicit HTTPS endpoint, and refuse
 `identityService.allowInsecureTransport`. Set the Identity Service release's
 own profile and its HTTPS grant-validator URL there (see
 [FIPS and TLS trust](#fips-and-tls-trust)). The storage overlay must use
@@ -1130,10 +1069,10 @@ task playbook:test:lifecycle
 task playbook:test:release-artifacts
 ```
 
-Manual dispatch of the package-validation workflow accepts a Playbook version
-(for example, `0.1.0-alpha1`). Dispatching it without a version instead uses
-`0.0.0-dev.sha<commit-prefix>`. Either path creates a seven-day Actions artifact containing production
-image archives, the stamped chart, per-image SBOMs, the public and internal
+Manual dispatch of the package-validation workflow accepts a Playbook version,
+which must equal the committed chart version (MOD-20420); dispatching it without
+a version uses the committed version. Either path creates a seven-day Actions artifact containing production
+image archives, the packaged chart, per-image SBOMs, the public and internal
 OpenAPI contracts, a machine-readable component manifest, an image-values
 overlay, and SHA-256 checksums. The gate verifies license
 enforcement, the Go FIPS build posture, forbidden module absence, and fixed
@@ -1178,7 +1117,7 @@ input blank:
 gh workflow run playbook-onprem-package.yml --ref <fix-branch>
 ```
 
-This uses a synthetic `0.0.0-dev.sha<commit-prefix>` version and temporary Actions
+This uses the committed chart version and temporary Actions
 artifacts; it does not reserve public versions or open an Enterprise Helm PR.
 Packaging hashes the config bytes in each saved image and compares them with
 the frozen registry manifest, independent of Docker's classic/containerd `.Id`
@@ -1189,10 +1128,10 @@ against a downloaded bundle:
 node playbook/tools/release/publication.js verify --bundle <bundle-directory>
 ```
 
-After the desired source is merged to `main`, dispatch the Playbook on-prem
+After the desired source is merged to `release/iris-on-prem-vMAJOR.MINOR` (MOD-20421), dispatch the Playbook on-prem
 release workflow with the Playbook version. It runs the same validation,
 publishes the two Docker Hub image tags, and opens an
-Enterprise Helm PR containing the stamped chart under `ai/charts/redis-agent-playbook`
+Enterprise Helm PR containing the committed chart under `ai/charts/redis-agent-playbook`
 and its `release-redis-agent-playbook.yaml` workflow. A Helm maintainer reviews and
 merges that PR. Dispatch the chart workflow from Helm `master` to publish the
 chart to `https://helm.redis.io/ai`. The Iris CI GitHub App must have Contents,
@@ -1245,22 +1184,22 @@ business or demo routes. It uses the same shared on-prem runtime as RAM.
    does not prove durability. Align one active regional deployment's producers,
    consumers and source deployment. Multiple replicas within that region are supported;
    two regions must not dispatch the same binding inventory.
-2. Set `worker.region` and
-   either `extraction.connection.ramControlPlaneBaseURL` (live store discovery) or
-   optional `extraction.sources` (tenant-scoped store suggestions). `worker.targetURL` defaults
+2. Set `worker.region`. Queue settings are optional: `worker.queuePrefix`
+   defaults to `playbook-extraction` and `worker.maxPending` to 1,000. Override
+   the prefix only for independent deployments sharing queue Redis; region is
+   appended automatically. Configure
+   `extraction.connection.ramControlPlaneBaseURL` for live discovery and ownership checks. `worker.targetURL` defaults
    to the release's DP service. Set an HTTPS endpoint when the security profile
    requires it. Enable `extraction.connection` using the RAM connection settings
    above. Set `worker.sourceURL` to the RAM data-plane endpoint. The chart gives
    the worker its own ServiceAccount
    (`<fullname>-worker`), projects separate `api://memory-dp` and `api://playbook-dp` tokens, and adds that subject to
-   the CP's grant list. Configure RAM's `auth.service_subjects.subjects` to accept
-   the worker subject. `worker.sourceTokenAudience` defaults to `api://memory-dp`
+   the receiving DP's static policy. Configure RAM's static `auth.jwt_subjects` trust
+   for that exact worker subject with viewer/read. Playbook's chart renders static
+   read/propose permission; neither DP consults IdS grants for this worker. `worker.sourceTokenAudience` defaults to `api://memory-dp`
    and must match RAM's accepted audience; `worker.sourceTokenExpirationSeconds`
-   defaults to 3600. The CP calls IdS Control with its own ServiceAccount JWT; it
-   has no RAM data-plane token or endpoint.
-   Store suggestions, live or configured, do not approve source access. Set
-   either `ramControlPlaneBaseURL` or `extraction.sources`, not both. For live
-   discovery, RAM's control plane must trust the
+   defaults to 3600. The CP has no RAM data-plane token or endpoint.
+   RAM's control plane must trust the
    control-plane subject in its `auth.workload_identity`, with the audience
    `ramControlPlaneAudience`, the tenant `tenantId`, and `roles: [viewer]`.
 3. Create `worker.existingSecret` with the following **shape**, substituting real
@@ -1298,7 +1237,7 @@ business or demo routes. It uses the same shared on-prem runtime as RAM.
    until probes and `/metrics` are healthy. A BYO CP config must explicitly carry
    the matching `extraction` block; the chart cannot override that external Secret.
    Startup fails for missing source/model/region/token-file settings or unreachable Redis.
-5. Create a binding, wait for authenticated preparation to mark it ready, then
+5. Create a ready/disabled binding after synchronous source validation, then
    enable it and let
    the dispatcher discover it. A binding uses the documented five-minute cadence;
    `worker.dispatchInterval` only controls polling of due bindings. Pausing a
@@ -1306,12 +1245,12 @@ business or demo routes. It uses the same shared on-prem runtime as RAM.
 6. Configure metrics scraping and the existing OTel collector using
    `worker.opentelemetry`. Alert on sustained queue age, permanent failures,
    exhausted attempts, lease loss, provider errors and dispatch failure/staleness.
-   Example Prometheus signals: `jobqueue_oldest_pending_seconds`,
-   `jobqueue_processing_duration_seconds_count{processing_outcome="permanent_failure"}`,
-   `playbook_extraction_runs_total{exhausted="true"}`,
-   `playbook_extraction_dispatch_last_success_age_seconds`. Per-pod gauges describe
+   Example Prometheus signals: `iris_jobqueue_oldest_pending_seconds`,
+   `iris_jobqueue_processing_duration_seconds_count{processing_outcome="permanent_failure"}`,
+   `iris_playbook_extraction_runs_total{exhausted="true"}`,
+   `iris_playbook_extraction_dispatch_last_success_age_seconds`. Per-pod gauges describe
    the same regional queue; use `max`, not a sum of replicated depth snapshots.
-   `jobqueue_delivery_age_seconds` measures age since submission on every
+   `iris_jobqueue_delivery_age_seconds` measures age since submission on every
    delivery, including retries and scan continuations. Use oldest-pending age
    for backlog alerts; delivery age is not distinct-job first-pickup latency.
 7. Before production enablement, rehearse worker kill/restart, regional Redis
@@ -1376,11 +1315,16 @@ owns status/recovery commands, monitoring signals, read-only queue inspection
 and alert guidance. A long pause/outage can expire the ledger's 30-day refresh TTL.
 
 Session state uses the bounded hash ledger; unexpected persisted types fail
-without rewriting them. Regional queues use `playbook-extraction:<region>:scan|extract`.
+without rewriting them. Runtime and operators share
+`<worker.queuePrefix>:<worker.region>:scan` and `:extract` across all replicas.
+Normal deployments omit both optional queue settings and use
+`playbook-extraction:<region>:scan` / `:extract` with a 1,000-task atomic bound.
+See the [shared-scope operations guide](../../docs/runbooks/playbook-extraction-operations.md#shared-execution-scope).
+Old-config compatibility and migration machinery are outside this change.
 
 The production profile requires `worker.source_token_file`; the chart
 supplies this path and its projected volume automatically. Cluster token rotation
-and grant revocation can be checked locally; Neptune issuer routing remains
+and binding deletion can be checked locally; Neptune issuer routing remains
 environment-specific rollout work. The automated real-service test is documented
 in the [pipeline evaluation](../README.md#evaluate-the-connected-extraction-pipeline-locally).
 There is no public reset or manual-run HTTP API.

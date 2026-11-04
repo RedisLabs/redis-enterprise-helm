@@ -2,17 +2,19 @@
 {{- if .Values.controlplane.config.existingSecret }}
 checksum/config: {{ .Values.controlplane.config.existingSecretChecksum | quote }}
 {{- else }}
-{{- $config := dict "tenantId" .Values.tenantId "service" .Values.controlplane.service "keyPrefix" .Values.storage.keyPrefix "models" .Values.inference.models }}
-{{- if .Values.controlplane.oidc.enabled }}
-{{- $_ := set $config "oidc" (dict "controlplane" .Values.controlplane.oidc "dataplane" .Values.dataplane.oidc) }}
+{{- $config := dict "tenantId" (include "redis-agent-playbook.suite" $ | fromJson).tenantId "service" .Values.controlplane.service "keyPrefix" .Values.storage.keyPrefix "models" .Values.inference.models }}
+{{- /* Under redis-iris the license key and audience come from global.iris; standalone renders stay unchanged. */}}
+{{- if include "redis-onprem.suite.enabled" . }}
+{{- $_ := set $config "license" (include "redis-agent-playbook.suite" $ | fromJson).license }}
+{{- $_ := set $config "audience" (include "redis-agent-playbook.suite" $ | fromJson).audience }}
 {{- end }}
-{{- /* Keep grant administration configured when the extraction gate is off. */}}
-{{- if or .Values.extraction.enabled .Values.extraction.connection.enabled }}
-{{- $_ := set $config "extraction" .Values.extraction }}
-{{- if .Values.extraction.connection.enabled }}
-{{- $_ := set $config "workerEnabled" .Values.worker.enabled }}
-{{- $_ := set $config "identityService" (dict "baseURL" .Values.dataplane.identityServiceBaseURL "allowInsecureTransport" .Values.identityService.allowInsecureTransport) }}
+{{- if (include "redis-agent-playbook.suite" $ | fromJson).controlplaneOIDC.enabled }}
+{{- $_ := set $config "oidc" (dict "controlplane" (include "redis-agent-playbook.suite" $ | fromJson).controlplaneOIDC "dataplane" (include "redis-agent-playbook.suite" $ | fromJson).dataplaneOIDC) }}
 {{- end }}
+{{- /* Keep source ownership transport configured independently of the gate. */}}
+{{- if or (include "redis-agent-playbook.suite" $ | fromJson).extraction.enabled (include "redis-agent-playbook.suite" $ | fromJson).extraction.connection.enabled }}
+{{- $_ := set $config "extraction" (include "redis-agent-playbook.suite" $ | fromJson).extraction }}
+
 {{- end }}
 {{- $_ := set $config "tracing" (dict "enabled" .Values.tracing.enabled "endpoint" .Values.tracing.otlpGRPCEndpoint) }}
 checksum/config: {{ toJson $config | sha256sum | quote }}
@@ -61,18 +63,10 @@ checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
 - name: license
   mountPath: /etc/playbook/license
   readOnly: true
-{{- if .Values.extraction.connection.enabled }}
-- name: extraction-ids-control
-  mountPath: /etc/playbook/credentials/extraction-ids-control
-  readOnly: true
-- name: extraction-destination-ids-control
-  mountPath: /etc/playbook/credentials/extraction-destination-ids-control
-  readOnly: true
-{{- if .Values.extraction.connection.ramControlPlaneBaseURL }}
+{{- if (include "redis-agent-playbook.suite" $ | fromJson).extraction.connection.ramControlPlaneBaseURL }}
 - name: extraction-ram-cp
   mountPath: /etc/playbook/credentials/extraction-ram-cp
   readOnly: true
-{{- end }}
 {{- end }}
 {{ include "redis-agent-playbook.commonTLSMount" . }}
 {{- end }}
@@ -105,39 +99,22 @@ checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
   secret:
     secretName: {{ include "redis-agent-playbook.controlplaneInternalTokenSecretName" . }}
     items:
-      - key: {{ .Values.controlplane.internalToken.secretKey }}
+      - key: {{ include "redis-agent-playbook.controlplaneInternalTokenSecretKey" . }}
         path: token
 - name: license
   secret:
-    secretName: {{ required "license.existingSecret is required" .Values.license.existingSecret }}
+    secretName: {{ required "license.existingSecret is required" (include "redis-agent-playbook.suite" $ | fromJson).license.existingSecret }}
     items:
-      - key: {{ .Values.license.secretKey }}
-        path: {{ .Values.license.secretKey }}
-{{- if .Values.extraction.connection.enabled }}
-{{- /* Projected ServiceAccount JWTs, not the Control token (MOD-19110). */}}
-- name: extraction-ids-control
-  projected:
-    sources:
-      - serviceAccountToken:
-          audience: {{ .Values.extraction.connection.sourceControlAudience | quote }}
-          expirationSeconds: {{ .Values.extraction.connection.controlTokenExpirationSeconds }}
-          path: token
-- name: extraction-destination-ids-control
-  projected:
-    sources:
-      - serviceAccountToken:
-          audience: {{ .Values.extraction.connection.destinationControlAudience | quote }}
-          expirationSeconds: {{ .Values.extraction.connection.controlTokenExpirationSeconds }}
-          path: token
-{{- if .Values.extraction.connection.ramControlPlaneBaseURL }}
+      - key: {{ (include "redis-agent-playbook.suite" $ | fromJson).license.secretKey }}
+        path: {{ (include "redis-agent-playbook.suite" $ | fromJson).license.secretKey }}
+{{- if (include "redis-agent-playbook.suite" $ | fromJson).extraction.connection.ramControlPlaneBaseURL }}
 - name: extraction-ram-cp
   projected:
     sources:
       - serviceAccountToken:
-          audience: {{ .Values.extraction.connection.ramControlPlaneAudience | quote }}
-          expirationSeconds: {{ .Values.extraction.connection.controlTokenExpirationSeconds }}
+          audience: {{ (include "redis-agent-playbook.suite" $ | fromJson).extraction.connection.ramControlPlaneAudience | quote }}
+          expirationSeconds: {{ (include "redis-agent-playbook.suite" $ | fromJson).extraction.connection.ramControlPlaneTokenExpirationSeconds }}
           path: token
-{{- end }}
 {{- end }}
 {{ include "redis-agent-playbook.commonTLSVolume" . }}
 {{- end }}

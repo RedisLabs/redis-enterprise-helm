@@ -1,3 +1,4 @@
+{{- $suite := include "redis-agent-playbook.suite" . | fromJson -}}
 {{- if and .Values.tracing.enabled (not (trim .Values.tracing.otlpGRPCEndpoint)) -}}
 {{- fail "tracing.otlpGRPCEndpoint is required when tracing.enabled=true" -}}
 {{- end -}}
@@ -7,21 +8,27 @@
 {{- if and (eq .Values.tracing.capture "received") (not .Values.tracing.enabled) -}}
 {{- fail "tracing.capture=received requires tracing.enabled=true" -}}
 {{- end -}}
-{{- $tenant := required "tenantId is required" .Values.tenantId -}}
-{{- $storage := required "storage.existingSecret is required" .Values.storage.existingSecret -}}
-{{- $license := required "license.existingSecret is required" .Values.license.existingSecret -}}
+{{- $tenant := required "tenantId is required" $suite.tenantId -}}
+{{- /* Under the redis-iris umbrella these values sit under playbook.; the messages name that path. */ -}}
+{{- $at := ternary "playbook." "" (not (empty (default (dict) .Values.global).iris)) -}}
+{{- $storage := required (printf "%sstorage.existingSecret is required" $at) .Values.storage.existingSecret -}}
+{{- $license := required (printf "%slicense.existingSecret is required" $at) $suite.license.existingSecret -}}
 {{- $cpTag := required "controlplane.image.tag is required" .Values.controlplane.image.tag -}}
 {{- $dpTag := required "dataplane.image.tag is required" .Values.dataplane.image.tag -}}
-{{- if and .Values.extraction.connection.enabled (not .Values.worker.enabled) (eq (len .Values.extraction.connection.workerSubjects) 0) -}}
-{{- fail "extraction.connection.workerSubjects must contain at least one subject" -}}
+{{- if and $suite.extraction.connection.enabled (not $suite.worker.enabled) (eq (len $suite.extraction.connection.workerSubjects) 0) -}}
+{{- fail (printf "%sextraction.connection.workerSubjects must contain at least one subject" $at) -}}
 {{- end -}}
 {{- if not .Values.inference.models -}}
-{{- fail "inference.models must explicitly configure at least one embedding model" -}}
+{{- fail (printf "%sinference.models must explicitly configure at least one embedding model" $at) -}}
+{{- end -}}
+{{- if and $at (not .Values.controlplane.adminToken.existingSecret) -}}
+{{- fail "playbook.controlplane.adminToken.existingSecret is required: under redis-iris the suite supplies the admin token" -}}
 {{- end -}}
 {{- if and (not .Values.controlplane.adminToken.existingSecret) (not .Values.controlplane.adminToken.autoGenerate) -}}
 {{- fail "controlplane.adminToken: set existingSecret or autoGenerate=true" -}}
 {{- end -}}
-{{- if and (not .Values.controlplane.internalToken.existingSecret) (not .Values.controlplane.internalToken.autoGenerate) -}}
+{{- $suiteInternalToken := include "redis-agent-playbook.suiteCredential" (dict "root" . "credential" "controlplane") | fromJson -}}
+{{- if and (not $suiteInternalToken.secret) (not .Values.controlplane.internalToken.existingSecret) (not .Values.controlplane.internalToken.autoGenerate) -}}
 {{- fail "controlplane.internalToken: set existingSecret or autoGenerate=true" -}}
 {{- end -}}
 {{- /*
@@ -34,11 +41,12 @@
 {{- $ids := .Values.identityService -}}
 {{- $fips := eq (include "redis-agent-playbook.securityProfile" .) "fips" -}}
 {{- $idsURL := required "dataplane.identityServiceBaseURL is required: the URL of the Identity Service release the data plane introspects agent keys against" (include "redis-agent-playbook.identityServiceBaseURL" .) -}}
-{{- $_ := required "identityService.credential.existingSecret is required: the data plane's runtime credential registered on the Identity Service release" $ids.credential.existingSecret -}}
-{{- if and $fips $ids.allowInsecureTransport -}}
+{{- $dpCredential := include "redis-agent-playbook.dpCredential" . | fromJson -}}
+{{- $_ := required "identityService.credential.existingSecret is required: the data plane's runtime credential registered on the Identity Service release" $dpCredential.secret -}}
+{{- if and $fips $suite.allowInsecureTransport -}}
 {{- fail "identityService.allowInsecureTransport=true is refused under the fips security profile: Identity Service URLs must be https://" -}}
 {{- end -}}
-{{- if and $idsURL (not (hasPrefix "https://" $idsURL)) (not $ids.allowInsecureTransport) -}}
+{{- if and $idsURL (not (hasPrefix "https://" $idsURL)) (not $suite.allowInsecureTransport) -}}
 {{- fail (printf "dataplane.identityServiceBaseURL %q must be https:// (an http:// URL is accepted only with identityService.allowInsecureTransport=true and no fips security profile)" $idsURL) -}}
 {{- end -}}
 {{- $cpAdmin := include "redis-agent-playbook.controlplaneAdminTokenSecretName" . -}}
@@ -50,49 +58,54 @@
 {{- end -}}
 {{- end -}}
 {{- if and $requiresInferenceSecret (not .Values.inference.existingSecret) -}}
-{{- fail "inference.existingSecret is required when a non-noop provider is configured" -}}
+{{- fail (printf "%sinference.existingSecret is required when a non-noop provider is configured" $at) -}}
 {{- end -}}
-{{- if .Values.dataplane.oidc.enabled -}}
-{{- if not (trim .Values.auth.oidc.audience) -}}
+{{- if $suite.dataplaneOIDC.enabled -}}
+{{- if not (trim $suite.audience) -}}
 {{- fail "auth.oidc.audience is required when dataplane.oidc is enabled: set the audience the IdP issues for the Iris API" -}}
 {{- end -}}
-{{- if contains "*" .Values.auth.oidc.audience -}}
+{{- if contains "*" $suite.audience -}}
 {{- fail "auth.oidc.audience must not contain a wildcard" -}}
 {{- end -}}
-{{- $issuer := required "dataplane.oidc.issuer is required when OIDC is enabled" .Values.dataplane.oidc.issuer -}}
-{{- $jwksURI := required "dataplane.oidc.jwksURI is required when OIDC is enabled" .Values.dataplane.oidc.jwksURI -}}
-{{- $tenantIDClaim := trim .Values.dataplane.oidc.tenantIDClaim -}}
-{{- $staticTenantID := trim .Values.dataplane.oidc.staticTenantID -}}
+{{- $issuer := required "dataplane.oidc.issuer is required when OIDC is enabled" $suite.dataplaneOIDC.issuer -}}
+{{- $jwksURI := required "dataplane.oidc.jwksURI is required when OIDC is enabled" $suite.dataplaneOIDC.jwksURI -}}
+{{- $tenantIDClaim := trim $suite.dataplaneOIDC.tenantIDClaim -}}
+{{- $staticTenantID := trim $suite.dataplaneOIDC.staticTenantID -}}
 {{- if and (not $tenantIDClaim) (not $staticTenantID) -}}
 {{- fail "dataplane.oidc requires tenantIDClaim or staticTenantID" -}}
 {{- end -}}
 {{- if and $tenantIDClaim $staticTenantID -}}
 {{- fail "dataplane.oidc.tenantIDClaim and staticTenantID are mutually exclusive" -}}
 {{- end -}}
-{{- if and $staticTenantID (ne $staticTenantID (trim .Values.tenantId)) -}}
-{{- fail (printf "dataplane.oidc.staticTenantID %q differs from tenantId %q: the data plane rejects tokens whose tenant differs from the deployment tenant" $staticTenantID (trim .Values.tenantId)) -}}
+{{- if and $staticTenantID (ne $staticTenantID (trim $suite.tenantId)) -}}
+{{- fail (printf "dataplane.oidc.staticTenantID %q differs from tenantId %q: the data plane rejects tokens whose tenant differs from the deployment tenant" $staticTenantID (trim $suite.tenantId)) -}}
 {{- end -}}
-{{- if and (not .Values.dataplane.oidc.allowInsecureTransport) (or (hasPrefix "http://" $issuer) (hasPrefix "http://" $jwksURI)) -}}
-{{- fail "dataplane.oidc HTTP endpoints require allowInsecureTransport=true" -}}
+{{- /*
+The issuer is an identifier compared with a token's iss and never fetched, so an http:// issuer (AD FS) needs no
+transport opt-in (values.schema.json already limits it to http(s)). Only the JWKS URI is fetched, so only it carries the
+HTTPS rule.
+*/ -}}
+{{- if and (not $suite.dataplaneOIDC.allowInsecureTransport) (hasPrefix "http://" $jwksURI) -}}
+{{- fail "dataplane.oidc.jwksURI over HTTP requires allowInsecureTransport=true" -}}
 {{- end -}}
-{{- if and $fips (or .Values.dataplane.oidc.allowInsecureTransport (not (hasPrefix "https://" $issuer)) (not (hasPrefix "https://" $jwksURI))) -}}
-{{- fail "FIPS requires HTTPS dataplane.oidc endpoints and allowInsecureTransport=false" -}}
+{{- if and $fips (or $suite.dataplaneOIDC.allowInsecureTransport (not (hasPrefix "https://" $jwksURI))) -}}
+{{- fail "FIPS requires an HTTPS dataplane.oidc.jwksURI and allowInsecureTransport=false" -}}
 {{- end -}}
 {{- end -}}
 {{- $adminRef := printf "%s/%s" $cpAdmin .Values.controlplane.adminToken.secretKey -}}
-{{- $internalRef := printf "%s/%s" $cpInternal .Values.controlplane.internalToken.secretKey -}}
-{{- $credentialRef := printf "%s/%s" $ids.credential.existingSecret $ids.credential.secretKey -}}
+{{- $internalRef := printf "%s/%s" $cpInternal (include "redis-agent-playbook.controlplaneInternalTokenSecretKey" .) -}}
+{{- $credentialRef := printf "%s/%s" $dpCredential.secret $dpCredential.key -}}
 {{- if hasKey .Values.controlplane "delegatedAuth" -}}
 {{- fail "controlplane.delegatedAuth was replaced by controlplane.oidc: the control plane now validates operator tokens locally; set controlplane.oidc.enabled (the audience comes from auth.oidc.audience), and remove controlplane.delegatedAuth" -}}
 {{- end -}}
-{{- if .Values.controlplane.oidc.audience -}}
+{{- if $suite.controlplaneOIDC.audience -}}
 {{- fail "controlplane.oidc.audience was removed: every Iris service accepts the single auth.oidc.audience. Set auth.oidc.audience to the audience your IdP issues (for example your previous controlplane.oidc.audience value) and remove controlplane.oidc.audience" -}}
 {{- end -}}
-{{- if .Values.controlplane.oidc.enabled -}}
-{{- if not .Values.dataplane.oidc.enabled -}}
+{{- if $suite.controlplaneOIDC.enabled -}}
+{{- if not $suite.dataplaneOIDC.enabled -}}
 {{- fail "controlplane.oidc requires dataplane.oidc.enabled: the control plane validates operator tokens against the same issuer" -}}
 {{- end -}}
-{{- if not .Values.dataplane.oidc.roleMappings -}}
+{{- if not $suite.dataplaneOIDC.roleMappings -}}
 {{- fail "controlplane.oidc requires dataplane.oidc.roleMappings" -}}
 {{- end -}}
 {{- end -}}
@@ -100,44 +113,28 @@
 {{- fail "control-plane admin, product-validation (internal), and data-plane Identity Service credentials must reference three different Secret keys" -}}
 {{- end -}}
 
-{{- if .Values.worker.enabled -}}
-{{- $_ := required "worker.region is required" .Values.worker.region -}}
-{{- $_ := required "worker.existingSecret is required" .Values.worker.existingSecret -}}
+{{- if $suite.worker.enabled -}}
+{{- $_ := required (printf "%sworker.region is required" $at) $suite.worker.region -}}
+{{- $_ := required (printf "%sworker.existingSecret is required" $at) $suite.worker.existingSecret -}}
 {{- $_ := include "redis-agent-playbook.workerSourceURL" . -}}
-{{- if lt (int .Values.worker.terminationGracePeriodSeconds) (int (add .Values.worker.shutdownTimeoutSeconds 60)) -}}
-{{- fail "worker termination grace must cover shutdown timeout plus 60 seconds for HTTP, dispatcher and dependency shutdown" -}}
+{{- if lt (int $suite.worker.terminationGracePeriodSeconds) (int (add $suite.worker.shutdownTimeoutSeconds 60)) -}}
+{{- fail (printf "%sworker termination grace must cover shutdown timeout plus 60 seconds for HTTP, dispatcher and dependency shutdown" $at) -}}
 {{- end -}}
 {{- end -}}
 
-{{- if .Values.extraction.connection.enabled -}}
-{{- $issuer := required "extraction.connection.issuer is required" .Values.extraction.connection.issuer -}}
-{{- $jwks := required "extraction.connection.jwksURI is required" .Values.extraction.connection.jwksURI -}}
-{{- if and (not .Values.extraction.connection.allowInsecureTransport) (or (not (hasPrefix "https://" $issuer)) (not (hasPrefix "https://" $jwks))) -}}
-{{- fail "extraction.connection requires HTTPS issuer/JWKS or explicit allowInsecureTransport=true" -}}
+{{- if $suite.extraction.connection.enabled -}}
+{{- $issuer := required (printf "%sextraction.connection.issuer is required" $at) $suite.extraction.connection.issuer -}}
+{{- $jwks := required (printf "%sextraction.connection.jwksURI is required" $at) $suite.extraction.connection.jwksURI -}}
+{{- if and (not $suite.extraction.connection.allowInsecureTransport) (or (not (hasPrefix "https://" $issuer)) (not (hasPrefix "https://" $jwks))) -}}
+{{- fail (printf "%sextraction.connection requires HTTPS issuer/JWKS or explicit allowInsecureTransport=true" $at) -}}
 {{- end -}}
-{{- if and $fips (or .Values.extraction.connection.allowInsecureTransport (not (hasPrefix "https://" $issuer)) (not (hasPrefix "https://" $jwks))) -}}
+{{- if and $fips (or $suite.extraction.connection.allowInsecureTransport (not (hasPrefix "https://" $issuer)) (not (hasPrefix "https://" $jwks))) -}}
 {{- fail "FIPS requires HTTPS extraction endpoints and allowInsecureTransport=false" -}}
 {{- end -}}
-{{- /* Source and destination default to dataplane.identityServiceBaseURL, guarded above. */ -}}
-{{- range $key, $url := dict "identityServiceBaseURL" (include "redis-agent-playbook.sourceIdentityServiceBaseURL" .) "destinationIdentityServiceBaseURL" (include "redis-agent-playbook.destinationIdentityServiceBaseURL" .) -}}
-{{- if and (not (hasPrefix "https://" $url)) (not $ids.allowInsecureTransport) -}}
-{{- fail (printf "extraction.connection.%s %q must be https:// (an http:// URL is accepted only with identityService.allowInsecureTransport=true and no fips security profile)" $key $url) -}}
 {{- end -}}
+{{- if and $suite.extraction.enabled (or (not $suite.extraction.connection.enabled) (not $suite.extraction.connection.ramControlPlaneBaseURL)) -}}
+{{- fail (printf "%sextraction.enabled requires the connected identity and RAM CP ownership endpoint" $at) -}}
 {{- end -}}
-{{- end -}}
-
-{{- /* The subject is the dedicated control-plane ServiceAccount, also while the connection is off. */ -}}
-{{- $controlplaneSubject := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "redis-agent-playbook.controlplaneName" .) -}}
-{{- range $key := list "controlToken" "destinationControlToken" -}}
-{{- if hasKey $.Values.extraction.connection $key -}}
-{{- fail (printf "extraction.connection.%s was removed (MOD-19110): the control plane uses its own ServiceAccount JWT. Remove the value, and make each Identity Service release trust %s as subject_grant_admin through its controlAuth.workloadIdentity" $key $controlplaneSubject) -}}
-{{- end -}}
-{{- end -}}
-
-{{- if and .Values.extraction.connection.enabled .Values.extraction.connection.ramControlPlaneBaseURL .Values.extraction.sources -}}
-{{- fail "extraction.sources and extraction.connection.ramControlPlaneBaseURL cannot both be set: live discovery replaces the configured sources" -}}
-{{- end -}}
-
-{{- if and .Values.extraction.connection.enabled (not .Values.extraction.connection.allowInsecureTransport) (hasPrefix "http://" .Values.extraction.connection.ramControlPlaneBaseURL) -}}
-{{- fail "extraction.connection RAM control-plane HTTP requires explicit allowInsecureTransport=true" -}}
+{{- if and $suite.extraction.connection.enabled (not $suite.extraction.connection.allowInsecureTransport) (hasPrefix "http://" $suite.extraction.connection.ramControlPlaneBaseURL) -}}
+{{- fail (printf "%sextraction.connection RAM control-plane HTTP requires explicit allowInsecureTransport=true" $at) -}}
 {{- end -}}
