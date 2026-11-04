@@ -106,6 +106,7 @@ checksum/license: {{ . | quote }}
   "labelsTemplate" "redis-lens.labels"
   "selectorLabelsTemplate" "redis-lens.selectorLabels"
   "replicas" .Values.dataplane.server.replicaCount
+  "strategy" .Values.dataplane.server.strategy
   "annotationsTemplate" "redis-lens.dataplaneAnnotations"
   "podAnnotations" .Values.dataplane.server.podAnnotations
   "podLabels" .Values.dataplane.server.podLabels

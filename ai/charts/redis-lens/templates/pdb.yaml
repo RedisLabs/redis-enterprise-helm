@@ -1,0 +1,11 @@
+{{- /* One PodDisruptionBudget per Deployment that keeps more than one Pod; redis-onprem.pdb skips the rest. */ -}}
+{{- range list
+  (dict "name" (include "redis-lens.dataplaneName" .) "component" "dataplane" "replicas" .Values.dataplane.server.replicaCount)
+  (dict "name" (include "redis-lens.workerName" .) "component" "worker" "replicas" .Values.dataplane.worker.replicaCount)
+  (dict "name" (include "redis-lens.controlplaneName" .) "component" "controlplane" "replicas" .Values.controlplane.replicaCount) }}
+{{- with (include "redis-onprem.pdb" (merge (dict "root" $ "enabled" $.Values.podDisruptionBudget.enabled
+  "labelsTemplate" "redis-lens.labels" "selectorLabelsTemplate" "redis-lens.selectorLabels") .) | trim) }}
+---
+{{ . }}
+{{- end }}
+{{- end }}

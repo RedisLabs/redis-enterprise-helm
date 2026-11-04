@@ -14,3 +14,4 @@ credential:
   existingSecret: ""
 owned: null
 ownedOff: null
+workload: null
