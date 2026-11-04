@@ -1,0 +1,53 @@
+{{- /*
+  Chart-rendered control-plane config ConfigMap. Skipped entirely when
+  controlplane.config.existingSecret is set, so an operator can supply the
+  whole control-plane config themselves.
+*/}}
+{{- if not .Values.controlplane.config.existingSecret }}
+{{- $suite := include "redis-intent-router.suite" . | fromJson }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "redis-intent-router.controlplaneName" . }}-config
+  labels:
+    {{- include "redis-intent-router.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controlplane
+data:
+  intent-controlplane.yaml: |
+    profile: prod
+    tenant_id: {{ $suite.tenantId | quote }}
+    server:
+      host: 0.0.0.0
+      port: {{ .Values.controlplane.service.port }}
+      timeout: 30s
+      read_timeout: 30s
+      write_timeout: 35s
+    auth:
+      type: admin-token
+      admin_token:
+        token_file: /etc/intent/credentials/admin/token
+      internal_token:
+        token_file: /etc/intent/credentials/internal/token
+      {{- if $suite.controlplaneOIDC }}
+      oidc:
+        {{- include "redis-intent-router.oidcValidation" . | nindent 8 }}
+      {{- end }}
+    license:
+      license_path: /etc/intent/license/{{ $suite.license.secretKey }}
+    storage:
+      key_prefix: {{ .Values.storage.keyPrefix | quote }}
+      max_routers_per_tenant: {{ .Values.storage.maxRoutersPerTenant }}
+    reconcile:
+      interval: {{ .Values.controlplane.reconcile.interval }}
+      provisioning_deadline: {{ .Values.controlplane.reconcile.provisioningDeadline }}
+    {{- if .Values.controlplane.requireDatabase }}
+    require_database: true
+    {{- end }}
+    inference:
+      allow_local_models: {{ .Values.inference.allowLocalModels }}
+      models:
+        {{- toYaml .Values.inference.models | nindent 8 }}
+    opentelemetry:
+      enable_tracing: {{ .Values.tracing.enabled }}
+      otlp_grpc_endpoint: {{ .Values.tracing.otlpGRPCEndpoint | quote }}
+{{- end }}

@@ -1,0 +1,13 @@
+name: Release Redis Intent Router Chart
+
+on:
+  workflow_dispatch:
+
+jobs:
+  call-release-workflow:
+    uses: ./.github/workflows/release-chart-reusable.yaml
+    with:
+      chart_name: redis-intent-router
+      chart_path: ai/charts/redis-intent-router
+      tag_prefix: redis-intent-router
+    secrets: inherit

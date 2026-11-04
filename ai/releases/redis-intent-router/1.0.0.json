@@ -1,0 +1,60 @@
+{
+  "product": "redis-intent-router",
+  "deployment": "on-prem",
+  "version": "1.0.0",
+  "release": true,
+  "commit": "47acc2f80228a706fece109f1aa4ee8f20cb914e",
+  "components": {
+    "controlplane": {
+      "candidateImage": "docker.io/redislabs/iris-intent-router-control:1.0.0",
+      "localImage": "intent-controlplane-onprem:1.0.0",
+      "artifact": "images/oci-intent-cp-onprem.tar.gz",
+      "registryDirectory": "registry/intent-cp-onprem",
+      "registryDigest": "sha256:9ed09495c010c765632a377c6172b801b87181858a7324b689584ab839a1e244",
+      "imageId": "sha256:931ca958fee4ec44acde3699c2805f7ad9d9ce3f010fbca49d3e1055f6ac50e2",
+      "archiveSha256": "sha256:8faac75fe0cb148c9cb3babdad6b362dc841afc51da96503383f0f4ec9c8f9ee",
+      "os": "linux",
+      "architecture": "amd64",
+      "publication": {
+        "status": "published",
+        "component": "controlplane",
+        "commit": "47acc2f80228a706fece109f1aa4ee8f20cb914e",
+        "image": "docker.io/redislabs/iris-intent-router-control:1.0.0",
+        "digest": "sha256:9ed09495c010c765632a377c6172b801b87181858a7324b689584ab839a1e244",
+        "reference": "docker.io/redislabs/iris-intent-router-control@sha256:9ed09495c010c765632a377c6172b801b87181858a7324b689584ab839a1e244"
+      }
+    },
+    "dataplane": {
+      "candidateImage": "docker.io/redislabs/iris-intent-router-data:1.0.0",
+      "localImage": "intent-dataplane-onprem:1.0.0",
+      "artifact": "images/oci-intent-dp-onprem.tar.gz",
+      "registryDirectory": "registry/intent-dp-onprem",
+      "registryDigest": "sha256:09864b526c3c8280f9f6c04ae48ac501a8eceefcd4a04861b6600d7b0fb1e952",
+      "imageId": "sha256:21684b2da60ee0cb0f2e0e9df688cb53d591ded166befeb8342f5d3373bf3052",
+      "archiveSha256": "sha256:cb853ec07c49a57f487b2f4dcfd0dd82559a138aa725c5d6a483e234cec68d98",
+      "os": "linux",
+      "architecture": "amd64",
+      "publication": {
+        "status": "published",
+        "component": "dataplane",
+        "commit": "47acc2f80228a706fece109f1aa4ee8f20cb914e",
+        "image": "docker.io/redislabs/iris-intent-router-data:1.0.0",
+        "digest": "sha256:09864b526c3c8280f9f6c04ae48ac501a8eceefcd4a04861b6600d7b0fb1e952",
+        "reference": "docker.io/redislabs/iris-intent-router-data@sha256:09864b526c3c8280f9f6c04ae48ac501a8eceefcd4a04861b6600d7b0fb1e952"
+      }
+    }
+  },
+  "chart": "chart/redis-intent-router-1.0.0.tgz",
+  "imageValues": "intent-images.values.json",
+  "sbom": "sbom/",
+  "openapi": [
+    "openapi/intent-controlplane.openapi.json",
+    "openapi/intent-dataplane.openapi.json",
+    "openapi/intent-grant-validation.openapi.json"
+  ],
+  "publication": {
+    "status": "published",
+    "sourceRun": "https://github.com/redislabsdev/iris/actions/runs/41902534368",
+    "chartSha256": "sha256:47e990ffa6e3e98c2e571f6a7dcaddfa004c605f938a15ce2408a49239599a48"
+  }
+}

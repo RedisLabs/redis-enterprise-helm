@@ -1,0 +1,62 @@
+{{- $suite := include "redis-intent-router.suite" . | fromJson -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "redis-intent-router.dataplaneName" . }}-config
+  labels:
+    {{- include "redis-intent-router.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dataplane
+data:
+  intent-dataplane.yaml: |
+    profile: prod
+    tenant_id: {{ $suite.tenantId | quote }}
+    server:
+      host: 0.0.0.0
+      port: {{ .Values.dataplane.service.port }}
+      timeout: 30s
+      read_timeout: 30s
+      write_timeout: 35s
+    auth:
+      method: agent_key
+      agent_keys:
+        enabled: true
+        product: intent
+        introspection:
+          base_url: {{ include "redis-intent-router.identityServiceBaseURL" . | quote }}
+          product: intent
+          {{- /* validation.yaml admits http:// only with identityService.allowInsecureTransport outside fips. */}}
+          {{- if not (hasPrefix "https://" (include "redis-intent-router.identityServiceBaseURL" .)) }}
+          allow_insecure_transport: true
+          {{- end }}
+          credential:
+            token_file: /etc/identity-service/runtime/intent-dp/token
+      {{- if $suite.dataplaneOIDC.enabled }}
+      oidc:
+        {{- include "redis-intent-router.oidcValidation" . | nindent 8 }}
+      {{- end }}
+    license:
+      license_path: /etc/intent/license/{{ $suite.license.secretKey }}
+    storage:
+      key_prefix: {{ .Values.storage.keyPrefix | quote }}
+    runtime:
+      poll_interval: {{ .Values.dataplane.pollInterval }}
+      startup_budget: {{ .Values.dataplane.startupBudget }}
+    {{- with .Values.dataplane.limits }}
+    limits:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.dataplane.match }}
+    match:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.dataplane.search }}
+    search:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    inference:
+      allow_local_models: {{ .Values.inference.allowLocalModels }}
+      models:
+        {{- toYaml .Values.inference.models | nindent 8 }}
+    opentelemetry:
+      enable_tracing: {{ .Values.tracing.enabled }}
+      otlp_grpc_endpoint: {{ .Values.tracing.otlpGRPCEndpoint | quote }}
