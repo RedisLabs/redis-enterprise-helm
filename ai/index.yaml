@@ -66,6 +66,22 @@ entries:
     version: 0.0.1
   redis-agent-memory:
   - apiVersion: v2
+    appVersion: 1.0.0
+    created: "2026-11-04T21:00:30.074392336Z"
+    dependencies:
+    - name: redis-iris-onprem-lib
+      repository: https://helm.redis.io/ai
+      version: 0.5.0
+    description: Helm chart to deploy Redis Agent Memory for on-premises deployment.
+    digest: d29c07043d29e86a48a12788f7f7ffa3a6cb7d09e96e3bd88c9c3b6a92505f4e
+    icon: https://raw.githubusercontent.com/RedisLabs/redis-enterprise-helm/main/ai/charts/redis-agent-memory/icon.svg
+    kubeVersion: '>=1.28.0-0'
+    name: redis-agent-memory
+    type: application
+    urls:
+    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-agent-memory-1.0.0/redis-agent-memory-1.0.0.tgz
+    version: 1.0.0
+  - apiVersion: v2
     appVersion: 0.10.2
     created: "2026-10-22T17:13:37.915945614Z"
     dependencies:
@@ -539,4 +555,4 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-lens-0.10.2/redis-lens-0.10.2.tgz
     version: 0.10.2
-generated: "2026-11-04T20:59:41.567558473Z"
+generated: "2026-11-04T21:00:30.074524161Z"
