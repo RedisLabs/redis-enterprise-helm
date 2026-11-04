@@ -444,6 +444,29 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-context-retriever-0.3.0/redis-context-retriever-0.3.0.tgz
     version: 0.3.0
+  redis-intent-router:
+  - apiVersion: v2
+    appVersion: 1.0.0
+    created: "2026-11-04T21:02:07.429066824Z"
+    dependencies:
+    - name: redis-iris-onprem-lib
+      repository: https://helm.redis.io/ai
+      version: 0.5.0
+    description: Redis Intent Router on-prem control plane and data plane
+    digest: a31452c981b305777747473b372fc7deac83e3e90502d575d8a29c72baa212f9
+    home: https://github.com/Redislabsdev/iris
+    keywords:
+    - redis
+    - intent
+    - router
+    - ai
+    - on-prem
+    kubeVersion: '>=1.28.0-0'
+    name: redis-intent-router
+    type: application
+    urls:
+    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-intent-router-1.0.0/redis-intent-router-1.0.0.tgz
+    version: 1.0.0
   redis-iris-onprem-lib:
   - apiVersion: v2
     created: "2026-11-03T09:08:37.484356909Z"
@@ -579,4 +602,4 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-lens-0.10.2/redis-lens-0.10.2.tgz
     version: 0.10.2
-generated: "2026-11-04T21:01:28.134705949Z"
+generated: "2026-11-04T21:02:07.42913151Z"
