@@ -68,6 +68,29 @@ Create these Secrets in the release namespace first.
    kubectl create secret generic ids-metadata --from-file=metadata.yaml
    ```
 
+   The chart does not deploy this Redis. Enable persistence on it (AOF or
+   RDB), and keep its data directory on durable storage, for example a
+   PersistentVolume. On an ephemeral disk, a new pod or a node failure deletes
+   the AOF and RDB files. The metadata Redis keeps the hashed key secrets, the
+   grants and the subject grants. A restart without persistence deletes all of
+   them, and every key stops working. You must then mint each key again and
+   give it to its client.
+
+   IdS always uses database 0. It ignores a `/db` index in `metadata.urls`,
+   so include database 0 in your backups. Do not change the host in
+   `metadata.urls` after the first install. IdS then reads an empty database,
+   and all keys stop working in the same way.
+
+   To move the data to a new Redis, stop IdS during the move. If IdS runs
+   after the copy, it changes only the old Redis. Then the keys that you
+   revoke after the copy work again on the new Redis. The new Redis also does
+   not have the keys that you mint after the copy.
+
+   1. Set `replicaCount` to `0` and upgrade the release.
+   2. Copy the data to the new Redis.
+   3. Put the new host in `metadata.urls` in the Secret.
+   4. Set `replicaCount` to its initial value and upgrade the release.
+
 2. **At least one runtime service credential**: the token a product data
    plane presents when calling the IdS Runtime API. The data plane mounts the
    same Secret. Skip this if the entry uses `autoGenerate: true`.
@@ -132,15 +155,43 @@ For development, install from a source checkout instead:
 
 The chart `version`, its `appVersion`, and the image tag move in lockstep: chart
 `0.10.0` deploys `redislabs/iris-identity-service:0.10.0` by default
-(`image.tag: ""` resolves to `appVersion`). Every change to a packaged chart file raises the version (files `.helmignore`
-excludes, such as `tests/*.sh`, do not count),
-and CI (`task identity:test:chart:bump-guard`) fails a change that does not, or
-whose `version` and `appVersion` differ.
+(`image.tag: ""` resolves to `appVersion`). From `1.0.0` the chart releases in
+lockstep with the other six `redis-iris` component charts: they share one version,
+and CI (`.github/scripts/chart-lockstep.js`) fails a change whose versions differ
+or whose `version` and `appVersion` differ. On a `release/iris-on-prem-vX.Y` pull
+request, a change to any product's code or chart moves all seven to the next patch.
 
 The first published version is `0.10.0`, the next minor after the `0.7`–`0.9`
-image tags that product release trains already pushed. The chart stays `0.x` until
-its values and product contracts are stable; until then a minor release may change
-them. Releases follow the `.skills/ids-helm-release` runbook.
+image tags that product release trains already pushed. `1.0.0` is the first
+version the `redis-iris` umbrella consumes (see
+[Running under redis-iris](#running-under-redis-iris)). Releases follow the
+`.skills/ids-helm-release` runbook.
+
+## Running under redis-iris
+
+When the chart runs as the `identityService` dependency of the `redis-iris`
+umbrella (`global.iris` is set), the umbrella derives the product wiring from
+`global.iris` and the enabled products:
+
+| Value | Derived as |
+| --- | --- |
+| `runtime.serviceCredentials` | `<product>-dp` per enabled product, `api-key-introspect` for that product only |
+| `productValidation.products` | a validator per enabled product: `http://<product control plane>.<namespace>.svc.<clusterDomain>:<port>` |
+| `runtime.unscopedGrantsProduct` | `memory` while Agent Memory is enabled |
+| `runtime.apiKeyTenant.singleTenantID` | `global.iris.tenantId` |
+| `controlAuth.oidc` | `global.iris.auth.oidc` (issuer = access-token issuer), only when an issuer is set |
+| `controlAuth.roleBindings` | `global.iris.auth.roleBindings`: suite scope becomes `scope: global`, product scope `scope: product` for enabled products only; `identity` bindings stay UI-only |
+
+The credentials come from the supplied aggregate Secrets, or else one
+generated Secret per product and credential:
+
+| Reference | Secret | Key |
+| --- | --- | --- |
+| data-plane credential `<product>-dp` | `global.iris.secrets.dataplaneServiceCredentials.existingSecret`, generated `iris-<product>-dataplane-credential` | `<product>-dp` |
+| validator credential | `global.iris.secrets.controlplaneInternalTokens.existingSecret`, generated `iris-<product>-internal-token` | the product, e.g. `memory` |
+
+Leave those values unset: a value that differs from the derived one fails the
+render and names the field. Without `global.iris` nothing changes.
 
 ## Use it
 
@@ -177,8 +228,9 @@ KinD harness proves that a consistent pair works. `helm test` does not.
 
 The tested layout puts the product release and this release in one namespace,
 because each mounts the shared Secrets. The addresses below assume each product
-chart's default naming (Memory's `fullnameOverride: redis-agent-memory`, and
-Playbook installed as release `playbook`). After changing a product's
+chart's default naming (Memory's `fullnameOverride: redis-agent-memory`,
+Playbook installed as release `playbook`, and Lens installed as release `lens`).
+After changing a product's
 `fullnameOverride`, release name or Service port, restate them here.
 
 ### Agent Memory
@@ -220,34 +272,15 @@ productValidation:
 
 | Set on this release | Value | Matching Playbook value |
 |---|---|---|
-| `runtime.serviceCredentials[]` | `name: playbook-dp`, `subject: playbook-dp`, `allowedOperations: [api-key-introspect]` (plus `subject-grant-lookup` with `extraction.connection.enabled`), `allowedProducts: [playbook]`, `existingSecret` + `secretKey` | `identityService.credential.existingSecret` + `secretKey`: the same Secret, mounted by the data plane |
+| `runtime.serviceCredentials[]` | `name: playbook-dp`, `subject: playbook-dp`, `allowedOperations: [api-key-introspect]` (plus `subject-grant-lookup` only for ordinary service subjects), `allowedProducts: [playbook]`, `existingSecret` + `secretKey` | `identityService.credential.existingSecret` + `secretKey`: the same Secret, mounted by the data plane |
 | `productValidation.products.playbook.baseURL` | `http://playbook-redis-agent-playbook-controlplane:9200` | The control-plane Service `<fullname>-controlplane` on `controlplane.service.port` (default `9200`) |
 | `productValidation.products.playbook.credential` | The control plane's internal-token Secret and key | `controlplane.internalToken.existingSecret` + `secretKey` (development only: the chart generates `<fullname>-controlplane-internal-token`) |
 | `runtime.apiKeyTenant.singleTenantID` | Playbook's tenant, for example `default` | `tenantId` |
-| `subjectGrants.allowed` | `{product: playbook, resourceType: playbook, actions: [read, propose]}`, with `extraction.connection.enabled` | Extraction workers read and propose to destination Playbooks |
-| `controlAuth.workloadIdentity` | Subject `system:serviceaccount:<namespace>:<fullname>-controlplane`, `roles: [subject_grant_admin]`, audience `api://playbook-identity-control`, with `extraction.connection.enabled` | `extraction.connection.destinationControlAudience`; the control plane provisions destination grants with its ServiceAccount JWT |
 
-The Playbook data plane and control plane reach this release through
-`dataplane.identityServiceBaseURL`, for example `http://iris-identity-service:9200`.
-A control plane that reaches the same release at a different URL sets
-`extraction.connection.destinationIdentityServiceBaseURL`; it must not name
-another release, because the data plane looks up the workers' grants here.
-
-Playbook extraction reading Agent Memory stores also needs these on the IdS
-release that serves Memory (the same release when one IdS serves both):
-
-- The `subjectGrants.allowed` entry
-  `{product: memory, resourceType: mem-store, actions: [read]}`. The empty
-  default denies every service-subject grant.
-- `subject-grant-lookup` in the `memory-dp` credential's `allowedOperations`,
-  so the Memory data plane can resolve the Playbook workers' grants.
-
-Playbook's control plane creates those grants through that release's Control
-API with its own ServiceAccount JWT (MOD-19110), so that release must also trust
-its subject through `controlAuth.workloadIdentity` with `roles:
-[subject_grant_admin]` (see [Operator login and subject
-grants](#operator-login-and-subject-grants)). No Control token is copied to the
-Playbook namespace.
+Playbook DP reaches this release through `dataplane.identityServiceBaseURL` for
+ordinary customer authentication. MOD-20121 extraction uses static DP trust and
+RAM CP source validation; it needs no IdS grant-admin policy, Control trust or
+extraction lookup credential. See the [current Playbook setup](../../playbook/helm/README.md#reading-agent-memory-for-extraction-mod-20121).
 
 ```yaml
 runtime:
@@ -256,7 +289,7 @@ runtime:
   serviceCredentials:
     - name: playbook-dp
       subject: playbook-dp
-      allowedOperations: [api-key-introspect, subject-grant-lookup]
+      allowedOperations: [api-key-introspect]
       allowedProducts: [playbook]
       existingSecret: playbook-dp-credential
       secretKey: token
@@ -267,18 +300,78 @@ productValidation:
       credential:
         existingSecret: playbook-internal-token
         secretKey: token
-subjectGrants:
-  allowed:
-    - {product: memory, resourceType: mem-store, actions: [read]}
-    - {product: playbook, resourceType: playbook, actions: [read, propose]}
 ```
 
-When one release serves both products, merge the two blocks: one
-`serviceCredentials` list (with `subject-grant-lookup` on `memory-dp`), both
-validators, and `unscopedGrantsProduct: memory`. List both control audiences for
-the one Playbook control-plane subject:
-`audience: [api://memory-identity-control, api://playbook-identity-control]`.
-Every product served by one release uses the same tenant.
+### Lens
+
+| Set on this release | Value | Matching Lens value |
+|---|---|---|
+| `runtime.serviceCredentials[]` | `name: lens-dataplane`, `subject: lens-dataplane`, `allowedOperations: [api-key-introspect]`, `allowedProducts: [lens]`, `existingSecret` + `secretKey` | `identityService.credential.existingSecret` + `secretKey`: the same Secret, mounted by the data plane only |
+| `productValidation.products.lens.baseURL` | `http://lens-redis-lens-controlplane:9300` | The control-plane Service `<fullname>-controlplane` on `controlplane.service.port` (default `9300`) |
+| `productValidation.products.lens.credential` | The control plane's internal-token Secret and key | `controlplane.internalToken.existingSecret` + `secretKey` (development only: the chart generates `<fullname>-controlplane-internal-token`) |
+| `runtime.apiKeyTenant.singleTenantID` | Lens's tenant, for example `default` | `tenantId` |
+| `runtime.cache.*` | The introspection cache (defaults 180 s soft, 300 s hard) | None: the removed Lens `identityService.runtimeCache` |
+
+The Lens data plane reaches this release through
+`dataplane.identityServiceBaseURL`. Lens needs no `subjectGrants.allowed` entry.
+
+```yaml
+runtime:
+  apiKeyTenant:
+    singleTenantID: default
+  serviceCredentials:
+    - name: lens-dataplane
+      subject: lens-dataplane
+      allowedOperations: [api-key-introspect]
+      allowedProducts: [lens]
+      existingSecret: lens-dp-credential
+      secretKey: token
+productValidation:
+  products:
+    lens:
+      baseURL: http://lens-redis-lens-controlplane:9300
+      credential:
+        existingSecret: lens-internal-token
+        secretKey: token
+```
+
+### Intent Router
+
+| Set on this release | Value | Matching Intent value |
+|---|---|---|
+| `runtime.serviceCredentials[]` | `name: intent-dp`, `subject: intent-dp`, `allowedOperations: [api-key-introspect]`, `allowedProducts: [intent]`, `existingSecret` + `secretKey` | The same Secret, mounted by the Intent data plane as its Identity Service runtime credential |
+| `productValidation.products.intent.baseURL` | `http://intent-redis-intent-router-controlplane:9400` | The control-plane Service `<fullname>-controlplane` on `controlplane.service.port` (default `9400`) |
+| `productValidation.products.intent.credential` | The control plane's internal-token Secret and key | `controlplane.internalToken` (the grants callback token) |
+| `runtime.apiKeyTenant.singleTenantID` | Intent's tenant, for example `1` | `tenantId` |
+
+The Intent data plane reaches this release through `dataplane.identityServiceBaseURL`.
+Agent keys are issued per Router (`resourceType: intent-router`), so the validator
+base URL is the Intent control plane, which answers the grants callback.
+
+```yaml
+runtime:
+  apiKeyTenant:
+    singleTenantID: "1"
+  serviceCredentials:
+    - name: intent-dp
+      subject: intent-dp
+      allowedOperations: [api-key-introspect]
+      allowedProducts: [intent]
+      existingSecret: intent-dp-credential
+      secretKey: token
+productValidation:
+  products:
+    intent:
+      baseURL: http://intent-redis-intent-router-controlplane:9400
+      credential:
+        existingSecret: intent-internal-token
+        secretKey: token
+```
+
+When one release serves several products, merge their blocks: one
+`serviceCredentials` list containing every `api-key-introspect` entry, every
+validator, and `unscopedGrantsProduct: memory` when Memory is served. Every
+product served by one release uses the same tenant.
 
 ## Values
 
@@ -291,6 +384,7 @@ install.
 | `nameOverride` | `""` | Replaces the chart name in resource names. |
 | `fullnameOverride` | `""` | Replaces `<release>-iris-identity-service`, and so the Service DNS name. |
 | `replicaCount` | `1` | Deployment replicas. |
+| `podDisruptionBudget.enabled` | `false` | A PodDisruptionBudget (`maxUnavailable: 1`) when `replicaCount` is above 1. redis-iris turns it on. |
 | `image.repository` | `redislabs/iris-identity-service` | Image repository. |
 | `image.tag` | `""` | Empty uses the chart `appVersion`. |
 | `image.pullPolicy` | `IfNotPresent` | `Always`, `IfNotPresent` or `Never`. |
@@ -319,9 +413,10 @@ install.
 | `runtime.serviceCredentials` | `[]` | **At least one.** See [Runtime service credentials](#runtime-service-credentials). |
 | `productValidation.products` | `{}` | **At least one enabled.** See [Product validators](#product-validators). |
 | `apiKeys.maxRotateGraceSeconds` | `604800` | Longest grace period an API-key rotation may keep the old key alive. |
+| `apiKeys.userBinding.enabled` | `false` | Lets a mint give the key a user (`userId`). The deployment admin and a `suite_admin` can set any user. Another caller can set only its own user ID. |
 | `controlAuth.oidc` | `{}` | Operator login to IdS Control with your IdP's JWTs, copied as is into `auth.oidc`. See [Operator login and subject grants](#operator-login-and-subject-grants). |
 | `controlAuth.roleBindings` | `[]` | Rendered as `auth.role_bindings`. Requires `controlAuth.oidc.enabled`. |
-| `controlAuth.workloadIdentity` | `{}` | Workloads, such as the Playbook control plane, call IdS Control with their own ServiceAccount JWT. Copied into `auth.workload_identity`. See [Operator login and subject grants](#operator-login-and-subject-grants). |
+| `controlAuth.workloadIdentity` | `{}` | Authorized administration workloads call IdS Control with their own ServiceAccount JWT. Copied into `auth.workload_identity`. See [Operator login and subject grants](#operator-login-and-subject-grants). |
 | `subjectGrants.allowed` | `[]` | Service-subject grants this IdS may hold, as `{product, resourceType, actions}`. Empty allows none. |
 | `serviceAccount.annotations` | `{}` | ServiceAccount annotations. |
 | `podAnnotations` | `{}` | Extra pod annotations. |
@@ -348,7 +443,7 @@ IdS Runtime API:
 | `name` | **Required.** `^[a-z0-9-]{0,43}[a-z0-9]$` (1–44 characters, no trailing dash), unique. Mounted at `/etc/identity-service/runtime/<name>/token`. |
 | `subject` | **Required.** Subject the caller authenticates as. |
 | `allowedOperations` | **Required.** Any of `api-key-introspect`, `auth-introspect`, `auth-me`, `subject-grant-lookup`. |
-| `allowedProducts` | **Required.** Any of `memory`, `langcache`, `context`, `playbook`, `lens`, `context-gateway`. |
+| `allowedProducts` | **Required.** Any of `memory`, `langcache`, `context`, `playbook`, `lens`, `context-gateway`, `intent`. |
 | `existingSecret` | Secret holding the token. Set exactly one of `existingSecret` and `autoGenerate`. |
 | `secretKey` | Key of the token (default `token`). |
 | `autoGenerate` | Development and manual testing only. Generate the token when `existingSecret` is empty, in `<fullname>-runtime-<name>`. |
@@ -361,7 +456,7 @@ Helm replaces lists instead of merging them: to add a credential with
 ### Product validators
 
 Each `productValidation.products.<product>` entry, keyed by one of `memory`,
-`langcache`, `context`, `playbook`, `lens` or `context-gateway`, is a product
+`langcache`, `context`, `playbook`, `lens`, `context-gateway` or `intent`, is a product
 control plane that IdS calls before persisting API-key grants:
 
 | Field | Description |
@@ -469,17 +564,25 @@ controlAuth:
     - {claim_value: memory-admins, scope: product, product: memory, role: product_admin}
 ```
 
+`issuer` (here and in each `runtime.oidc.products.<product>` block) may be
+`http://` or `https://`: it is an identifier compared with the token's `iss` and
+never fetched, so an `http://` issuer needs no `allow_insecure_transport`. On AD
+FS (2019+) set it to the discovery document's `access_token_issuer`
+(`http://<host>/adfs/services/trust`). `jwks_uri` is fetched, so it must stay
+`https://` unless `allow_insecure_transport` is set, which prod and FIPS refuse.
+Subject grants and role bindings match the issuer string exactly, so a product's
+`runtime.oidc.products.<product>.issuer` must equal the issuer the backends
+(`auth.oidc.issuer`) accept, including its `http://` scheme.
+
 `controlAuth.workloadIdentity` (MOD-19110) lets a workload call IdS Control with
-its own projected ServiceAccount JWT instead of the control token. The Playbook
-control plane uses it to provision subject grants for extraction. The binary
+its own projected ServiceAccount JWT instead of the control token. The binary
 validates the block and requires `subject_grant_admin`-style roles in one tenant
 per subject, never `suite_admin`. A subject without a `tenant` gets
 `runtime.apiKeyTenant.singleTenantID`; a different `tenant` fails rendering. The
 same applies to `configData.auth.workload_identity`, the alternative single
 source. With
-no `singleTenantID`, set `tenant` on every subject. It must be the Playbook
-chart's `tenantId`, because the Playbook control plane requests every grant in
-that tenant.
+no `singleTenantID`, set `tenant` on every subject. This generic administration
+capability is not needed by CP-owned Playbook extraction.
 
 ```yaml
 controlAuth:
@@ -487,9 +590,9 @@ controlAuth:
     enabled: true
     issuer: https://kubernetes.default.svc.cluster.local
     jwks_uri: https://kubernetes.default.svc/openid/v1/jwks
-    audience: [api://memory-identity-control]   # Playbook sourceControlAudience
+    audience: [api://memory-identity-control]
     subjects:
-      - subject: system:serviceaccount:<namespace>:<playbook-fullname>-controlplane
+      - subject: system:serviceaccount:<namespace>:subject-grant-administrator
         roles: [subject_grant_admin]
 ```
 
@@ -497,7 +600,7 @@ The Identity Service pod must reach that JWKS and trust its CA
 (`tls.caCertSecret`). The control token stays the rescue credential.
 
 `subjectGrants.allowed` lists the service-subject grants this IdS may hold, for
-example Playbook extraction reading Agent Memory stores. The schema checks the
+example an independently administered Memory reader. The schema checks the
 product; the binary refuses to start if a resource type or action is outside
 what that product allows for service subjects.
 

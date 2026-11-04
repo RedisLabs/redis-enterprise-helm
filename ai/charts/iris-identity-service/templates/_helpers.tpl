@@ -54,30 +54,34 @@ NOTES all see the same names:
 {{- $controlSecret := toString (default "" $control.existingSecret) -}}
 {{- $controlGenerated := and (not $controlSecret) $control.autoGenerate -}}
 {{- if $controlGenerated }}{{- $controlSecret = include "iris-identity-service.generatedSecretName" (dict "root" $root "suffix" "-control-token") -}}{{- end -}}
+{{- $wiring := include "iris-identity-service.wiring" . | fromJson -}}
 {{- $credentials := list -}}
-{{- range (default (dict) .Values.runtime).serviceCredentials }}
-{{- $secret := toString (default "" .existingSecret) -}}
-{{- $generated := and (not $secret) .autoGenerate -}}
-{{- if and $generated .generatedSecretName }}{{- $secret = toString .generatedSecretName -}}
-{{- else if and $generated .name }}{{- $secret = include "iris-identity-service.generatedSecretName" (dict "root" $root "suffix" (printf "-runtime-%s" .name)) -}}{{- end -}}
+{{- range $i, $c := $wiring.serviceCredentials }}
+{{- $secret := toString (default "" $c.existingSecret) -}}
+{{- $key := default "token" $c.secretKey -}}
+{{- $generated := and (not $secret) $c.autoGenerate -}}
+{{- if and $generated $c.generatedSecretName }}{{- $secret = toString $c.generatedSecretName -}}
+{{- else if and $generated $c.name }}{{- $secret = include "iris-identity-service.generatedSecretName" (dict "root" $root "suffix" (printf "-runtime-%s" $c.name)) -}}{{- end -}}
 {{- $credentials = append $credentials (dict
-  "name" (toString (default "" .name))
-  "subject" (default "" .subject)
-  "operations" (default (list) .allowedOperations)
-  "products" (default (list) .allowedProducts)
+  "name" (toString (default "" $c.name))
+  "subject" (default "" $c.subject)
+  "operations" (default (list) $c.allowedOperations)
+  "products" (default (list) $c.allowedProducts)
   "secret" $secret
-  "key" (default "token" .secretKey)
+  "key" $key
   "generated" (not (not $generated))
-  "checksum" (default "" .existingSecretChecksum)) -}}
+  "checksum" (default "" $c.existingSecretChecksum)) -}}
 {{- end }}
 {{- $validators := dict -}}
-{{- range $product, $v := (default (dict) .Values.productValidation).products }}
+{{- range $product, $v := $wiring.products }}
 {{- if or (not (hasKey $v "enabled")) $v.enabled }}
 {{- $credential := default (dict) $v.credential -}}
+{{- $secret := toString (default "" $credential.existingSecret) -}}
+{{- $key := default "token" $credential.secretKey -}}
 {{- $_ := set $validators $product (dict
   "baseURL" (toString (default "" $v.baseURL))
-  "secret" (toString (default "" $credential.existingSecret))
-  "key" (default "token" $credential.secretKey)
+  "secret" $secret
+  "key" $key
   "checksum" (default "" $credential.existingSecretChecksum)) -}}
 {{- end }}
 {{- end }}
@@ -88,18 +92,83 @@ NOTES all see the same names:
   "validators" $validators) -}}
 {{- end }}
 
+{{/*
+The product wiring, as JSON {serviceCredentials, products, unscopedGrantsProduct,
+singleTenantID, oidc, roleBindings}. Standalone these are the local values. Under the redis-iris
+umbrella (global.iris present) they are derived from global.iris and the enabled products (TDD
+"Authorization policy", machine policy), and a local value that differs fails, naming
+identityService.<path>:
+  serviceCredentials     <product>-dp per enabled product: api-key-introspect for that product,
+                         the suite's data-plane credential (redis-onprem.suite.credential)
+  products               a validator per enabled product: the control plane's in-cluster URL and
+                         the suite's control-plane internal token
+  unscopedGrantsProduct  memory while Memory is enabled
+  singleTenantID         global.iris.tenantId
+  oidc, roleBindings     Control login from global.iris.auth, only when an issuer is set
+*/}}
+{{- define "iris-identity-service.wiring" -}}
+{{- $runtime := default (dict) .Values.runtime -}}
+{{- $controlAuth := default (dict) .Values.controlAuth -}}
+{{- $local := dict
+  "serviceCredentials" $runtime.serviceCredentials
+  "products" (default (dict) .Values.productValidation).products
+  "unscopedGrantsProduct" $runtime.unscopedGrantsProduct
+  "singleTenantID" (default (dict) $runtime.apiKeyTenant).singleTenantID
+  "oidc" $controlAuth.oidc
+  "roleBindings" $controlAuth.roleBindings -}}
+{{- if not (include "redis-onprem.suite.enabled" .) -}}
+{{- toJson $local -}}
+{{- else -}}
+{{- /* key: the global.iris.products key; id: the Identity Service product id. */ -}}
+{{- $controlPlanes := list
+  (dict "key" "memory" "id" "memory" "name" "redis-agent-memory-controlplane" "port" 9100)
+  (dict "key" "playbook" "id" "playbook" "name" "redis-agent-playbook-controlplane" "port" 9200)
+  (dict "key" "lens" "id" "lens" "name" "redis-lens-controlplane" "port" 9300)
+  (dict "key" "contextGateway" "id" "context-gateway" "name" "redis-context-gateway-controlplane" "port" 9100)
+  (dict "key" "intent" "id" "intent" "name" "redis-intent-router-controlplane" "port" 9400) -}}
+{{- $credentials := list -}}
+{{- $products := dict -}}
+{{- range $cp := $controlPlanes -}}
+{{- if include "redis-onprem.suite.productEnabled" (dict "root" $ "product" $cp.key) -}}
+{{- $dp := include "redis-onprem.suite.credential" (dict "root" $ "product" $cp.id "credential" "dataplane") | fromJson -}}
+{{- $credentials = append $credentials (dict "name" $dp.secretKey "subject" $dp.secretKey "allowedOperations" (list "api-key-introspect") "allowedProducts" (list $cp.id) "existingSecret" $dp.existingSecret "secretKey" $dp.secretKey) -}}
+{{- $token := include "redis-onprem.suite.credential" (dict "root" $ "product" $cp.id "credential" "controlplane") | fromJson -}}
+{{- $_ := set $products $cp.id (dict "baseURL" (printf "http://%s:%d" (include "redis-onprem.suite.fqdn" (dict "root" $ "name" $cp.name)) (int $cp.port)) "credential" $token) -}}
+{{- end -}}
+{{- end -}}
+{{- if not $products -}}
+{{- /* Helm renders this chart before the umbrella's own guard, so name the umbrella fix here. */ -}}
+{{- fail "global.iris.products: no product enabled; set global.iris.products.<memory|playbook|lens|contextGateway|intent>.enabled to true" -}}
+{{- end -}}
+{{- $oidc := include "redis-onprem.suite.oidc" (dict "root" .) | fromJson -}}
+{{- $derivedOIDC := dict -}}
+{{- $bindings := list -}}
+{{- if $oidc.issuer -}}
+{{- $derivedOIDC = dict "enabled" true "issuer" $oidc.accessTokenIssuer "jwks_uri" $oidc.jwksURI "audience" (list $oidc.audience) "role_claims" $oidc.roleClaims -}}
+{{- if $oidc.allowInsecureTransport }}{{- $_ := set $derivedOIDC "allow_insecure_transport" true -}}{{- end -}}
+{{- $bindings = include "redis-onprem.suite.ids.roleBindings" (dict "root" .) | fromJsonArray -}}
+{{- end -}}
+{{- $p := "identityService." -}}
+{{- toJson (dict
+  "serviceCredentials" (include "redis-onprem.suite.owned" (dict "prefix" $p "path" "runtime.serviceCredentials" "local" $local.serviceCredentials "derived" $credentials) | fromJson).value
+  "products" (include "redis-onprem.suite.owned" (dict "prefix" $p "path" "productValidation.products" "local" $local.products "derived" $products) | fromJson).value
+  "unscopedGrantsProduct" (include "redis-onprem.suite.owned" (dict "prefix" $p "path" "runtime.unscopedGrantsProduct" "local" $local.unscopedGrantsProduct "derived" (ternary "memory" "" (hasKey $products "memory"))) | fromJson).value
+  "singleTenantID" (include "redis-onprem.suite.tenantId" (dict "root" . "prefix" $p "path" "runtime.apiKeyTenant.singleTenantID" "local" $local.singleTenantID))
+  "oidc" (include "redis-onprem.suite.owned" (dict "prefix" $p "path" "controlAuth.oidc" "local" $local.oidc "derived" ($derivedOIDC | default nil)) | fromJson).value
+  "roleBindings" (include "redis-onprem.suite.owned" (dict "prefix" $p "path" "controlAuth.roleBindings" "local" $local.roleBindings "derived" ($bindings | default nil)) | fromJson).value) -}}
+{{- end -}}
+{{- end }}
+
 {{- define "iris-identity-service.securityProfile" -}}
-{{- $global := default (dict) (default (dict) .Values.global).security -}}
-{{- default (default "" $global.profile) (default (dict) .Values.security).profile -}}
+{{- include "redis-onprem.suite.securityProfile" . -}}
 {{- end }}
 
 {{- define "iris-identity-service.caCertSecret" -}}
-{{- $global := default (dict) (default (dict) .Values.global).tls -}}
-{{- default (default "" $global.caCertSecret) (default (dict) .Values.tls).caCertSecret -}}
+{{- include "redis-onprem.suite.caCertSecret" . -}}
 {{- end }}
 
 {{- define "iris-identity-service.imagePullSecrets" -}}
-{{- toJson (default (default (list) (default (dict) .Values.global).imagePullSecrets) .Values.imagePullSecrets) -}}
+{{- include "redis-onprem.suite.imagePullSecrets" . -}}
 {{- end }}
 
 {{/*
@@ -108,13 +177,12 @@ values that set a block to null get the defaults, not a nil-pointer error.
 singleTenantID is trimmed to a string.
 */}}
 {{- define "iris-identity-service.runtimeValues" -}}
-{{- $runtime := default (dict) .Values.runtime -}}
-{{- $cache := default (dict) $runtime.cache -}}
-{{- $tenant := default (dict) $runtime.apiKeyTenant -}}
+{{- $wiring := include "iris-identity-service.wiring" . | fromJson -}}
+{{- $cache := default (dict) (default (dict) .Values.runtime).cache -}}
 {{- toJson (dict
-  "unscopedGrantsProduct" (default "" $runtime.unscopedGrantsProduct)
+  "unscopedGrantsProduct" (default "" $wiring.unscopedGrantsProduct)
   "cache" (dict "softTtlSeconds" (int (dig "softTtlSeconds" 180 $cache)) "hardTtlSeconds" (int (dig "hardTtlSeconds" 300 $cache)))
-  "apiKeyTenant" (dict "singleTenantID" (trim (toString (default "" $tenant.singleTenantID))))) -}}
+  "apiKeyTenant" (dict "singleTenantID" (trim (toString (default "" $wiring.singleTenantID))))) -}}
 {{- end }}
 
 {{/*
@@ -146,7 +214,7 @@ is skipped and cover what a schema cannot express.
 {{- if not $c.subject }}{{- fail (printf "%s.subject is required" $path) -}}{{- end -}}
 {{- if not $c.operations }}{{- fail (printf "%s.allowedOperations is required" $path) -}}{{- end -}}
 {{- if not $c.products }}{{- fail (printf "%s.allowedProducts is required" $path) -}}{{- end -}}
-{{- $raw := index $.Values.runtime.serviceCredentials $i -}}
+{{- $raw := index (include "iris-identity-service.wiring" $ | fromJson).serviceCredentials $i -}}
 {{- if $raw.generatedSecretName -}}
 {{- if $raw.existingSecret -}}
 {{- fail (printf "%s.generatedSecretName must not be set with existingSecret" $path) -}}
@@ -235,7 +303,8 @@ arrive through the metadata Secret as a second --config.
 {{- $_ := set $server "port" (int .Values.service.port) -}}
 {{- $_ := set $cfg "server" $server -}}
 {{- $auth := default (dict) (get $cfg "auth") -}}
-{{- $controlAuth := default (dict) .Values.controlAuth -}}
+{{- $wiring := include "iris-identity-service.wiring" . | fromJson -}}
+{{- $controlAuth := dict "oidc" $wiring.oidc "roleBindings" $wiring.roleBindings "workloadIdentity" (default (dict) .Values.controlAuth).workloadIdentity -}}
 {{- if hasKey $auth "control" -}}
 {{- fail "configData.auth.control is chart-owned; configure control instead" -}}
 {{- end -}}
@@ -277,7 +346,8 @@ arrive through the metadata Secret as a second --config.
 {{- end }}
 {{- $_ := set $cfg "subject_grants" (dict "allowed" $allowed) -}}
 {{- end }}
-{{- $_ := set $cfg "api_keys" (dict "max_rotate_grace_seconds" (int64 (dig "maxRotateGraceSeconds" 604800 (default (dict) .Values.apiKeys)))) -}}
+{{- $apiKeys := default (dict) .Values.apiKeys -}}
+{{- $_ := set $cfg "api_keys" (dict "max_rotate_grace_seconds" (int64 (dig "maxRotateGraceSeconds" 604800 $apiKeys)) "user_binding" (dict "enabled" (dig "userBinding" "enabled" false $apiKeys))) -}}
 {{- toYaml $cfg -}}
 {{- end }}
 

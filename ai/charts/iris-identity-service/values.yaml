@@ -7,6 +7,11 @@ fullnameOverride: ""
 
 replicaCount: 1
 
+# PodDisruptionBudget (maxUnavailable: 1) for each Deployment that keeps more than one Pod
+# (minReplicas under autoscaling). Off by default; redis-iris turns it on.
+podDisruptionBudget:
+  enabled: false
+
 image:
   repository: redislabs/iris-identity-service
   # Empty uses .Chart.AppVersion.
@@ -88,13 +93,13 @@ runtime:
   #   name: memory-dp                     # ^[a-z0-9-]{0,43}[a-z0-9]$, unique; mount directory name
   #   subject: memory-dp
   #   allowedOperations: [api-key-introspect]   # api-key-introspect|auth-introspect|auth-me|subject-grant-lookup
-  #   allowedProducts: [memory]           # memory|langcache|context|playbook|lens|context-gateway
+  #   allowedProducts: [memory]           # memory|langcache|context|playbook|lens|context-gateway|intent
   #   existingSecret: memory-dp-credential  # shared with the data plane; owned by automation
   #   secretKey: token
   #   autoGenerate: false                 # development only: generate <fullname>-runtime-<name>
   #   generatedSecretName: ""             # with autoGenerate only: name the generated Secret
   #   existingSecretChecksum: ""
-  serviceCredentials: []
+  serviceCredentials: null  # unset; redis-iris derives it
 
 productValidation:
   # At least one enabled product is required. No product defaults. Each entry:
@@ -105,10 +110,13 @@ productValidation:
   #       existingSecret: memory-internal-token
   #       secretKey: token
   #       existingSecretChecksum: ""
-  products: {}
+  products: null  # unset; redis-iris derives it
 
 apiKeys:
   maxRotateGraceSeconds: 604800
+  # Lets a mint associate a user identity with the API key (userId).
+  userBinding:
+    enabled: false
 
 # Optional operator login to IdS Control with your IdP's JWTs. oidc is copied
 # as is (snake_case) into auth.oidc; roleBindings into auth.role_bindings and
@@ -136,8 +144,8 @@ apiKeys:
 #       - subject: system:serviceaccount:playbook:redis-agent-playbook-controlplane
 #         roles: [subject_grant_admin]
 controlAuth:
-  oidc: {}
-  roleBindings: []
+  oidc: null  # unset; redis-iris derives it from global.iris.auth
+  roleBindings: null  # unset; redis-iris derives it from global.iris.auth
   workloadIdentity: {}
 
 # Service-subject grants this IdS may hold. Empty allows none. Each entry must
