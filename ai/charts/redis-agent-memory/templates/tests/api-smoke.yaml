@@ -86,7 +86,6 @@ spec:
           run_id = uuid.uuid4().hex
           session_id = "smoke-" + run_id[:24]
           memory_id = "smoke-" + run_id
-          namespace = "smoke-" + run_id[:24]
           owner_id = "helm-smoke"
           keyword = "ram-smoke-" + run_id[:12]
           store_path = urllib.parse.quote(store_id, safe="")
@@ -143,7 +142,7 @@ spec:
 
           def record_promoted_memory_ids(memories):
               for memory in memories:
-                  promoted_id = memory.get("id")
+                  promoted_id = memory.get("memoryId")
                   if promoted_id and promoted_id not in promoted_memory_ids:
                       promoted_memory_ids.append(promoted_id)
 
@@ -160,7 +159,6 @@ spec:
                           "eq": "episodic",
                       },
                   },
-                  "filterOp": "all",
                   "limit": 10,
               }
 
@@ -178,8 +176,8 @@ spec:
 
               try:
                   request(
-                      "DELETE",
-                      f"/v1/stores/{store_path}/long-term-memory",
+                      "POST",
+                      f"/iris/data/v1/agent-memory/stores/{store_path}/memories/bulk-delete",
                       {"memoryIds": memory_ids},
                       expected=(200, 404),
                       fatal=False,
@@ -191,7 +189,7 @@ spec:
                   session_path = urllib.parse.quote(session_id, safe="")
                   request(
                       "DELETE",
-                      f"/v1/stores/{store_path}/session-memory/{session_path}",
+                      f"/iris/data/v1/agent-memory/stores/{store_path}/sessions/{session_path}",
                       expected=(204, 404),
                       fatal=False,
                   )
@@ -201,7 +199,7 @@ spec:
           def search_long_term_memory(body, fatal=True):
               result = request(
                   "POST",
-                  f"/v1/stores/{store_path}/long-term-memory/search",
+                  f"/iris/data/v1/agent-memory/stores/{store_path}/memories/search",
                   body,
                   fatal=fatal,
               )
@@ -212,10 +210,10 @@ spec:
               last_response = {}
               for attempt in range(1, promotion_retries + 1):
                   last_response, memories = search_long_term_memory(body)
-                  promoted = [m for m in memories if m.get("id") != memory_id]
+                  promoted = [m for m in memories if m.get("memoryId") != memory_id]
 
                   if promoted:
-                      ids = [m.get("id", "<missing-id>") for m in promoted]
+                      ids = [m.get("memoryId", "<missing-id>") for m in promoted]
                       record_promoted_memory_ids(promoted)
                       print(f"OK: worker promoted session event into long-term memory: {ids}")
                       return
@@ -263,7 +261,7 @@ spec:
               }
               session = request(
                   "POST",
-                  f"/v1/stores/{store_path}/session-memory/events",
+                  f"/iris/data/v1/agent-memory/stores/{store_path}/sessions",
                   session_body,
                   expected=(200, 201),
               )
@@ -281,16 +279,15 @@ spec:
               )
               create = request(
                   "POST",
-                  f"/v1/stores/{store_path}/long-term-memory",
+                  f"/iris/data/v1/agent-memory/stores/{store_path}/memories",
                   {
                       "memories": [
                           {
-                              "id": memory_id,
+                              "memoryId": memory_id,
                               "text": memory_text,
                               "memoryType": "semantic",
                               "sessionId": session_id,
                               "ownerId": owner_id,
-                              "namespace": namespace,
                               "topics": ["helm-smoke"],
                           }
                       ]
@@ -304,20 +301,18 @@ spec:
                   fail(f"bulk create returned per-record errors: {create['errors']}")
 
               search_body = {
-                  "text": memory_text,
+                  "query": memory_text,
                   "filter": {
-                      "namespace": {
-                          "eq": namespace,
-                      },
+                      "sessionId": {"eq": session_id},
+                      "ownerId": {"eq": owner_id},
                   },
-                  "filterOp": "all",
                   "limit": 10,
               }
 
               last_search = {}
               for attempt in range(1, search_retries + 1):
                   last_search, memories = search_long_term_memory(search_body)
-                  match = next((m for m in memories if m.get("id") == memory_id), None)
+                  match = next((m for m in memories if m.get("memoryId") == memory_id), None)
 
                   if match is not None and keyword in match.get("text", ""):
                       print(f"OK: found smoke long-term memory {memory_id}")

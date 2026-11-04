@@ -127,7 +127,7 @@ spec:
           secret:
             secretName: {{ include "redis-agent-memory.licenseSecretName" . }}
             items:
-              - key: {{ .Values.license.secretKey }}
+              - key: {{ include "redis-agent-memory.licenseSecretKey" . }}
                 path: {{ .Values.license.fileName }}
         {{- if $workerServiceAccountTokenEnabled }}
         - name: worker-service-account-token

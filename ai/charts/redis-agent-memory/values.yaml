@@ -3,9 +3,8 @@
 image:
   repository: 'redislabs/agent-memory'
   pullPolicy: IfNotPresent
-  # Defaults to the chart appVersion stamped at release time.
-  # Override at install/upgrade to pin a different RAM image version.
-  tag: "0.10.2"
+  # The image release this chart version ships; override to run another.
+  tag: "1.0.0"
 
 # Empty falls back to global.imagePullSecrets.
 imagePullSecrets: []
@@ -45,7 +44,7 @@ tenantId: ""
 # auth.service_subjects (the worker's projected token keeps api://memory-dp).
 auth:
   oidc:
-    audience: api://redis-iris
+    audience: ""  # default api://redis-iris; redis-iris sets global.iris.auth.oidc.audience
 
 airgap:
   # Enables disconnected-environment validation for the deployment artifacts
@@ -277,6 +276,7 @@ shared: {}
 #       enabled: true
 #       max_decoded_bytes: 1048576
 #       max_input_tokens: 8000
+#       max_reconciliation_input_tokens: 32000
 #       max_chunks: 32
 #       max_output_records: 100
 #       max_queued_bytes_per_store: 10485760
@@ -298,10 +298,7 @@ shared: {}
 #       "1": {}                              # urls via the secret overlay
 #     request_region:
 #       default: ""                            # set per region (e.g. eu1)
-memory:
-  ownership:
-    # Set false during upgrades until stored owners match Principal.UserID.
-    enabled: true
+memory: {}
 
 podAnnotations: {}
 podLabels: {}
@@ -320,8 +317,10 @@ ingress:
       paths:
         - path: /
           pathType: ImplementationSpecific
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
+  # Controller-specific annotations, none by default: the Ingress works on any controller
+  # (ingress-nginx, Traefik). The former nginx rewrite-target: / default sent every request to /,
+  # so nothing relied on it.
+  annotations: {}
   tls: []
   #  - secretName: redis-agent-memory-tls
   #    hosts:
@@ -365,7 +364,7 @@ tls:
 # with license.existingSecret.
 license:
   existingSecret: ""
-  secretKey: "license"
+  secretKey: ""  # default license; redis-iris sets global.iris.license.secretKey
   mountDir: "/etc/redis-agent-memory"
   fileName: "license"
   existingSecretChecksum: ""
@@ -375,8 +374,16 @@ license:
 # server.* applies to the API Deployment, worker.* to the background worker.
 # ---------------------------------------------------------------------------
 
+# PodDisruptionBudget (maxUnavailable: 1) for each Deployment that keeps more than one Pod
+# (minReplicas under autoscaling). Off by default; redis-iris turns it on.
+podDisruptionBudget:
+  enabled: false
+
 server:
   replicaCount: 2
+  # Deployment spec.strategy, rendered verbatim when set. redis-iris fixes it to
+  # RollingUpdate with maxUnavailable 0 and maxSurge 1.
+  strategy: {}
   resources:
     limits:
       cpu: 1000m
@@ -434,11 +441,11 @@ worker:
 # still enable dataplane_client.auth and auth.worker_identity with matching
 # issuer/JWKS/audience/subject settings.
 workerAuth:
-  enabled: false
+  enabled: null  # false when unset; redis-iris turns it on
 
 # ---------------------------------------------------------------------------
-# On-prem Control Plane (CP) — the admin store API (/v1/stores and
-# /v2/memory/stores, admin-token auth) used to create/list/get/update/delete memory stores at runtime.
+# On-prem Control Plane (CP) — the admin store API (/iris/v1/agent-memory/stores,
+# admin-token auth) used to create/list/get/update/delete memory stores at runtime.
 #
 # The bundled control plane is mandatory and provisions every store at runtime.
 # It shares metadata Redis and the top-level `databases` fallback registry with
@@ -453,8 +460,8 @@ controlplane:
     # Separate image from the data plane (control-plane binary).
     repository: 'redislabs/agent-memory-control-plane'
     pullPolicy: IfNotPresent
-    # Must be set explicitly at install/upgrade time.
-    tag: "0.10.2"
+    # The image release this chart version ships; override to run another.
+    tag: "1.0.0"
 
   replicaCount: 1
 
@@ -618,7 +625,7 @@ dataplane:
 identityService:
   # Accept an http:// dataplane.identityServiceBaseURL, for example the
   # in-cluster Service. Refused under the fips security profile.
-  allowInsecureTransport: false
+  allowInsecureTransport: null  # false when unset; redis-iris turns it on for its in-cluster Identity Service
   # The data plane's runtime credential (subject memory-dp, operation
   # api-key-introspect, product memory). Deployment automation provisions the
   # Secret and registers it on the Identity Service release. Mounted at

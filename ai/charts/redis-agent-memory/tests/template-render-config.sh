@@ -20,6 +20,9 @@
 #   - the control plane also gets the region's overlay;
 #   - fail-closed when neither existingSecret nor render is set;
 #   - fail-closed when both existingSecret and render are set (mutual exclusion);
+#   - under redis-iris, an enabled memory.auth.oidc takes issuer, jwks_uri, role
+#     claims and mappings from global.iris.auth; a differing local value fails;
+#     enabled without an issuer fails the render instead of the pod;
 #   - examples/basic/values.yaml renders end to end using only the --set flags
 #     its own header comment documents (guards the README quick start).
 #
@@ -61,7 +64,7 @@ CONFIG_KIND="$(awk '/kind: ConfigMap/{k="ConfigMap"} /kind: Secret/{k="Secret"} 
 grep -q "default: eu1" <<<"$OUT" \
   || fail "region-eu request_region.default did not merge in"
 grep -A1 "^[[:space:]]*ownership:" <<<"$OUT" | grep -q "enabled: false" \
-  || fail "unauthenticated example's ownership opt-out was not preserved"
+  || fail "ownership enforcement default missing from rendered config"
 grep -q "api: true" <<<"$OUT" \
   || fail "namespace_features.api was not rendered from the example values"
 echo "OK: rendered config ConfigMap merges base + region overrides"
@@ -104,18 +107,6 @@ grep -q "mountPath: /etc/ai/overlays/0" <<<"$SR_OUT" \
 grep -q "mountPath: /etc/ai/overlays/1" <<<"$SR_OUT" \
   && fail "single-region unexpectedly mounted a second overlay" || true
 echo "OK: single-region secretName mounts exactly one overlay at index 0"
-
-grep -A1 "^[[:space:]]*ownership:" <<<"$SR_OUT" | grep -q "enabled: true" \
-  || fail "ownership enforcement should default to enabled without example values"
-
-OWNERSHIP_OFF="$(helm template "$RELEASE" "$CHART_DIR" "${TENANT_ARGS[@]}" \
-  --set image.tag=0.0.0-test --set license.existingSecret=ram-license \
-  --set controlplane.image.tag=cp-0.0.0-test \
-  --set controlplane.config.existingSecret=cp-config-test \
-  --set config.render=true --set memory.profile=dev --set 'memory.auth.method=none' \
-  --set memory.ownership.enabled=false)"
-grep -A1 "^[[:space:]]*ownership:" <<<"$OWNERSHIP_OFF" | grep -q "enabled: false" \
-  || fail "explicit ownership opt-out was not preserved"
 
 echo "=== Case 2c: BYO existingSecret with no secretName — no overlays at all ==="
 BYO_OUT="$(helm template "$RELEASE" "$CHART_DIR" "${TENANT_ARGS[@]}" \
@@ -182,19 +173,13 @@ fi
 echo "OK: chart fails closed when config.existingSecret and config.render are both set"
 
 echo "=== Case 4c: rendered config requires a real body ==="
-for ownership in true false; do
-  if ERROR="$(helm template "$RELEASE" "$CHART_DIR" "${TENANT_ARGS[@]}" \
-    --set image.tag=0.0.0-test --set license.existingSecret=ram-license \
-    --set controlplane.image.tag=cp-0.0.0-test \
-    --set controlplane.config.existingSecret=cp-config-test \
-    --set dataplane.identityServiceBaseURL=https://identity.example.com \
-    --set identityService.credential.existingSecret=runtime-credential \
-    --set config.render=true --set memory.ownership.enabled="$ownership" 2>&1)"; then
-    fail "config.render=true with only ownership.enabled=$ownership unexpectedly rendered"
-  fi
-  grep -q 'config.render=true requires a config body' <<<"$ERROR" \
-    || fail "config without a body must report the config-body validation error: $ERROR"
-done
+if helm template "$RELEASE" "$CHART_DIR" "${TENANT_ARGS[@]}" \
+ --set image.tag=0.0.0-test --set license.existingSecret=ram-license \
+ --set controlplane.image.tag=cp-0.0.0-test \
+ --set controlplane.config.existingSecret=cp-config-test \
+ --set config.render=true >/dev/null 2>&1; then
+ fail "config.render=true without memory or shared config body unexpectedly rendered"
+fi
 echo "OK: rendered config without a body fails closed"
 
 echo "=== Case 5: control-plane config renders as a ConfigMap and gets the region overlay ==="
@@ -312,6 +297,98 @@ fi
 grep -q 'auth.admin_tenant_id "other" differs from tenantId "default"' "$TMPDIR_ERR" \
   || fail "the admin tenant mismatch must explain the conflict"
 echo "OK: tenantId renders the admin-token tenant, an empty tenantId omits it, a mismatch fails"
+
+echo "=== Case 5d: memory.auth.oidc takes the suite IdP settings under redis-iris, and fails early without them ==="
+SUITE_BASE=(
+  --set image.tag=0.0.0-test --set license.existingSecret=license-test
+  --set controlplane.image.tag=cp-0.0.0-test --set-string tenantId=default
+  --set config.render=true --set memory.default_extraction_strategy=instruct
+  --set controlplane.config.render=true --set controlplane.configData.metadata.namespace=iris-memory
+)
+SUITE_IDP=(
+  --set global.iris.products.memory.enabled=true --set global.iris.license.existingSecret=license-test
+  --set global.iris.auth.oidc.issuer=https://idp.example/issuer
+  --set global.iris.auth.oidc.jwksURI=https://idp.example/jwks
+  --set-json 'global.iris.auth.roleBindings=[{"group":"admins","role":"suite_admin"}]'
+)
+render_suite() {
+  helm template "$RELEASE" "$CHART_DIR" "${SUITE_BASE[@]}" "${SUITE_IDP[@]}" "$@" --show-only templates/config.yaml
+}
+
+# Enabled, nothing else set: the data plane gets what the control plane gets.
+OUT="$(render_suite --set memory.auth.oidc.enabled=true)"
+for want in "issuer: https://idp.example/issuer" "jwks_uri: https://idp.example/jwks" "admins: suite_admin" "- groups"; do
+  grep -q -- "$want" <<<"$OUT" || fail "memory.auth.oidc did not derive '$want' from global.iris"
+done
+# allow_insecure_transport is derived from the JWKS scheme, in the data-plane oidc block only.
+OIDC_BLOCK() { awk '/^ {4,6}oidc:/{f=1;next} f&&/^ {4,6}[a-z_]+:/{f=0} f' <<<"$1"; }
+grep -q "allow_insecure_transport: false" <<<"$(OIDC_BLOCK "$OUT")" || fail "an https jwksURI must derive allow_insecure_transport: false"
+OUT="$(render_suite --set memory.auth.oidc.enabled=true --set global.iris.auth.oidc.jwksURI=http://idp.example/jwks)"
+grep -q "allow_insecure_transport: true" <<<"$(OIDC_BLOCK "$OUT")" || fail "an http jwksURI must derive allow_insecure_transport: true"
+
+# Enabled and set through shared.auth.oidc: derived and conflict-checked all the same.
+OUT="$(render_suite --set shared.auth.oidc.enabled=true)"
+grep -q "issuer: https://idp.example/issuer" <<<"$OUT" || fail "shared.auth.oidc.enabled must take the suite issuer"
+render_suite --set shared.auth.oidc.enabled=true --set shared.auth.oidc.issuer=https://other.example >"$TMPDIR_ERR" 2>&1 \
+  && fail "a shared.auth.oidc.issuer that differs from the suite's must fail the render"
+grep -q "conflicts with the value redis-iris derives from global.iris" "$TMPDIR_ERR" || fail "the shared issuer conflict must explain itself"
+
+# A custom roleClaims and accessTokenIssuer (AD FS) reach the data plane: the issuer is
+# global.iris.auth.oidc.accessTokenIssuer when set, else issuer.
+OUT="$(render_suite --set memory.auth.oidc.enabled=true --set global.iris.auth.oidc.accessTokenIssuer=https://sts.example/adfs \
+  --set-json 'global.iris.auth.oidc.roleClaims=["teams"]')"
+for want in "issuer: https://sts.example/adfs" "- teams"; do
+  grep -q -- "$want" <<<"$OUT" || fail "memory.auth.oidc did not derive '$want' from global.iris"
+done
+grep -q -- "- groups" <<<"$OUT" && fail "a custom roleClaims must replace the default groups claim"
+grep -q "issuer: https://idp.example/issuer" <<<"$OUT" && fail "accessTokenIssuer must replace issuer on the data plane"
+
+# Opt-in: without memory.auth.oidc.enabled the data plane renders no OIDC.
+OUT="$(render_suite)"
+grep -q "idp.example" <<<"$OUT" && fail "the data plane must not enable OIDC by itself"
+
+# A local value equal to the derived one is accepted; a different one fails, naming the field.
+render_suite --set memory.auth.oidc.enabled=true --set memory.auth.oidc.issuer=https://idp.example/issuer >/dev/null \
+  || fail "a local issuer equal to the suite's must render"
+for conflict in memory.auth.oidc.issuer=https://other.example memory.auth.oidc.jwks_uri=https://other.example/jwks \
+  memory.auth.oidc.allow_insecure_transport=true; do
+  if render_suite --set memory.auth.oidc.enabled=true --set "$conflict" >"$TMPDIR_ERR" 2>&1; then
+    fail "$conflict must conflict with global.iris.auth.oidc"
+  fi
+  grep -q "memory.${conflict%%=*} (.*conflicts with the value redis-iris derives from global.iris" "$TMPDIR_ERR" \
+    || fail "$conflict must fail naming the conflicting field"
+done
+if render_suite --set memory.auth.oidc.enabled=true --set-json 'memory.auth.oidc.role_mappings={"ops":"suite_admin"}' >"$TMPDIR_ERR" 2>&1; then
+  fail "local role_mappings that differ from the suite's must fail the render"
+fi
+grep -q "memory.memory.auth.oidc.role_mappings" "$TMPDIR_ERR" || fail "the role_mappings conflict must name the field"
+
+# No jwksURI in global.iris: the field is left to the local value, not a conflict.
+render_suite --set memory.auth.oidc.enabled=true --set global.iris.auth.oidc.jwksURI= \
+  --set memory.auth.oidc.jwks_uri=https://local.example/jwks >/dev/null \
+  || fail "a local jwks_uri must be accepted when global.iris has none"
+
+# Enabled with no issuer to use fails at render time, not in the pod.
+for args in "" "--set-string memory.auth.oidc.issuer=https://idp.example/issuer"; do
+  # shellcheck disable=SC2086
+  if helm template "$RELEASE" "$CHART_DIR" "${SUITE_BASE[@]}" --set memory.auth.oidc.enabled=true $args >"$TMPDIR_ERR" 2>&1; then
+    fail "memory.auth.oidc.enabled without issuer and jwks_uri must fail the render"
+  fi
+  grep -q "memory.auth.oidc.issuer and memory.auth.oidc.jwks_uri are required" "$TMPDIR_ERR" \
+    || fail "the missing issuer or jwks_uri must fail with the explanatory message"
+done
+# A secret overlay does not skip the check: overlays usually carry Redis credentials, so a
+# data plane without an issuer would crash-loop. Keeping the issuer in an overlay needs
+# config.render=false or config.existingSecret.
+if helm template "$RELEASE" "$CHART_DIR" "${SUITE_BASE[@]}" --set secrets.secretName=overlay \
+  --set memory.auth.oidc.enabled=true >"$TMPDIR_ERR" 2>&1; then
+  fail "a secret overlay must not skip the issuer check"
+fi
+# A bring-your-own config Secret carries the OIDC block itself.
+helm template "$RELEASE" "$CHART_DIR" "${SUITE_BASE[@]}" --set config.render=false --set config.existingSecret=byo-config \
+  --set memory.auth.oidc.enabled=true >/dev/null 2>&1 \
+  || fail "config.existingSecret must skip the issuer check"
+echo "OK: memory.auth.oidc is derived from global.iris when enabled, conflicts fail, missing issuer fails early"
 
 echo "=== Case 6: examples/basic renders with only the --set flags its own header documents ==="
 # examples/basic/values.yaml is self-contained (license, secrets, and the

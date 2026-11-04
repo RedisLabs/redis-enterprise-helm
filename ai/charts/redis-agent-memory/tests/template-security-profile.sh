@@ -145,6 +145,9 @@ grep -q 'name: RAM_STORE_ID' <<<"$OUT" \
   || fail "api-smoke test Pod did not render RAM_STORE_ID env var"
 grep -q 'value: "00000000000000000000000000000001"' <<<"$OUT" \
   || fail "api-smoke test Pod did not render the default smoke store ID"
+MINTED=$(render --set tests.enabled=true --set tests.smoke.enabled=true --set tests.smoke.storeId=st_0123456789abcdef0123456789abcdef)
+grep -q 'value: "st_0123456789abcdef0123456789abcdef"' <<<"$MINTED" \
+  || fail "api-smoke test Pod did not accept a minted st_ store ID"
 grep -q 'activeDeadlineSeconds: 600' <<<"$OUT" \
   || fail "api-smoke test Pod did not render the default 600s activeDeadlineSeconds"
 N=$(count_env_value "$OUT" "SMOKE_ASYNC_PROMOTION_ENABLED" "false")

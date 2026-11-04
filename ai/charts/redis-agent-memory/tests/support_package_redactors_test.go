@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -40,8 +41,9 @@ func TestSupportPackageSpecsRenderRedactorsWhenEnabled(t *testing.T) {
 	requireSafeContains(t, rendered, ":9100/health/liveness")
 	requireSafeContains(t, rendered, ":9100/health/readiness")
 	require.NotContains(t, rendered, ":9100/v1/health/")
-	requireSafeContains(t, supportBundleCM.Data["support-bundle-spec"], `"chartVersion": "0.1.2"`)
-	requireSafeContains(t, supportBundleCM.Data["support-bundle-spec"], `"appVersion": "0.1.0"`)
+	version := committedChartVersion(t)
+	requireSafeContains(t, supportBundleCM.Data["support-bundle-spec"], fmt.Sprintf(`"chartVersion": %q`, version))
+	requireSafeContains(t, supportBundleCM.Data["support-bundle-spec"], fmt.Sprintf(`"appVersion": %q`, version))
 	requireSafeContains(t, supportBundleCM.Data["support-bundle-spec"], `"releaseName": "ram-fixture"`)
 	requireSafeContains(t, supportBundleCM.Data["support-bundle-spec"], `"namespace": "ram-fixture"`)
 	requireSafeContains(t, supportBundleCM.Data["support-bundle-spec"], `"imageTag": "0.0.0-test"`)
@@ -887,6 +889,26 @@ func helmTemplateError(t *testing.T, args ...string) string {
 	require.Error(t, err)
 
 	return string(out)
+}
+
+// committedChartVersion is the chart version, which equals appVersion
+// (MOD-20420, .github/scripts/chart-lockstep.js).
+func committedChartVersion(t *testing.T) string {
+	t.Helper()
+
+	_, file, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+
+	content, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "Chart.yaml"))
+	require.NoError(t, err)
+
+	var chart struct {
+		Version string `yaml:"version"`
+	}
+	require.NoError(t, yaml.Unmarshal(content, &chart))
+	require.NotEmpty(t, chart.Version)
+
+	return chart.Version
 }
 
 func runHelmTemplate(t *testing.T, args ...string) ([]byte, error) {

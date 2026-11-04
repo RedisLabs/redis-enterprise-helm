@@ -1,0 +1,18 @@
+{{- /* One PodDisruptionBudget per Deployment that keeps more than one Pod; redis-onprem.pdb skips the rest. */ -}}
+{{- $queueMonitor := .Values.controlplane.queueMonitor -}}
+{{- $budgets := list
+  (dict "name" (include "redis-agent-memory.fullname" .) "component" "server" "replicas" .Values.server.replicaCount
+    "autoscalingEnabled" .Values.server.autoscaling.enabled "minReplicas" .Values.server.autoscaling.minReplicas)
+  (dict "name" (include "redis-agent-memory.workerFullname" .) "component" "worker" "replicas" .Values.worker.replicaCount
+    "autoscalingEnabled" .Values.worker.autoscaling.enabled "minReplicas" .Values.worker.autoscaling.minReplicas)
+  (dict "name" (include "redis-agent-memory.controlplaneFullname" .) "component" "controlplane" "replicas" .Values.controlplane.replicaCount) -}}
+{{- if and $queueMonitor $queueMonitor.enabled -}}
+{{- $budgets = append $budgets (dict "name" (include "redis-agent-memory.queueMonitorFullname" .) "component" "queue-monitor" "replicas" $queueMonitor.replicaCount) -}}
+{{- end -}}
+{{- range $budgets }}
+{{- with (include "redis-onprem.pdb" (merge (dict "root" $ "enabled" $.Values.podDisruptionBudget.enabled
+  "labelsTemplate" "redis-agent-memory.labels" "selectorLabelsTemplate" "redis-agent-memory.selectorLabels") .) | trim) }}
+---
+{{ . }}
+{{- end }}
+{{- end }}

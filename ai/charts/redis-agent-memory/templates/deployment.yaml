@@ -61,7 +61,7 @@ checksum/dp-credential: {{ . | quote }}
   secret:
     secretName: {{ include "redis-agent-memory.licenseSecretName" . }}
     items:
-      - key: {{ .Values.license.secretKey }}
+      - key: {{ include "redis-agent-memory.licenseSecretKey" . }}
         path: {{ .Values.license.fileName }}
 {{- with include "redis-agent-memory.dpCredential" . | fromJson }}
 {{- if .secret }}
@@ -88,6 +88,7 @@ checksum/dp-credential: {{ . | quote }}
   "labelsTemplate" "redis-agent-memory.labels"
   "selectorLabelsTemplate" "redis-agent-memory.selectorLabels"
   "replicas" .Values.server.replicaCount
+  "strategy" .Values.server.strategy
   "autoscalingEnabled" .Values.server.autoscaling.enabled
   "annotationsTemplate" "redis-agent-memory.serverAnnotations"
   "podAnnotations" .Values.podAnnotations

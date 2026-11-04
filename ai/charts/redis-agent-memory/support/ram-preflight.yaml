@@ -8,8 +8,8 @@ spec:
     - clusterVersion:
         outcomes:
           - fail:
-              when: "< 1.23.0"
-              message: Redis Agent Memory on-prem requires Kubernetes 1.23 or newer because the Helm chart renders autoscaling/v2 HPAs by default.
+              when: "< 1.28.0"
+              message: Redis Agent Memory on-prem requires Kubernetes 1.28 or newer, the kubeVersion floor of the Helm chart.
           - pass:
               message: Kubernetes version is supported for Redis Agent Memory on-prem.
     - textAnalyze:
