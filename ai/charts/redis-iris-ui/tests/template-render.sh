@@ -268,16 +268,17 @@ assert_contains "$PORT_OUT" "port: 9090"
 assert_absent "$PORT_OUT" "listen 9090;"
 rm -f "$PORT_OUT"
 
-# Edge case: an unset image.tag must fail closed at helm template/install
-# time (a real deploy operation), matching every sibling on-prem chart's
+# Edge case: image.tag defaults to the committed chart version (MOD-20420), but
+# an emptied image.tag must fail closed at helm template/install time (a real
+# deploy operation), matching every sibling on-prem chart's
 # `required "...image.tag is required" ...` convention -- without this,
 # `helm install` would succeed and render `image: "repo:"`, an invalid
 # image reference that only surfaces later as ImagePullBackOff.
 TAG_ERR="$(mktemp)"
-if helm template ui-tag-test "$CHART" >/dev/null 2>"$TAG_ERR"; then
-  fail "expected helm template to reject an unset image.tag, but it succeeded"
+if helm template ui-tag-test "$CHART" --set image.tag= >/dev/null 2>"$TAG_ERR"; then
+  fail "expected helm template to reject an empty image.tag, but it succeeded"
 fi
-grep -q "image.tag is required" "$TAG_ERR" || fail "unset image.tag must fail with a clear message, got: $(cat "$TAG_ERR")"
+grep -q "image.tag is required" "$TAG_ERR" || fail "empty image.tag must fail with a clear message, got: $(cat "$TAG_ERR")"
 rm -f "$TAG_ERR"
 # bare `helm lint` still "passes" (required() is INFO-only there), matching
 # the sibling charts' own bare_lint_test.go convention -- this is the

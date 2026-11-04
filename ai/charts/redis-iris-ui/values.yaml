@@ -4,12 +4,17 @@ fullnameOverride: ""
 image:
   repository: redislabs/iris-ui-gateway
   pullPolicy: IfNotPresent
-  # Must be set explicitly at install or upgrade time to the gateway version being deployed.
-  tag: "0.1.0"
+  # The image release this chart version ships; override to run another.
+  tag: "1.0.0"
 
 imagePullSecrets: []
 
 replicaCount: 1
+
+# PodDisruptionBudget (maxUnavailable: 1) for each Deployment that keeps more than one Pod
+# (minReplicas under autoscaling). Off by default; redis-iris turns it on.
+podDisruptionBudget:
+  enabled: false
 
 serviceAccount:
   create: true
