@@ -51,8 +51,8 @@
 {{- with include "redis-agent-memory.tlsCaCertSecret" . -}}
 {{- $secretChecks = append $secretChecks (dict "name" . "key" (include "redis-agent-memory.tlsCaCertKey" $) "label" "RAM TLS CA certificate" "includeValue" false "severity" "fail") -}}
 {{- end -}}
-{{- if .Values.license.existingSecret -}}
-{{- $secretChecks = append $secretChecks (dict "name" (include "redis-agent-memory.licenseSecretName" .) "key" .Values.license.secretKey "label" "RAM license" "includeValue" false "severity" "fail") -}}
+{{- if (include "redis-agent-memory.suite" . | fromJson).license.existingSecret -}}
+{{- $secretChecks = append $secretChecks (dict "name" (include "redis-agent-memory.licenseSecretName" .) "key" (include "redis-agent-memory.licenseSecretKey" .) "label" "RAM license" "includeValue" false "severity" "fail") -}}
 {{- end -}}
 {{- $registryImages = append $registryImages (printf "%s:%s" .Values.controlplane.image.repository .Values.controlplane.image.tag) -}}
 {{- if .Values.controlplane.config.existingSecret -}}
@@ -65,8 +65,8 @@
 {{- if or .Values.controlplane.adminToken.existingSecret .Values.controlplane.adminToken.autoGenerate -}}
 {{- $secretChecks = append $secretChecks (dict "name" (include "redis-agent-memory.controlplaneAdminTokenSecretName" .) "key" .Values.controlplane.adminToken.secretKey "label" "RAM control plane admin token" "includeValue" false "severity" "fail") -}}
 {{- end -}}
-{{- if or .Values.controlplane.internalToken.existingSecret .Values.controlplane.internalToken.autoGenerate -}}
-{{- $secretChecks = append $secretChecks (dict "name" (include "redis-agent-memory.controlplaneInternalTokenSecretName" .) "key" .Values.controlplane.internalToken.secretKey "label" "RAM control plane internal token" "includeValue" false "severity" "fail") -}}
+{{- if or .Values.controlplane.internalToken.existingSecret .Values.controlplane.internalToken.autoGenerate (include "redis-agent-memory.suiteCredential" (dict "root" . "credential" "controlplane") | fromJson).secret -}}
+{{- $secretChecks = append $secretChecks (dict "name" (include "redis-agent-memory.controlplaneInternalTokenSecretName" .) "key" (include "redis-agent-memory.controlplaneInternalTokenSecretKey" .) "label" "RAM control plane internal token" "includeValue" false "severity" "fail") -}}
 {{- end -}}
 {{- if and $queueMonitor $queueMonitor.enabled -}}
 {{- $registryImages = append $registryImages (printf "%s:%s" $queueMonitor.image.repository $queueMonitor.image.tag) -}}
@@ -208,7 +208,7 @@ data:
             data: |-
               {
                 "identityServiceBaseURL": {{ . | quote }},
-                "allowInsecureTransport": {{ dig "allowInsecureTransport" false (default (dict) $.Values.identityService) }},
+                "allowInsecureTransport": {{ (include "redis-agent-memory.suite" $ | fromJson).allowInsecureTransport }},
                 "dataPlaneCredentialFrom": {"kind": "Secret", "name": {{ default "" $credential.secret | quote }}, "key": {{ $credential.key | quote }}},
                 "tlsCaBundleFrom": {"kind": "Secret", "name": {{ $tlsCaCertSecret | quote }}, "key": {{ include "redis-agent-memory.tlsCaCertKey" $ | quote }}}
               }

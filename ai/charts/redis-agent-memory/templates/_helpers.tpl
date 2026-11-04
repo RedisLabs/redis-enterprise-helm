@@ -79,34 +79,136 @@ Create the name of the control-plane admin-token Secret to use.
 Create the name of the control-plane internal-token Secret to use.
 */}}
 {{- define "redis-agent-memory.controlplaneInternalTokenSecretName" -}}
-{{- if .Values.controlplane.internalToken.existingSecret }}
+{{- $suite := include "redis-agent-memory.suiteCredential" (dict "root" . "credential" "controlplane") | fromJson -}}
+{{- if $suite.secret }}
+{{- $suite.secret }}
+{{- else if .Values.controlplane.internalToken.existingSecret }}
 {{- .Values.controlplane.internalToken.existingSecret }}
 {{- else }}
 {{- printf "%s-internal-token" (include "redis-agent-memory.controlplaneFullname" .) }}
 {{- end }}
 {{- end }}
 
+{{/* "true" when the chart generates the internal-token Secret: no suite aggregate, no existingSecret, autoGenerate. */}}
+{{- define "redis-agent-memory.controlplaneInternalTokenGenerated" -}}
+{{- $suite := include "redis-agent-memory.suiteCredential" (dict "root" . "credential" "controlplane") | fromJson -}}
+{{- if and (not $suite.secret) (not .Values.controlplane.internalToken.existingSecret) .Values.controlplane.internalToken.autoGenerate -}}true{{- end -}}
+{{- end }}
+
+{{/* The key of the internal token in that Secret. */}}
+{{- define "redis-agent-memory.controlplaneInternalTokenSecretKey" -}}
+{{- $suite := include "redis-agent-memory.suiteCredential" (dict "root" . "credential" "controlplane") | fromJson -}}
+{{- default .Values.controlplane.internalToken.secretKey $suite.key }}
+{{- end }}
+
 {{/*
 The Secret/key the data plane presents to the Identity Service release, as
-JSON {secret, key, checksum}, from identityService.credential.
+JSON {secret, key, checksum}, from identityService.credential, or from the
+redis-iris aggregate (redis-agent-memory.suiteCredential).
 */}}
 {{- define "redis-agent-memory.dpCredential" -}}
 {{- $credential := default (dict) (default (dict) .Values.identityService).credential -}}
-{{- toJson (dict "secret" (default "" $credential.existingSecret) "key" (default "token" $credential.secretKey) "checksum" (default "" $credential.existingSecretChecksum)) -}}
+{{- $suite := include "redis-agent-memory.suiteCredential" (dict "root" . "credential" "dataplane") | fromJson -}}
+{{- toJson (dict "secret" (default (default "" $credential.existingSecret) $suite.secret) "key" (default (default "token" $credential.secretKey) $suite.key) "checksum" (default "" $credential.existingSecretChecksum)) -}}
 {{- end }}
 
 {{/*
-global.* fallbacks, so one value set on an umbrella chart reaches Memory and
-the Identity Service release alike. A local value wins.
+Under the redis-iris umbrella (global.iris present), Memory's two Identity Service credentials
+come from the suite: a supplied aggregate Secret, else Memory's own generated Secret:
+  dataplane     global.iris.secrets.dataplaneServiceCredentials.existingSecret
+                (generated: iris-memory-dataplane-credential), key memory-dp
+  controlplane  global.iris.secrets.controlplaneInternalTokens.existingSecret
+                (generated: iris-memory-internal-token), key memory
+A local existingSecret naming another Secret fails the render. Standalone (no global.iris) this
+returns {} and the local values apply unchanged.
+Takes (dict "root" . "credential" "dataplane"|"controlplane"); returns JSON {secret, key}.
 */}}
+{{- define "redis-agent-memory.suiteCredential" -}}
+{{- $local := index (dict
+  "dataplane" (dict "field" "identityService.credential.existingSecret" "local" (dig "credential" "existingSecret" "" (default (dict) .root.Values.identityService)))
+  "controlplane" (dict "field" "controlplane.internalToken.existingSecret" "local" .root.Values.controlplane.internalToken.existingSecret)) .credential -}}
+{{- $c := include "redis-onprem.suite.credential" (dict "root" .root "product" "memory" "credential" .credential "local" $local.local "field" $local.field) | fromJson -}}
+{{- if $c -}}{{- toJson (dict "secret" $c.existingSecret "key" $c.secretKey) -}}{{- else -}}{}{{- end -}}
+{{- end }}
+
+{{/*
+Suite-wide settings, resolved once as JSON (redis-onprem.suite.*). Standalone they are the local
+values with the chart defaults. Under redis-iris (global.iris present) they come from global.iris
+and the enabled products, and a local value that differs fails, naming memory.<path>:
+  tenantId, license {existingSecret, secretKey}, audience
+  identityServiceBaseURL, allowInsecureTransport  the suite's in-cluster Identity Service
+  workerAuth                                      true: the worker's projected token
+  oidc                                            controlplane.configData.auth.oidc from
+                                                  global.iris.auth, when an issuer is set
+  dataplaneOIDC                                   issuer, jwks_uri, role_claims, role_mappings and
+                                                  allow_insecure_transport for memory.auth.oidc,
+                                                  when an issuer is set. dataplaneConfig applies
+                                                  them only when memory.auth.oidc.enabled is true
+  dataplaneClient, workerIdentity                 memory.dataplane_client and
+                                                  memory.auth.worker_identity for the worker
+  playbookJWTSubjects,                            with global.iris.extraction.enabled and Playbook:
+  playbookWorkloadIdentity                        memory.auth.jwt_subjects (Playbook worker) and
+                                                  controlplane.configData.auth.workload_identity
+                                                  (Playbook control plane)
+*/}}
+{{- define "redis-agent-memory.suite" -}}
+{{- $p := "memory." -}}
+{{- $ids := default (dict) .Values.identityService -}}
+{{- $oidc := include "redis-onprem.suite.oidc" (dict "root" . "prefix" $p "local" (dict "audience" (dig "oidc" "audience" "" (default (dict) .Values.auth))) "paths" (dict "audience" "auth.oidc.audience") "defaults" (dict "audience" "api://redis-iris")) | fromJson -}}
+{{- $out := dict
+  "tenantId" (include "redis-onprem.suite.tenantId" (dict "root" . "prefix" $p "local" .Values.tenantId))
+  "license" (include "redis-onprem.suite.license" (dict "root" . "prefix" $p "local" .Values.license "defaultSecretKey" "license") | fromJson)
+  "audience" $oidc.audience
+  "identityServiceBaseURL" (default "" (default (dict) .Values.dataplane).identityServiceBaseURL)
+  "allowInsecureTransport" (not (not $ids.allowInsecureTransport))
+  "workerAuth" (not (not (default (dict) .Values.workerAuth).enabled)) -}}
+{{- if include "redis-onprem.suite.enabled" . -}}
+{{- $suiteIds := include "redis-onprem.suite.identityService" (dict "root" .) | fromJson -}}
+{{- $_ := set $out "identityServiceBaseURL" (include "redis-onprem.suite.owned" (dict "prefix" $p "path" "dataplane.identityServiceBaseURL" "local" (default (dict) .Values.dataplane).identityServiceBaseURL "derived" $suiteIds.baseURL) | fromJson).value -}}
+{{- $_ := set $out "allowInsecureTransport" (include "redis-onprem.suite.owned" (dict "prefix" $p "path" "identityService.allowInsecureTransport" "local" $ids.allowInsecureTransport "derived" $suiteIds.allowInsecureTransport) | fromJson).value -}}
+{{- $_ := set $out "workerAuth" (include "redis-onprem.suite.owned" (dict "prefix" $p "path" "workerAuth.enabled" "local" (default (dict) .Values.workerAuth).enabled "derived" true) | fromJson).value -}}
+{{- $derivedOIDC := dict -}}
+{{- if $oidc.issuer -}}
+{{- $derivedOIDC = dict "enabled" true "issuer" $oidc.accessTokenIssuer "jwks_uri" $oidc.jwksURI "role_claims" $oidc.roleClaims "role_mappings" (include "redis-onprem.suite.roleMappings" (dict "root" . "product" "agent_memory") | fromJson) -}}
+{{- if $oidc.allowInsecureTransport }}{{- $_ := set $derivedOIDC "allow_insecure_transport" true -}}{{- end -}}
+{{- end -}}
+{{- /* The data plane takes the control plane's fields; allow_insecure_transport is always derived so a local true cannot weaken it. */ -}}
+{{- $dataplaneOIDC := omit $derivedOIDC "enabled" -}}
+{{- if $oidc.issuer }}{{- $_ := set $dataplaneOIDC "allow_insecure_transport" (not (not $oidc.allowInsecureTransport)) -}}{{- end -}}
+{{- $_ := set $out "dataplaneOIDC" $dataplaneOIDC -}}
+{{- $localOIDC := dig "auth" "oidc" nil (default (dict) .Values.controlplane.configData) -}}
+{{- $_ := set $out "oidc" (include "redis-onprem.suite.owned" (dict "prefix" $p "path" "controlplane.configData.auth.oidc" "local" $localOIDC "derived" ($derivedOIDC | default nil)) | fromJson).value -}}
+{{- $wi := include "redis-onprem.suite.workloadIdentity" (dict "root" .) | fromJson -}}
+{{- /* The client reads, and the identity trusts, the projected token deployment-worker.yaml mounts. */ -}}
+{{- $token := .Values.worker.serviceAccount.token -}}
+{{- $client := dict "base_url" (printf "http://%s:%d" (include "redis-onprem.suite.fqdn" (dict "root" . "name" (include "redis-agent-memory.fullname" .))) (int .Values.service.port)) "auth" (dict "disabled" false "type" "service_account_token" "token_file" (printf "%s/%s" (trimSuffix "/" $token.mountPath) $token.fileName)) -}}
+{{- $identity := dict "enabled" true "issuer" $wi.issuer "jwks_uri" $wi.jwksURI "audience" (list $token.audience) "subjects" (list (dict "subject" (printf "system:serviceaccount:%s:%s" .Release.Namespace (default (include "redis-agent-memory.workerFullname" .) .Values.worker.serviceAccount.name)) "roles" (list "operator") "resources" (dict "mem-store:*" (dict "permissions" (list "write"))))) -}}
+{{- $memory := default (dict) .Values.memory -}}
+{{- $_ := set $out "dataplaneClient" (include "redis-onprem.suite.owned" (dict "prefix" $p "path" "memory.dataplane_client" "local" $memory.dataplane_client "derived" $client) | fromJson).value -}}
+{{- $_ := set $out "workerIdentity" (include "redis-onprem.suite.owned" (dict "prefix" $p "path" "memory.auth.worker_identity" "local" (dig "auth" "worker_identity" nil $memory) "derived" $identity) | fromJson).value -}}
+{{- /* global.iris.extraction: trust the Playbook worker (reads) and control plane (source checks). Off, local values pass through. */ -}}
+{{- if and (eq (toString (dig "extraction" "enabled" false (include "redis-onprem.suite.iris" . | fromJson))) "true") (include "redis-onprem.suite.productEnabled" (dict "root" . "product" "playbook")) -}}
+{{- $sa := printf "system:serviceaccount:%s:redis-agent-playbook-" .Release.Namespace -}}
+{{- $jwtSubjects := list (dict "issuer" $wi.issuer "jwks_uri" $wi.jwksURI "audience" (list "api://memory-dp") "subjects" (list (dict "subject" (print $sa "worker") "authority" "static" "roles" (list "viewer") "resources" (dict "mem-store:*" (dict "permissions" (list "read")))))) -}}
+{{- $_ := set $out "playbookJWTSubjects" (include "redis-onprem.suite.owned" (dict "prefix" $p "path" "memory.auth.jwt_subjects" "local" (dig "auth" "jwt_subjects" nil $memory) "derived" $jwtSubjects) | fromJson).value -}}
+{{- $cpIdentity := dict "enabled" true "issuer" $wi.issuer "jwks_uri" $wi.jwksURI "audience" (list "api://memory-cp") "subjects" (list (dict "subject" (print $sa "controlplane") "tenant" $out.tenantId "roles" (list "viewer"))) -}}
+{{- $_ := set $out "playbookWorkloadIdentity" (include "redis-onprem.suite.owned" (dict "prefix" $p "path" "controlplane.configData.auth.workload_identity" "local" (dig "auth" "workload_identity" nil (default (dict) .Values.controlplane.configData)) "derived" $cpIdentity) | fromJson).value -}}
+{{- end -}}
+{{- end -}}
+{{- toJson $out -}}
+{{- end }}
+
+{{/* "true" when the worker uses its projected ServiceAccount token (workerAuth.enabled, or redis-iris). */}}
+{{- define "redis-agent-memory.workerAuthEnabled" -}}
+{{- if (include "redis-agent-memory.suite" . | fromJson).workerAuth -}}true{{- end -}}
+{{- end }}
+
 {{- define "redis-agent-memory.securityProfile" -}}
-{{- $global := default (dict) (default (dict) .Values.global).security -}}
-{{- default (default "" $global.profile) (default (dict) .Values.security).profile -}}
+{{- include "redis-onprem.suite.securityProfile" . -}}
 {{- end }}
 
 {{- define "redis-agent-memory.tlsCaCertSecret" -}}
-{{- $global := default (dict) (default (dict) .Values.global).tls -}}
-{{- default (default "" $global.caCertSecret) (default (dict) .Values.tls).caCertSecret -}}
+{{- include "redis-onprem.suite.caCertSecret" . -}}
 {{- end }}
 
 {{/* The CA bundle key in that Secret; a null local tls block keeps ca.crt. */}}
@@ -115,7 +217,7 @@ the Identity Service release alike. A local value wins.
 {{- end }}
 
 {{- define "redis-agent-memory.imagePullSecrets" -}}
-{{- toJson (default (default (list) (default (dict) .Values.global).imagePullSecrets) .Values.imagePullSecrets) -}}
+{{- include "redis-onprem.suite.imagePullSecrets" . -}}
 {{- end }}
 
 {{/*
@@ -125,9 +227,10 @@ chart's own settings only: consistency with the Identity Service release
 job.
 */}}
 {{- define "redis-agent-memory.validateIdentityService" -}}
-{{- $ids := default (dict) .Values.identityService -}}
+{{- $suite := include "redis-agent-memory.suite" . | fromJson -}}
+{{- $ids := dict "allowInsecureTransport" $suite.allowInsecureTransport -}}
 {{- $fips := eq (include "redis-agent-memory.securityProfile" .) "fips" -}}
-{{- $url := (default (dict) .Values.dataplane).identityServiceBaseURL -}}
+{{- $url := $suite.identityServiceBaseURL -}}
 {{- /* shared merges under memory in the rendered config, so both are guarded. */ -}}
 {{- range $source := list "shared" "memory" -}}
 {{- $auth := default (dict) (index (default (dict) (index $.Values $source)) "auth") -}}
@@ -148,7 +251,7 @@ job.
 {{- if not $url -}}
 {{- fail "agent-key auth (memory.auth.method agent_key or agent_keys.enabled, or unset with no other auth flavour), or a service subject with the identity_service authority, requires dataplane.identityServiceBaseURL, the Identity Service release's Runtime URL; or, for development only, set memory.auth.method=none with memory.profile=dev" -}}
 {{- end -}}
-{{- if not (default (dict) $ids.credential).existingSecret -}}
+{{- if not (include "redis-agent-memory.dpCredential" . | fromJson).secret -}}
 {{- fail "agent-key auth, or a service subject with the identity_service authority, requires identityService.credential.existingSecret, the data plane's runtime credential registered on the Identity Service release" -}}
 {{- end -}}
 {{- $agentKeys := default (dict) (index (default (dict) (index (include "redis-agent-memory.dataplaneMergedConfig" . | mustFromJson) "auth")) "agent_keys") -}}
@@ -163,7 +266,8 @@ Data-plane config as the binary reads it: .Values.shared merged under
 .Values.memory, as renderConfig does. Renders JSON; read it with mustFromJson.
 */}}
 {{- define "redis-agent-memory.dataplaneMergedConfig" -}}
-{{- mergeOverwrite (deepCopy (default (dict) .Values.shared)) (deepCopy (default (dict) .Values.memory)) | mustToJson -}}
+{{- $config := mergeOverwrite (deepCopy (default (dict) .Values.shared)) (deepCopy (default (dict) .Values.memory)) -}}
+{{- $config | mustToJson -}}
 {{- end }}
 
 {{/*
@@ -186,17 +290,20 @@ empty profile is prod), so normalizing here would accept a value it refuses.
 {{/*
 Whether the rendered data-plane config authenticates with agent keys. Mirrors
 the data plane's applyAuthDefaults: method agent_key or agent_keys.enabled, or
-an unset method with no other auth flavour on. Renders "true" or nothing.
+an unset method with no other auth flavour on. Under redis-iris an unset method
+is always agent keys: the suite's API keys must keep working when another
+flavour (the derived worker identity, extraction's jwt_subjects) is also on.
+Renders "true" or nothing.
 */}}
 {{- define "redis-agent-memory.dataplaneUsesAgentKeys" -}}
 {{- $auth := default (dict) (index (include "redis-agent-memory.dataplaneMergedConfig" . | mustFromJson) "auth") -}}
 {{- $method := include "redis-agent-memory.dataplaneAuthMethod" . -}}
-{{- $flavour := or (index $auth "enabled") (index $auth "jwt_subjects") -}}
+{{- $flavour := index $auth "jwt_subjects" -}}
 {{- range $block := list "sm_cloud" "oidc" "worker_identity" "service_subjects" -}}
 {{- $flavour = or $flavour (index (default (dict) (index $auth $block)) "enabled") -}}
 {{- end -}}
 {{- $agentKeysEnabled := index (default (dict) (index $auth "agent_keys")) "enabled" -}}
-{{- if and (ne $method "none") (or (eq $method "agent_key") $agentKeysEnabled (and (eq $method "") (not $flavour))) -}}true{{- end -}}
+{{- if and (ne $method "none") (or (eq $method "agent_key") $agentKeysEnabled (and (eq $method "") (or (include "redis-onprem.suite.enabled" .) (not $flavour)))) -}}true{{- end -}}
 {{- end }}
 
 {{/*
@@ -263,7 +370,7 @@ Create the name of the worker service account to use.
 {{- define "redis-agent-memory.workerServiceAccountName" -}}
 {{- if .Values.worker.serviceAccount.name }}
 {{- .Values.worker.serviceAccount.name }}
-{{- else if or .Values.worker.serviceAccount.create .Values.workerAuth.enabled }}
+{{- else if or .Values.worker.serviceAccount.create (include "redis-agent-memory.workerAuthEnabled" .) }}
 {{- include "redis-agent-memory.workerFullname" . }}
 {{- else }}
 {{- include "redis-agent-memory.serviceAccountName" . }}
@@ -274,7 +381,7 @@ Create the name of the worker service account to use.
 Whether to render a projected service-account token for the worker.
 */}}
 {{- define "redis-agent-memory.workerServiceAccountTokenEnabled" -}}
-{{- if or .Values.worker.serviceAccount.token.enabled .Values.workerAuth.enabled -}}true{{- end }}
+{{- if or .Values.worker.serviceAccount.token.enabled (include "redis-agent-memory.workerAuthEnabled" .) -}}true{{- end }}
 {{- end }}
 
 {{/*
@@ -301,11 +408,12 @@ chart-rendered config ConfigMap.
 Create the name of the license Secret to use.
 */}}
 {{- define "redis-agent-memory.licenseSecretName" -}}
-{{- if .Values.license.existingSecret }}
-{{- .Values.license.existingSecret }}
-{{- else }}
-{{- printf "%s-license" (include "redis-agent-memory.fullname" .) }}
+{{- default (printf "%s-license" (include "redis-agent-memory.fullname" .)) (include "redis-agent-memory.suite" . | fromJson).license.existingSecret }}
 {{- end }}
+
+{{/* The license key in that Secret (license.secretKey, or global.iris.license.secretKey). */}}
+{{- define "redis-agent-memory.licenseSecretKey" -}}
+{{- (include "redis-agent-memory.suite" . | fromJson).license.secretKey }}
 {{- end }}
 
 {{/*
@@ -315,7 +423,7 @@ Validate required enterprise inputs.
 {{- if not .Values.image.tag -}}
 {{- fail "image.tag is required and must be set explicitly to the RAM version being deployed" -}}
 {{- end -}}
-{{- if not .Values.license.existingSecret -}}
+{{- if not (include "redis-agent-memory.suite" . | fromJson).license.existingSecret -}}
 {{- fail "license.existingSecret is required" -}}
 {{- end -}}
 {{- if and (not .Values.config.existingSecret) (not .Values.config.render) -}}
@@ -324,7 +432,7 @@ Validate required enterprise inputs.
 {{- if and .Values.config.existingSecret .Values.config.render -}}
 {{- fail "config: existingSecret (BYO Secret) and render (chart-rendered ConfigMap) are mutually exclusive; existingSecret silently wins over render, so pick one" -}}
 {{- end -}}
-{{- if and .Values.config.render (empty (omit (default (dict) .Values.memory) "ownership")) (not .Values.shared) -}}
+{{- if and .Values.config.render (not .Values.memory) (not .Values.shared) -}}
 {{- fail "config.render=true requires a config body: set .Values.memory (and optionally .Values.shared)" -}}
 {{- end -}}
 {{- if not .Values.config.secretKey -}}
@@ -363,10 +471,11 @@ Validate required enterprise inputs.
 {{- if and (not .Values.controlplane.adminToken.existingSecret) (not .Values.controlplane.adminToken.autoGenerate) -}}
 {{- fail "controlplane.adminToken: set adminToken.existingSecret (BYO) or adminToken.autoGenerate=true" -}}
 {{- end -}}
-{{- if and (not .Values.controlplane.internalToken.existingSecret) (not .Values.controlplane.internalToken.autoGenerate) -}}
+{{- $suiteInternalToken := include "redis-agent-memory.suiteCredential" (dict "root" . "credential" "controlplane") | fromJson -}}
+{{- if and (not $suiteInternalToken.secret) (not .Values.controlplane.internalToken.existingSecret) (not .Values.controlplane.internalToken.autoGenerate) -}}
 {{- fail "controlplane.internalToken: set internalToken.existingSecret (BYO) or internalToken.autoGenerate=true" -}}
 {{- end -}}
-{{- if and (eq (include "redis-agent-memory.controlplaneAdminTokenSecretName" .) (include "redis-agent-memory.controlplaneInternalTokenSecretName" .)) (eq .Values.controlplane.adminToken.secretKey .Values.controlplane.internalToken.secretKey) -}}
+{{- if and (eq (include "redis-agent-memory.controlplaneAdminTokenSecretName" .) (include "redis-agent-memory.controlplaneInternalTokenSecretName" .)) (eq .Values.controlplane.adminToken.secretKey (include "redis-agent-memory.controlplaneInternalTokenSecretKey" .)) -}}
 {{- fail "controlplane.internalToken must not use the same Secret/key as controlplane.adminToken" -}}
 {{- end -}}
 {{- if and .Values.airgap.enabled (eq .Values.controlplane.image.repository "redislabs/agent-memory-control-plane") -}}
@@ -451,8 +560,8 @@ mounted secret overlays and are merged by the config loader at runtime.
 {{- $cfg := mergeOverwrite $shared (deepCopy (default (dict) .body)) -}}
 {{- $oidc := index (default (dict) (index $cfg "auth")) "oidc" -}}
 {{- if kindIs "map" $oidc -}}
-{{- include "redis-agent-memory.stampOIDCTenant" (dict "oidc" $oidc "tenant" .Values.tenantId "path" "auth.oidc") -}}
-{{- include "redis-agent-memory.stampOIDCAudience" (dict "oidc" $oidc "audience" (dig "oidc" "audience" "" (default (dict) .Values.auth))) -}}
+{{- include "redis-agent-memory.stampOIDCTenant" (dict "oidc" $oidc "tenant" .suite.tenantId "path" "auth.oidc") -}}
+{{- include "redis-agent-memory.stampOIDCAudience" (dict "oidc" $oidc "audience" .suite.audience) -}}
 {{- end -}}
 {{- toYaml $cfg -}}
 {{- end }}
@@ -516,7 +625,39 @@ defaults agent_keys.enabled; only agent-key auth also sets auth.method.
 validateIdentityService has already refused anything that cannot start.
 */}}
 {{- define "redis-agent-memory.dataplaneConfig" -}}
+{{- $suite := include "redis-agent-memory.suite" . | fromJson -}}
 {{- $body := deepCopy (default (dict) .Values.memory) -}}
+{{- /* Under redis-iris: the worker's client and the data plane's trust in its ServiceAccount. */ -}}
+{{- with $suite.dataplaneClient }}{{- $_ := set $body "dataplane_client" . -}}{{- end -}}
+{{- with $suite.workerIdentity -}}
+{{- $auth := default (dict) (index $body "auth") -}}
+{{- $_ := set $auth "worker_identity" . -}}
+{{- $_ := set $body "auth" $auth -}}
+{{- end -}}
+{{- with $suite.playbookJWTSubjects -}}
+{{- $auth := default (dict) (index $body "auth") -}}
+{{- $_ := set $auth "jwt_subjects" . -}}
+{{- $_ := set $body "auth" $auth -}}
+{{- end -}}
+{{- /* An enabled memory.auth.oidc takes the suite IdP settings, as the control plane does (opt-in: the data plane is not enabled for you). */ -}}
+{{- $bodyAuth := default (dict) (index $body "auth") -}}
+{{- $bodyOIDC := default (dict) (index $bodyAuth "oidc") -}}
+{{- $effectiveOIDC := deepCopy (dig "auth" "oidc" (dict) (include "redis-agent-memory.dataplaneMergedConfig" . | mustFromJson)) -}}
+{{- if $effectiveOIDC.enabled -}}
+{{- range $field, $derived := $suite.dataplaneOIDC -}}
+{{- /* An empty derived string (no jwksURI in global.iris) leaves the field to the local value. */ -}}
+{{- if not (and (kindIs "string" $derived) (not $derived)) -}}
+{{- $owned := include "redis-onprem.suite.owned" (dict "prefix" "memory." "path" (printf "memory.auth.oidc.%s" $field) "local" (index $effectiveOIDC $field) "derived" $derived) | fromJson -}}
+{{- $_ := set $effectiveOIDC $field $owned.value -}}
+{{- $_ := set $bodyOIDC $field $owned.value -}}
+{{- end -}}
+{{- end -}}
+{{- if and .Values.config.render (not .Values.config.existingSecret) (or (not $effectiveOIDC.issuer) (not $effectiveOIDC.jwks_uri)) -}}
+{{- fail "memory.auth.oidc.issuer and memory.auth.oidc.jwks_uri are required when memory.auth.oidc.enabled is true, and the data plane refuses to start without them. Set them (memory.memory.auth.oidc.* under redis-iris), or set global.iris.auth.oidc.issuer so they are derived" -}}
+{{- end -}}
+{{- $_ := set $bodyAuth "oidc" $bodyOIDC -}}
+{{- $_ := set $body "auth" $bodyAuth -}}
+{{- end -}}
 {{- /* The data plane refuses auth.method=none outside profile dev; fail at render time instead. */ -}}
 {{- if and .Values.config.render (not .Values.config.existingSecret) -}}
 {{- if and (eq (include "redis-agent-memory.dataplaneAuthMethod" .) "none") (ne (include "redis-agent-memory.dataplaneProfile" .) "dev") -}}
@@ -534,7 +675,7 @@ validateIdentityService has already refused anything that cannot start.
 {{- $_ := set $agentKeys "enabled" true -}}
 {{- end -}}
 {{- $introspection := default (dict) (index $agentKeys "introspection") -}}
-{{- $_ := set $introspection "base_url" (default "" (default (dict) .Values.dataplane).identityServiceBaseURL) -}}
+{{- $_ := set $introspection "base_url" $suite.identityServiceBaseURL -}}
 {{- $_ := set $introspection "allow_insecure_transport" (not (hasPrefix "https://" $introspection.base_url)) -}}
 {{- if not (hasKey $introspection "product") -}}
 {{- $_ := set $introspection "product" "memory" -}}
@@ -544,7 +685,7 @@ validateIdentityService has already refused anything that cannot start.
 {{- $_ := set $auth "agent_keys" $agentKeys -}}
 {{- $_ := set $body "auth" $auth -}}
 {{- end -}}
-{{- include "redis-agent-memory.renderConfig" (dict "Values" .Values "body" $body) -}}
+{{- include "redis-agent-memory.renderConfig" (dict "Values" .Values "body" $body "suite" $suite) -}}
 {{- end }}
 
 {{/*
@@ -553,15 +694,19 @@ renderConfig. The internal token is wired unconditionally: the Identity Service
 release calls this control plane's grant validator with it.
 */}}
 {{- define "redis-agent-memory.controlplaneConfig" -}}
+{{- $suite := include "redis-agent-memory.suite" . | fromJson -}}
 {{- $body := deepCopy (default (dict) .Values.controlplane.configData) -}}
 {{- $auth := default (dict) (index $body "auth") -}}
+{{- /* Under redis-iris with an IdP: operator login from global.iris.auth; tenant and audience are stamped below. */ -}}
+{{- with $suite.oidc }}{{- $_ := set $auth "oidc" . -}}{{- end -}}
+{{- with $suite.playbookWorkloadIdentity }}{{- $_ := set $auth "workload_identity" . -}}{{- end -}}
 {{- $internalToken := default (dict) (index $auth "internal_token") -}}
 {{- if not (or (index $internalToken "token_file") (index $internalToken "token")) -}}
 {{- $_ := set $internalToken "token_file" "/etc/controlplane-onprem/internal/token" -}}
 {{- end -}}
 {{- $_ := set $auth "internal_token" $internalToken -}}
 {{- /* tenantId owns admin-token resources too; a differing explicit value fails like static_tenant_id. */ -}}
-{{- $tenant := trim (toString (default "" .Values.tenantId)) -}}
+{{- $tenant := trim (toString (default "" $suite.tenantId)) -}}
 {{- $adminTenant := trim (toString (default "" (index $auth "admin_tenant_id"))) -}}
 {{- if and $tenant $adminTenant (ne $adminTenant $tenant) -}}
 {{- fail (printf "controlplane.configData.auth.admin_tenant_id %q differs from tenantId %q" $adminTenant $tenant) -}}
@@ -569,7 +714,7 @@ release calls this control plane's grant validator with it.
 {{- $_ := set $auth "admin_tenant_id" $tenant -}}
 {{- end -}}
 {{- $_ := set $body "auth" $auth -}}
-{{- include "redis-agent-memory.renderConfig" (dict "Values" .Values "body" $body) -}}
+{{- include "redis-agent-memory.renderConfig" (dict "Values" .Values "body" $body "suite" $suite) -}}
 {{- end }}
 
 {{/*

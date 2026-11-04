@@ -33,6 +33,12 @@ COMMON_ARGS=(
   --set controlplane.configData.metadata.namespace=iris-memory
 )
 
+# An enabled memory.auth.oidc needs its issuer and JWKS: the render fails without them.
+OIDC_IDP=(
+  --set memory.auth.oidc.issuer=https://idp.example
+  --set memory.auth.oidc.jwks_uri=https://idp.example/jwks
+)
+
 # The connection contract: the Identity Service release's URL and the data
 # plane's automation-provisioned credential.
 CONNECTION=(
@@ -50,11 +56,11 @@ render() {
 }
 
 has() {
-  grep -qF -- "$2" <<<"$1" || fail "${3:-expected}: missing '$2'"
+  [[ "$1" == *"$2"* ]] || fail "${3:-expected}: missing '$2'"
 }
 
 lacks() {
-  if grep -qF -- "$2" <<<"$1"; then fail "${3:-unexpected}: found '$2'"; fi
+  if [[ "$1" == *"$2"* ]]; then fail "${3:-unexpected}: found '$2'"; fi
 }
 
 # Asserts rendering fails with message $1.
@@ -139,23 +145,23 @@ render --set config.render=false --set config.existingSecret=config-test >/dev/n
 # matching the data plane's applyAuthDefaults.
 # shared.* is merged under memory.*, so a flavour declared there counts too.
 for flavour in memory.auth.oidc.enabled memory.auth.sm_cloud.enabled memory.auth.worker_identity.enabled shared.auth.oidc.enabled; do
-  OUT=$(render --set "$flavour=true") || fail "$flavour with an unset method required a connection"
+  OUT=$(render "${OIDC_IDP[@]}" --set "$flavour=true") || fail "$flavour with an unset method required a connection"
   lacks "$(doc "$OUT" ConfigMap redis-agent-memory-config)" "agent_key" "$flavour rendered agent-key auth"
 done
-rejects "requires dataplane.identityServiceBaseURL" \
+rejects "requires dataplane.identityServiceBaseURL" "${OIDC_IDP[@]}" \
   --set memory.auth.oidc.enabled=true --set memory.auth.agent_keys.enabled=true
 # A subject with the identity_service authority (every legacy service_subjects
 # entry) looks its grants up through the introspection client, so it needs the
 # connection even when another flavour leaves the method unset.
-SUBJECTS=(--set memory.auth.oidc.enabled=true --set memory.auth.service_subjects.enabled=true
+SUBJECTS=("${OIDC_IDP[@]}" --set memory.auth.oidc.enabled=true --set memory.auth.service_subjects.enabled=true
   --set 'memory.auth.service_subjects.subjects[0]=system:serviceaccount:pb:worker')
 JWT_SUBJECT='[{"issuer":"https://k8s","subjects":[{"subject":"w","authority":"identity_service"}]}]'
 rejects "requires dataplane.identityServiceBaseURL" "${SUBJECTS[@]}"
 rejects "requires identityService.credential.existingSecret" "${SUBJECTS[@]}" \
   --set dataplane.identityServiceBaseURL=https://ids.example
-rejects "requires dataplane.identityServiceBaseURL" \
+rejects "requires dataplane.identityServiceBaseURL" "${OIDC_IDP[@]}" \
   --set memory.auth.oidc.enabled=true --set-json "memory.auth.jwt_subjects=$JWT_SUBJECT"
-render --set memory.auth.oidc.enabled=true \
+render "${OIDC_IDP[@]}" --set memory.auth.oidc.enabled=true \
   --set-json "memory.auth.jwt_subjects=${JWT_SUBJECT/identity_service/static}" >/dev/null \
   || fail "static-authority jwt_subjects required a connection"
 CFG="$(doc "$(render "${CONNECTION[@]}" "${SUBJECTS[@]}")" ConfigMap redis-agent-memory-config)"
@@ -211,7 +217,8 @@ echo "=== No cross-chart checks ==="
 # Identity Service release.
 OUT=$(render "${CONNECTION[@]}" --set-string tenantId=other \
   --set memory.auth.oidc.enabled=true --set controlplane.configData.auth.oidc.enabled=true \
-  --set memory.auth.oidc.issuer=https://idp.example --set controlplane.configData.auth.oidc.issuer=https://idp.example)
+  --set memory.auth.oidc.issuer=https://idp.example --set memory.auth.oidc.jwks_uri=https://idp.example/jwks \
+  --set controlplane.configData.auth.oidc.issuer=https://idp.example)
 [ "$(grep -c 'static_tenant_id: other' <<<"$OUT")" = "2" ] \
   || fail "tenantId did not stamp both the DP and CP oidc static tenant"
 echo "OK"
@@ -307,7 +314,34 @@ for method in none " None "; do
   has "$OUT" "WARNING: RAM-layer authentication is DISABLED (memory.auth.method=none)." "auth warning for method '$method'"
   has "$OUT" "Do not expose the data plane beyond a trusted" "auth warning for method '$method'"
 done
+# NOTES reads the resolved audience: the unset marker means api://redis-iris.
+OUT=$(helm template "$RELEASE" "$NOTES_CHART" "${COMMON_ARGS[@]}" "${CONNECTION[@]}" \
+  "${OIDC_IDP[@]}" --set memory.auth.oidc.enabled=true \
+  --show-only templates/notes-under-test.yaml | sed -n 's/^notes: //p' | jq -r .)
+lacks "$OUT" "Token audience" "audience warning for the default audience"
+OUT=$(helm template "$RELEASE" "$NOTES_CHART" "${COMMON_ARGS[@]}" "${CONNECTION[@]}" \
+  "${OIDC_IDP[@]}" --set memory.auth.oidc.enabled=true --set auth.oidc.audience=api://memory-dp \
+  --show-only templates/notes-under-test.yaml | sed -n 's/^notes: //p' | jq -r .)
+has "$OUT" 'Token audience    : "api://memory-dp" (default is api://redis-iris)' "audience warning for a custom audience"
 echo "OK"
+
+# NOTES must use the same internal-token reference as the mounted credential.
+for secret in iris-memory-internal-token supplied-internal-token; do
+  suite_args=()
+  [ "$secret" != supplied-internal-token ] || suite_args=(--set global.iris.secrets.controlplaneInternalTokens.existingSecret="$secret")
+  OUT=$(helm template "$RELEASE" "$NOTES_CHART" "${COMMON_ARGS[@]}" \
+    --set global.iris.products.memory.enabled=true --set global.iris.license.existingSecret=license-test \
+    "${suite_args[@]}" \
+    --show-only templates/notes-under-test.yaml | sed -n 's/^notes: //p' | jq -r .)
+  has "$OUT" "credential    : Secret $secret (key: memory), the internal token"
+  lacks "$OUT" "The internal validation token was auto-generated"
+done
+OUT=$(helm template "$RELEASE" "$NOTES_CHART" "${COMMON_ARGS[@]}" "${CONNECTION[@]}" \
+  --set controlplane.internalToken.secretKey=custom-token \
+  --show-only templates/notes-under-test.yaml | sed -n 's/^notes: //p' | jq -r .)
+has "$OUT" "The internal validation token was auto-generated"
+has "$OUT" '{.data.custom-token}'
+has "$OUT" '(key: custom-token), the internal token'
 
 echo "=== Long release name ==="
 LONG_RELEASE="$(printf 'r%.0s' {1..53})"
@@ -323,3 +357,102 @@ has "$(doc "$OUT" Deployment redis-agent-memory)" "secretName: memory-dp-credent
 echo "OK"
 
 echo "All Identity Service connection checks passed."
+
+
+echo "=== redis-iris umbrella: suite settings and wiring derive from global.iris (MOD-20391, MOD-20402) ==="
+# The local license-test equals the suite license below, so it is accepted.
+SUITE=(--set global.iris.products.memory.enabled=true --set global.iris.license.existingSecret=license-test)
+OUT="$(render "${SUITE[@]}")"
+DP="$(doc "$OUT" Deployment redis-agent-memory)"
+CP="$(doc "$OUT" Deployment redis-agent-memory-controlplane)"
+has "$DP" "secretName: iris-memory-dataplane-credential" "umbrella DP mounts its generated Secret"
+has "$DP" "- key: memory-dp" "umbrella DP projects only its key"
+has "$CP" "secretName: iris-memory-internal-token" "umbrella CP mounts its generated Secret"
+has "$CP" "- key: memory" "umbrella CP projects only its key"
+has "$CP" "- key: license.key" "umbrella license key default"
+lacks "$OUT" "name: redis-agent-memory-controlplane-internal-token" "umbrella mode generates no internal token"
+has "$OUT" "base_url: http://iris-identity-service.default.svc.cluster.local:9200" "suite Identity Service URL"
+has "$OUT" "token_file: /var/run/secrets/redis-agent-memory-worker/token" "worker presents its projected token"
+has "$OUT" "base_url: http://redis-agent-memory.default.svc.cluster.local:9000" "worker calls the in-cluster data plane"
+has "$OUT" "jwks_uri: https://kubernetes.default.svc.cluster.local/openid/v1/jwks" "worker identity JWKS from the default issuer"
+has "$OUT" "subject: system:serviceaccount:default:redis-agent-memory-worker" "worker subject in the release namespace"
+has "$OUT" "name: redis-agent-memory-worker" "worker ServiceAccount"
+lacks "$OUT" "role_mappings" "no control-plane OIDC without an issuer"
+OUT="$(render "${SUITE[@]}" \
+  --set global.iris.secrets.dataplaneServiceCredentials.existingSecret=byo-dp \
+  --set global.iris.secrets.controlplaneInternalTokens.existingSecret=byo-cp)"
+has "$(doc "$OUT" Deployment redis-agent-memory)" "secretName: byo-dp" "umbrella DP mounts the supplied aggregate"
+has "$(doc "$OUT" Deployment redis-agent-memory-controlplane)" "secretName: byo-cp" "umbrella CP mounts the supplied aggregate"
+
+CUSTOM=("${SUITE[@]}" --namespace ai --set-string tenantId= --set license.existingSecret=
+  --set global.iris.tenantId=acme --set global.iris.clusterDomain=corp.local
+  --set global.iris.license.existingSecret=suite-license --set global.iris.license.secretKey=lic
+  --set global.tls.caCertSecret=corp-ca
+  --set global.iris.auth.oidc.issuer=https://idp.example --set global.iris.auth.oidc.accessTokenIssuer=http://sts.example
+  --set global.iris.auth.oidc.jwksURI=https://idp.example/jwks --set global.iris.auth.oidc.audience=api://custom
+  --set-json 'global.iris.auth.oidc.roleClaims=["teams"]'
+  --set-json 'global.iris.auth.roleBindings=[{"group":"admins","role":"suite_admin"},{"group":"mops","role":"operator","product":"agent_memory"},{"group":"pb","role":"viewer","product":"playbook"}]')
+OUT="$(render "${CUSTOM[@]}")"
+CP="$(doc "$OUT" Deployment redis-agent-memory-controlplane)"
+has "$CP" "$(printf 'secretName: suite-license\n            items:\n              - key: lic')" "custom suite license and key"
+has "$CP" "secretName: corp-ca" "suite CA trust"
+has "$OUT" "admin_tenant_id: acme" "suite tenant owns admin resources"
+has "$OUT" "$(printf 'oidc:\n        audience:\n        - api://custom\n        enabled: true\n        issuer: http://sts.example\n        jwks_uri: https://idp.example/jwks\n        role_claims:\n        - teams\n        role_mappings:\n          admins: suite_admin\n          mops: operator\n        static_tenant_id: acme')" "control-plane OIDC from global.iris.auth"
+has "$OUT" "base_url: http://iris-identity-service.ai.svc.corp.local:9200" "Identity Service URL follows clusterDomain"
+has "$OUT" "jwks_uri: https://kubernetes.default.svc.corp.local/openid/v1/jwks" "worker identity follows clusterDomain"
+has "$OUT" "subject: system:serviceaccount:ai:redis-agent-memory-worker" "worker subject follows the namespace"
+# The worker client and identity follow a custom projected token.
+OUT="$(render "${SUITE[@]}" --set worker.serviceAccount.token.mountPath=/var/run/custom \
+  --set worker.serviceAccount.token.fileName=sa --set worker.serviceAccount.token.audience=custom-aud)"
+has "$(doc "$OUT" Deployment redis-agent-memory-worker)" "mountPath: /var/run/custom" "worker mounts the custom token path"
+has "$OUT" "token_file: /var/run/custom/sa" "worker presents the custom projected token"
+has "$OUT" "$(printf 'worker_identity:\n        audience:\n        - custom-aud')" "worker identity trusts the custom audience"
+lacks "$OUT" "/var/run/secrets/redis-agent-memory-worker/token" "no default token path with a custom one"
+OUT="$(render "${SUITE[@]}" --set global.iris.workloadIdentity.issuer=https://oidc.eks.example/id/1)"
+has "$OUT" "jwks_uri: https://oidc.eks.example/id/1/openid/v1/jwks" "custom workload identity issuer"
+
+# A local reference naming the same Secret is accepted; any other differing value names its field.
+render "${SUITE[@]}" --set identityService.credential.existingSecret=iris-memory-dataplane-credential >/dev/null
+rejects "identityService.credential.existingSecret (\"other\") conflicts with the suite's \"iris-memory-dataplane-credential\"" \
+  "${SUITE[@]}" --set identityService.credential.existingSecret=other
+rejects "controlplane.internalToken.existingSecret (\"other\") conflicts with the suite's \"iris-memory-internal-token\"" \
+  "${SUITE[@]}" --set controlplane.internalToken.existingSecret=other
+rejects 'memory.tenantId ("default") conflicts with global.iris.tenantId ("acme")' "${SUITE[@]}" --set global.iris.tenantId=acme
+rejects 'memory.license.existingSecret ("license-test") conflicts with global.iris.license.existingSecret ("other")' \
+  "${SUITE[@]}" --set global.iris.license.existingSecret=other
+rejects 'memory.license.secretKey ("k") conflicts with global.iris.license.secretKey' "${SUITE[@]}" --set license.secretKey=k
+rejects 'memory.auth.oidc.audience ("api://memory-dp") conflicts with global.iris.auth.oidc.audience' "${SUITE[@]}" --set auth.oidc.audience=api://memory-dp
+rejects 'memory.dataplane.identityServiceBaseURL ("https://ids.example") conflicts' "${SUITE[@]}" --set dataplane.identityServiceBaseURL=https://ids.example
+rejects 'memory.identityService.allowInsecureTransport (false) conflicts' "${SUITE[@]}" --set identityService.allowInsecureTransport=false
+rejects 'memory.workerAuth.enabled (false) conflicts' "${SUITE[@]}" --set workerAuth.enabled=false
+rejects 'memory.controlplane.configData.auth.oidc ({' "${SUITE[@]}" --set controlplane.configData.auth.oidc.enabled=true
+rejects 'memory.memory.dataplane_client ({' "${SUITE[@]}" --set memory.dataplane_client.base_url=http://other:9000
+rejects 'memory.memory.auth.worker_identity ({' "${SUITE[@]}" --set memory.auth.worker_identity.enabled=true
+# Under redis-iris the OIDC is derived, not set in memory.auth.oidc: NOTES still warns about the audience.
+OUT=$(helm template "$RELEASE" "$NOTES_CHART" "${COMMON_ARGS[@]}" \
+  "${SUITE[@]}" --set global.iris.auth.oidc.issuer=https://idp.example.com \
+  --set global.iris.auth.oidc.jwksURI=https://idp.example.com/jwks --set global.iris.auth.oidc.audience=api://custom \
+  --show-only templates/notes-under-test.yaml | sed -n 's/^notes: //p' | jq -r .)
+has "$OUT" 'Token audience    : "api://custom"' "audience line from global.iris.auth.oidc"
+
+echo "=== redis-iris umbrella: global.iris.extraction trusts the Playbook worker and control plane (MOD-20407) ==="
+EXTRACTION=("${SUITE[@]}" --set global.iris.products.playbook.enabled=true --set global.iris.extraction.enabled=true)
+OUT="$(render "${EXTRACTION[@]}")"
+has "$OUT" "$(printf 'jwt_subjects:\n      - audience:\n        - api://memory-dp\n        issuer: https://kubernetes.default.svc.cluster.local\n        jwks_uri: https://kubernetes.default.svc.cluster.local/openid/v1/jwks\n        subjects:\n        - authority: static\n          resources:\n            mem-store:*:\n              permissions:\n              - read\n          roles:\n          - viewer\n          subject: system:serviceaccount:default:redis-agent-playbook-worker')" "data plane trusts the Playbook worker"
+has "$OUT" "$(printf 'workload_identity:\n        audience:\n        - api://memory-cp\n        enabled: true\n        issuer: https://kubernetes.default.svc.cluster.local\n        jwks_uri: https://kubernetes.default.svc.cluster.local/openid/v1/jwks\n        subjects:\n        - roles:\n          - viewer\n          subject: system:serviceaccount:default:redis-agent-playbook-controlplane\n          tenant: default')" "control plane trusts the Playbook control plane"
+OUT="$(render "${EXTRACTION[@]}" --namespace ai --set global.iris.workloadIdentity.issuer=https://oidc.eks.example/id/1)"
+has "$OUT" "subject: system:serviceaccount:ai:redis-agent-playbook-worker" "Playbook worker subject follows the namespace"
+[ "$(grep -c 'issuer: https://oidc.eks.example/id/1$' <<<"$OUT")" -ge 3 ] || { echo "FAIL: Playbook trust follows the EKS issuer"; exit 1; }
+for args in "" "--set global.iris.products.playbook.enabled=true" "--set global.iris.extraction.enabled=true"; do
+  # shellcheck disable=SC2086 # $args is a flag list
+  OUT="$(render "${SUITE[@]}" $args)"
+  lacks "$OUT" "redis-agent-playbook" "no Playbook trust without extraction and Playbook ($args)"
+  lacks "$OUT" "workload_identity:" "no control-plane workload identity ($args)"
+done
+# Off, an operator's own values pass through; on, a differing one names its field.
+OUT="$(render "${SUITE[@]}" --set 'memory.auth.jwt_subjects[0].issuer=https://own' --set controlplane.configData.auth.workload_identity.enabled=false)"
+has "$OUT" "issuer: https://own" "local jwt_subjects pass through with extraction off"
+has "$OUT" "$(printf 'workload_identity:\n        enabled: false')" "local workload_identity passes through with extraction off"
+rejects 'memory.memory.auth.jwt_subjects ([' "${EXTRACTION[@]}" --set 'memory.auth.jwt_subjects[0].issuer=https://own'
+rejects 'memory.controlplane.configData.auth.workload_identity ({' "${EXTRACTION[@]}" --set controlplane.configData.auth.workload_identity.enabled=false
+echo "OK"

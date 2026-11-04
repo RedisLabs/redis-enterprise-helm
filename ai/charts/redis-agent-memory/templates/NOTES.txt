@@ -2,20 +2,21 @@ Server Deployment : {{ include "redis-agent-memory.fullname" . }}
 Worker Deployment : {{ include "redis-agent-memory.workerFullname" . }}
 Service           : {{ include "redis-agent-memory.fullname" . }}:{{ .Values.service.port }}
 TLS CA bundle     : {{ with include "redis-agent-memory.tlsCaCertSecret" . }}{{ . }} (key: {{ include "redis-agent-memory.tlsCaCertKey" $ }}){{ else }}system default{{ end }}
-{{- if .Values.workerAuth.enabled }}
+{{- if include "redis-agent-memory.workerAuthEnabled" . }}
 Worker auth       : enabled (Kubernetes projected service-account token)
   Worker SA       : {{ include "redis-agent-memory.workerServiceAccountName" . }}
   Token file      : {{ .Values.worker.serviceAccount.token.mountPath }}/{{ .Values.worker.serviceAccount.token.fileName }}
   Audience        : {{ .Values.worker.serviceAccount.token.audience }}
   Subject         : {{ include "redis-agent-memory.workerAuthSubject" . }}
 {{- end }}
-{{- $oidcOn := or (dig "auth" "oidc" "enabled" false (default (dict) .Values.memory)) (dig "auth" "oidc" "enabled" false (default (dict) .Values.shared)) (dig "auth" "oidc" "enabled" false (default (dict) (default (dict) .Values.controlplane).configData)) }}
+{{- $oidcOn := or (dig "enabled" false (default (dict) (include "redis-agent-memory.suite" . | fromJson).oidc)) (dig "auth" "oidc" "enabled" false (default (dict) .Values.memory)) (dig "auth" "oidc" "enabled" false (default (dict) .Values.shared)) (dig "auth" "oidc" "enabled" false (default (dict) (default (dict) .Values.controlplane).configData)) }}
+{{- $audience := trim (include "redis-agent-memory.suite" . | fromJson).audience }}
 {{- if and .Release.IsUpgrade $oidcOn }}
-UPGRADE: IdP access tokens must carry the audience {{ dig "oidc" "audience" "" (default (dict) .Values.auth) | quote }} (auth.oidc.audience).
+UPGRADE: IdP access tokens must carry the audience {{ $audience | quote }} (auth.oidc.audience).
 If your IdP still issues api://memory-dp, set auth.oidc.audience to it, or every token will be rejected.
 {{- end }}
-{{- if and $oidcOn (ne (trim (default "" (dig "oidc" "audience" "" (default (dict) .Values.auth)))) "api://redis-iris") }}
-Token audience    : {{ dig "oidc" "audience" "" (default (dict) .Values.auth) | quote }} (default is api://redis-iris)
+{{- if and $oidcOn (ne $audience "api://redis-iris") }}
+Token audience    : {{ $audience | quote }} (default is api://redis-iris)
   IdP access tokens must carry exactly this audience in aud wherever the chart renders auth.oidc.
 {{- end }}
 {{- $profile := include "redis-agent-memory.securityProfile" . }}
@@ -43,7 +44,7 @@ WARNING: RAM-layer authentication is DISABLED (memory.auth.method=none).
 
 The worker connects to the server automatically at:
   http://{{ include "redis-agent-memory.fullname" . }}:{{ .Values.service.port }}
-Control Plane    : {{ include "redis-agent-memory.controlplaneFullname" . }}:{{ .Values.controlplane.service.port }} (admin store API, /v1/stores)
+Control Plane    : {{ include "redis-agent-memory.controlplaneFullname" . }}:{{ .Values.controlplane.service.port }} (admin store API, /iris/v1/agent-memory/stores)
   Provision/manage stores via the admin API (admin-token auth). The bundled
   control plane and data plane share metadata Redis and the database registry.
 {{- if and (not .Values.controlplane.adminToken.existingSecret) .Values.controlplane.adminToken.autoGenerate }}
@@ -54,24 +55,24 @@ Control Plane    : {{ include "redis-agent-memory.controlplaneFullname" . }}:{{ 
   Rotate by editing that Secret — the control plane reads the token on use, so
   no redeploy is needed.
 {{- end }}
-{{- if and (not .Values.controlplane.internalToken.existingSecret) .Values.controlplane.internalToken.autoGenerate }}
+{{- if include "redis-agent-memory.controlplaneInternalTokenGenerated" . }}
 
   The internal validation token was auto-generated into Secret
   "{{ include "redis-agent-memory.controlplaneInternalTokenSecretName" . }}". Retrieve it for Identity Service wiring with:
-    kubectl get secret --namespace {{ .Release.Namespace }} {{ include "redis-agent-memory.controlplaneInternalTokenSecretName" . }} -o jsonpath="{.data.{{ .Values.controlplane.internalToken.secretKey }}}" | base64 -d
+    kubectl get secret --namespace {{ .Release.Namespace }} {{ include "redis-agent-memory.controlplaneInternalTokenSecretName" . }} -o jsonpath="{.data.{{ include "redis-agent-memory.controlplaneInternalTokenSecretKey" . }}}" | base64 -d
 {{- end }}
 
 Identity Service : separate release (this chart deploys none)
-  Data plane URL  : {{ .Values.dataplane.identityServiceBaseURL | default "not set (memory.auth.method=none or a BYO config)" }}
+  Data plane URL  : {{ (include "redis-agent-memory.suite" . | fromJson).identityServiceBaseURL | default "not set (memory.auth.method=none or a BYO config)" }}
 {{- with include "redis-agent-memory.dpCredential" . | fromJson }}{{ if .secret }}
   DP credential   : Secret {{ .secret }} (key: {{ .key }})
 {{- end }}{{ end }}
   Validator       : set productValidation.products.memory on the Identity Service release to
-    baseURL       : http://{{ include "redis-agent-memory.controlplaneFullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.controlplane.service.port }}
+    baseURL       : http://{{ include "redis-onprem.suite.fqdn" (dict "root" . "name" (include "redis-agent-memory.controlplaneFullname" .)) }}:{{ .Values.controlplane.service.port }}
 {{- if eq $profile "fips" }}
                     (fips: the Identity Service refuses http://; front the control plane with TLS and use that https:// URL)
 {{- end }}
-    credential    : Secret {{ include "redis-agent-memory.controlplaneInternalTokenSecretName" . }} (key: {{ .Values.controlplane.internalToken.secretKey }}), the internal token
+    credential    : Secret {{ include "redis-agent-memory.controlplaneInternalTokenSecretName" . }} (key: {{ include "redis-agent-memory.controlplaneInternalTokenSecretKey" . }}), the internal token
 {{- if and .Values.controlplane.queueMonitor .Values.controlplane.queueMonitor.enabled }}
 
 Queue Monitor    : {{ include "redis-agent-memory.queueMonitorFullname" . }}:{{ .Values.controlplane.queueMonitor.service.port }} (Asynqmon for background_jobs.redis)

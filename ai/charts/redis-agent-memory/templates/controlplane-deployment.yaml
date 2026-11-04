@@ -77,13 +77,13 @@ checksum/license: {{ .Values.license.existingSecretChecksum | quote }}
   secret:
     secretName: {{ include "redis-agent-memory.controlplaneInternalTokenSecretName" . }}
     items:
-      - key: {{ .Values.controlplane.internalToken.secretKey }}
+      - key: {{ include "redis-agent-memory.controlplaneInternalTokenSecretKey" . }}
         path: token
 - name: license-volume
   secret:
     secretName: {{ include "redis-agent-memory.licenseSecretName" . }}
     items:
-      - key: {{ .Values.license.secretKey }}
+      - key: {{ include "redis-agent-memory.licenseSecretKey" . }}
         path: {{ .Values.license.fileName }}
 {{ include "redis-agent-memory.overlayVolumes" . }}
 {{ include "redis-agent-memory.tlsVolume" . }}

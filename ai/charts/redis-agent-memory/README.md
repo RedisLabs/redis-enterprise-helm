@@ -37,7 +37,7 @@ one region, see [Multi-Region Deployment](#multi-region-deployment).
 
 ## Before you install
 
-- Kubernetes 1.23+
+- Kubernetes 1.28+
 - Helm 3+
 - Redis endpoints reachable from the cluster
 - A license is required to use the on-prem version. Contact your Redis account representative. If you do not have one, contact Redis sales: <https://redis.io/meeting/>
@@ -50,7 +50,7 @@ Prerequisite matrix:
 
 | Area | Requirement | Notes |
 | --- | --- | --- |
-| Kubernetes | Kubernetes 1.23+ and Helm 3+ | The chart installs standard `apps/v1` Deployments, Services, optional `autoscaling/v2` HPAs, optional Ingress, and pre-created Secrets. |
+| Kubernetes | Kubernetes 1.28+ and Helm 3+ | The chart installs standard `apps/v1` Deployments, Services, optional `autoscaling/v2` HPAs, optional Ingress, and pre-created Secrets. |
 | Content store Redis | Redis 7.2.0 through 8.4.x with RedisJSON and RediSearch / Query Engine, reachable from RAM | Configure endpoints in `databases.<id>.urls`. The content store holds session memory JSON documents and long-term memory hashes, so it must support JSON commands, hashes, TTLs, `FT.CREATE`, `FT.SEARCH`, JSON indexing, and vector `HNSW` fields. |
 | Job Redis | Redis 6.2+ reachable from RAM server and worker pods | Configure `background_jobs.redis.urls` to the regional job Redis endpoint, use a non-volatile / `noeviction` policy, and keep exactly one async backend enabled per process. The job Redis does not need RediSearch or RedisJSON unless the same Redis also serves as the content store. |
 | Metadata Redis | Redis 6.2+ reachable from the control plane, server, and worker | Configure `metadata.urls` and a shared `metadata.namespace`. It stores dynamic store records. Agent-key records live in the Identity Service release's own metadata Redis, which may be the same Redis. |
@@ -86,7 +86,7 @@ The data plane refuses `auth.method: none` with any other profile, and the
 chart refuses to render it. With a chart-rendered config, the chart refuses to
 render agent-key auth without the connection values rather than letting the
 pod CrashLoopBackOff. Service subjects with the `identity_service` authority
-(every `auth.service_subjects` entry, for example Playbook extraction) look
+(`auth.service_subjects`) look
 their grants up in the Identity Service too, so they need the same connection
 values even when another auth flavour leaves `memory.auth.method` unset.
 
@@ -849,7 +849,7 @@ Most important config fields:
     characters, start with a letter, and contain only letters, digits, underscores or dashes; it
     must be unique within the store and must not be one of the built-in catalog ids. The name
     appears in the exclusions log line, which is why its shape is an identifier and not free
-    text. It is **not** a metric attribute: `ram_worker_extraction_exclusions_total` reports
+    text. It is **not** a metric attribute: `iris_agentmemory_worker_extraction_exclusions_total` reports
     every custom detector under `detector="custom"`, keeping that label bounded by the build,
     so per-rule volume is read from the log rather than from a dashboard.
 - `default_summarisation_config.*`: optional fallback summarisation configuration for stores that do not set it explicitly
@@ -1019,7 +1019,7 @@ deployment may list a given region at a time.
 ## Bundled Control Plane
 
 The chart always deploys the on-prem **Control Plane (CP)** — an admin API
-(`/v1/stores` and `/v2/memory/stores`, admin-token authenticated) that creates and manages memory stores
+(`/iris/v1/agent-memory/stores`, admin-token authenticated) that creates and manages memory stores
 at runtime, so you can provision stores without editing the data plane's config
 and rolling its pods. DP-only and externally managed CP topologies are not
 supported.
@@ -1031,7 +1031,7 @@ in the **store database** at create time. The data plane reads the records from
 the same metadata Redis. Store create and update requests can also set
 `longTermMemoryExclusions` for sensitive-data filtering — the advisory semantic
 prompt, the deterministic built-in detectors, and customer-authored custom
-detectors, each independently toggleable. `GET /v1/detectors` lists the built-in
+detectors, each independently toggleable. `GET /iris/v1/agent-memory/detectors` lists the built-in
 detector ids a store may select, so an id never has to be copied from
 documentation.
 
@@ -1235,6 +1235,37 @@ KinD harness (`task test:identity:integration FLOW=memory`; see
 [the harness README](../../tests/kind/README.md)) proves that a consistent pair works;
 `helm test` does not.
 
+### Running under redis-iris
+
+When the chart runs as the `memory` dependency of the `redis-iris` umbrella
+(`global.iris` is set), both Identity Service credentials come from the suite:
+the supplied aggregate Secrets, or else the umbrella's generated Secrets for
+Memory. Each Deployment mounts only Memory's key:
+
+| Reference | Secret | Key |
+| --- | --- | --- |
+| `identityService.credential` | `global.iris.secrets.dataplaneServiceCredentials.existingSecret`, generated `iris-memory-dataplane-credential` | `memory-dp` |
+| `controlplane.internalToken` | `global.iris.secrets.controlplaneInternalTokens.existingSecret`, generated `iris-memory-internal-token` | `memory` |
+
+The chart generates no internal token then. Leave both `existingSecret` values
+empty: one naming another Secret fails the render and names the field.
+
+The suite-wide settings also come from `global.iris` (TDD MOD-19479, "Values
+precedence"):
+
+| Value | Under redis-iris |
+| --- | --- |
+| `tenantId` | `global.iris.tenantId` (default `default`) |
+| `license.existingSecret`, `license.secretKey` | `global.iris.license.*` (defaults `iris-license`, `license.key`) |
+| `auth.oidc.audience` | `global.iris.auth.oidc.audience` (default `api://redis-iris`) |
+| `dataplane.identityServiceBaseURL`, `identityService.allowInsecureTransport` | the suite's Identity Service, `http://iris-identity-service.<namespace>.svc.<clusterDomain>:9200` |
+| `controlplane.configData.auth.oidc` | `global.iris.auth.oidc` (issuer = access-token issuer) with `role_mappings` from `global.iris.auth.roleBindings` for `agent_memory`, only when an issuer is set |
+| `memory.auth.oidc` `issuer`, `jwks_uri`, `role_claims`, `role_mappings`, `allow_insecure_transport` | The same `global.iris.auth.oidc` values, only when `memory.auth.oidc.enabled` is true (the suite does not enable the data plane's OIDC for you) and an issuer is set. A different local value fails the render, including `allow_insecure_transport: true` against an https JWKS; `role_mappings` come from `global.iris.auth.roleBindings`. Enabled with no issuer or `jwks_uri` also fails the render, standalone too; set `config.render=false` or `config.existingSecret` to keep them in your own config |
+| `workerAuth.enabled`, `memory.dataplane_client`, `memory.auth.worker_identity` | the worker's projected ServiceAccount token, trusted against `global.iris.workloadIdentity` for subject `system:serviceaccount:<namespace>:<worker ServiceAccount>` |
+
+Leave these unset: a value that differs fails the render and names the field.
+Without `global.iris` nothing changes.
+
 ### Two-step install
 
 The tested layout puts both releases in one namespace, because both mount the
@@ -1282,7 +1313,7 @@ file for this layout.
 The URL and credential are required with `config.render=true` and agent-key
 auth: `memory.auth.method: agent_key` or `memory.auth.agent_keys.enabled: true`,
 or an unset method with no other auth flavour (SM Cloud, OIDC, worker identity, service
-subjects, `jwt_subjects`, legacy passphrase) enabled, which the data plane then
+subjects, `jwt_subjects`) enabled, which the data plane then
 defaults to `agent_key`. In that case the chart owns
 `memory.auth.agent_keys.introspection.base_url`, `credential` and
 `allow_insecure_transport`, and refuses values set for them by hand, in
@@ -1579,6 +1610,14 @@ auth:
       memory-operators: operator
 ```
 
+`issuer` may be `http://` or `https://`: it is an identifier compared with the
+token's `iss` and never fetched, so an `http://` issuer needs no
+`allow_insecure_transport` and is accepted under the FIPS profile. On AD FS set it
+to the discovery document's `access_token_issuer`
+(`http://<host>/adfs/services/trust`). `jwks_uri` is fetched, so it must stay
+`https://`. The chart does not validate the issuer scheme; the data plane does at
+startup.
+
 `role_mappings` is required, not decorative. The role gate runs before the
 grant check, and a role-claim value (read from `role_claims`, default
 `[roles, groups]`) confers an Iris role only through an explicit mapping,
@@ -1597,6 +1636,13 @@ Stores created with the static admin token also belong to `tenantId`: the chart
 renders it as the control plane's `auth.admin_tenant_id`, and a differing
 `controlplane.configData.auth.admin_tenant_id` fails the render. With `tenantId`
 empty, admin-token stores keep the deprecated tenant `"1"`.
+
+An IdP user sees only the stores of its own tenant, also with `suite_admin`.
+Only the static admin token sees the stores of all tenants. So with `tenantId`
+empty, an IdP admin whose tenant is not `"1"` cannot see the admin-token stores.
+To prevent this, set `tenantId`, or set the control plane's `static_tenant_id`
+to `"1"`.
+
 For a multi-tenant installation, leave `tenantId` empty and configure the
 Identity Service release's `controlAuth.oidc` with a `tenant_id_claim`. Each
 grant then names its tenant. A control OIDC with only a `static_tenant_id` also
@@ -1881,7 +1927,7 @@ Use these values to tune the deployment:
 | Worker capacity | `worker.resources`, `worker.autoscaling.*` | higher background job volume |
 | Worker service identity | `workerAuth.enabled`, `worker.serviceAccount.*` | projected service-account token auth for worker callbacks |
 | Scheduling | `server.nodeSelector`, `worker.nodeSelector`, `server.affinity`, `worker.affinity`, `server.tolerations`, `worker.tolerations` | placement control in larger clusters |
-| Networking | `service.type`, `ingress.*` | expose the API outside the cluster |
+| Networking | `service.type`, `ingress.*` | expose the API outside the cluster. The Ingress carries no controller annotations, so it works on any controller: set `ingress.className` to yours (default `nginx`; for example `traefik`). Earlier chart versions defaulted `nginx.ingress.kubernetes.io/rewrite-target: /`, which sent every request to `/`; remove it if your values copied it. |
 | Naming | `fullnameOverride` | multiple RAM releases in one namespace |
 | Service account | `serviceAccount.*` | custom namespace security policy |
 | Secret rollouts | `license.existingSecretChecksum`, `config.existingSecretChecksum` | force restart after external Secret updates |
@@ -1958,8 +2004,9 @@ mounted config:
   `auth.worker_identity.http_client`);
 - sets `allow_insecure_transport` on any authentication block
   (`auth.oidc`, `auth.agent_keys.introspection`, or `auth.worker_identity`).
-  That flag relaxes URL-scheme validation for the block's endpoints — issuer,
-  `jwks_uri`, introspection `base_url` — so leaving it on would let bearer
+  That flag relaxes URL-scheme validation for the block's fetched endpoints —
+  `jwks_uri`, introspection `base_url`, and the issuer of every block except
+  `auth.oidc`, whose `http://` issuer is an identifier and needs no flag — so leaving it on would let bearer
   material reach the Identity Service or the IdP over plaintext HTTP. It is
   rejected even when the owning block is disabled, on the same reasoning as
   `skip_verify`: a flag left in a dormant block must not survive until someone
@@ -1990,21 +2037,6 @@ what the FIPS posture enforces.
 See [Federated data-plane authentication preview](#federated-data-plane-authentication-preview)
 for the current limitations, tenant configuration, audience policy, and egress requirements.
 
-### Ownership enforcement
-
-The on-prem server and worker enable ownership enforcement by default. The chart
-sets `memory.ownership.enabled: true` for rendered configuration. With a supplied
-config Secret, the on-prem binary also defaults an omitted `ownership.enabled`
-to `true`. Explicit `false` values and `MEM_OWNERSHIP_ENABLED=false` remain supported.
-
-Before upgrading an existing deployment, follow the
-[ownership transition runbook](../../docs/runbooks/ram-enforce-ownership-transition.md).
-Keep the flag explicitly false until stored personal owners match `Principal.UserID`
-and namespace placement indexes are migrated. Configure server and worker alike;
-replace existing Summary Views when changing the flag.
-The unauthenticated development examples explicitly disable ownership checks
-because their clients have no authenticated user identity.
-
 ### Delegated user token (MOD-19849)
 
 An agent can act for the user it serves. The agent sends its agent key as usual
@@ -2032,76 +2064,31 @@ The data plane refuses the header with any credential other than an agent key,
 and refuses a user of another tenant. See
 `docs/specs/MOD-19849-delegated-user-token.md` for all rules.
 
-### Service-subject authentication (Playbook extraction, MOD-19110)
+### Playbook extraction authentication (MOD-20121)
 
-`memory.auth.service_subjects` accepts another service's own projected
-ServiceAccount token for the listed subjects and authorizes it by the grants the
-Identity Service holds for that subject, as a Playbook extraction binding
-provisions them. It needs agent-key auth (for the Identity Service client) on
-this release:
+A fresh Playbook extraction deployment uses RAM's existing static JWT policy for
+its dedicated worker. It does not create extraction IdS grants. Retain customer
+agent-key auth and RAM's own promotion-worker identity separately.
 
 ```yaml
 memory:
   auth:
     method: agent_key
-    service_subjects:
-      enabled: true
-      issuer: https://kubernetes.default.svc.cluster.local
-      jwks_uri: https://kubernetes.default.svc/openid/v1/jwks
-      audience: [api://memory-dp]
-      subjects:
-        - system:serviceaccount:<namespace>:<worker-serviceaccount>
+    jwt_subjects:
+      - issuer: https://YOUR-CLUSTER-ISSUER
+        jwks_uri: https://YOUR-CLUSTER-JWKS
+        audience: [api://memory-dp]
+        subjects:
+          - subject: system:serviceaccount:<namespace>:<playbook-fullname>-worker
+            authority: static
+            roles: [viewer]
+            resources:
+              "mem-store:*": {permissions: [read]}
 ```
 
-On the Identity Service release this chart connects to, add
-`subject-grant-lookup` to the `memory-dp` runtime credential and allow `memory`
-subject grants (its empty `subjectGrants.allowed` default denies them all):
-
-```yaml
-subjectGrants:
-  allowed:
-    - product: memory
-      resourceType: mem-store
-      actions: [read, read_all_owners]
-runtime:
-  # Restate the whole memory-dp entry: Helm replaces lists.
-  serviceCredentials:
-    - name: memory-dp
-      subject: memory-dp
-      existingSecret: memory-dp-credential
-      secretKey: token
-      allowedOperations: [api-key-introspect, subject-grant-lookup]
-      allowedProducts: [memory]
-```
-
-Unlike RAM's own promotion-worker identity, a service subject holds no
-deployment-configured grants and no cross-tenant exemption. Playbook CP only
-calls the Control API of the Identity Service release RAM uses; it needs no RAM data-plane subject.
-
-The Playbook control plane calls IdS Control with its own projected
-ServiceAccount JWT, not with the control token. Let that Identity Service
-release trust the subject for subject-grant operations only, with
-`controlAuth.workloadIdentity` in its values (see the
-[Identity Service chart README](../../identity-service/helm/README.md#operator-login-and-subject-grants)):
-
-```yaml
-controlAuth:
-  workloadIdentity:
-    enabled: true
-    issuer: https://kubernetes.default.svc.cluster.local
-    jwks_uri: https://kubernetes.default.svc/openid/v1/jwks
-    audience: [api://memory-identity-control]   # Playbook sourceControlAudience
-    subjects:
-      - subject: system:serviceaccount:<namespace>:<playbook-fullname>-controlplane
-        roles: [subject_grant_admin]           # tenant defaults to runtime.apiKeyTenant.singleTenantID
-```
-
-The subject's tenant must be the Playbook chart's `tenantId`, because the
-Playbook control plane requests every grant in that tenant. If that release has
-no `singleTenantID`, set `tenant` on the subject.
-
-For live store discovery, the Playbook control plane also calls RAM CP
-`GET /v1/stores`. Let RAM CP trust the same subject as a viewer in one tenant:
+Playbook CP uses a separate tenant-confined viewer for RAM CP list/get source
+ownership checks. Configure the same tenant as Playbook `tenantId`; do not use
+suite-admin trust, which bypasses RAM's ownership checks.
 
 ```yaml
 controlplane:
@@ -2109,20 +2096,22 @@ controlplane:
     auth:
       workload_identity:
         enabled: true
-        issuer: https://kubernetes.default.svc.cluster.local
-        jwks_uri: https://kubernetes.default.svc/openid/v1/jwks
-        audience: [api://memory-cp]   # Playbook ramControlPlaneAudience
+        issuer: https://YOUR-CLUSTER-ISSUER
+        jwks_uri: https://YOUR-CLUSTER-JWKS
+        audience: [api://memory-cp]
         subjects:
           - subject: system:serviceaccount:<namespace>:<playbook-fullname>-controlplane
             tenant: "<playbook-tenantId>"
             roles: [viewer]
 ```
 
-The Identity Service pod, and the control-plane pod with live discovery, must
-then reach that JWKS and trust its CA (`tls.caCertSecret`). The control plane
-cannot use `auth.workload_identity` together with `auth.sm_cloud`. The control token stays the rescue credential. Only the
-Identity Service pod mounts it. See the [Playbook chart setup](../../playbook/helm/README.md#reading-agent-memory-for-extraction-mod-19110)
-for the other half, JWKS reachability, and network-policy requirements.
+Both RAM planes must reach the issuer/JWKS and trust its CA. Merge list entries
+with existing identities instead of replacing RAM's worker/customer auth. CP
+viewer trust supplies ownership proof only; Playbook independently requires the
+calling installation admin or same-tenant product/suite admin to consent.
+See the [Playbook chart setup](../../playbook/helm/README.md#reading-agent-memory-for-extraction-mod-20121)
+for projected tokens, fixed endpoints and network requirements. Ordinary IdS service
+subjects remain available for separately administered customer integrations.
 
 ### Worker service-account authentication
 
@@ -2283,9 +2272,9 @@ README.
 The smoke test calls the in-cluster RAM Service through the public on-prem API:
 
 - `GET /health/readiness`
-- `POST /v1/stores/{storeId}/session-memory/events`
-- `POST /v1/stores/{storeId}/long-term-memory`
-- `POST /v1/stores/{storeId}/long-term-memory/search`
+- `POST /iris/data/v1/agent-memory/stores/{storeId}/sessions`
+- `POST /iris/data/v1/agent-memory/stores/{storeId}/memories`
+- `POST /iris/data/v1/agent-memory/stores/{storeId}/memories/search`
 
 It writes one short-term memory session event, writes one long-term memory
 record with a unique keyword, searches for that record through the search
@@ -2568,7 +2557,7 @@ If the control plane is enabled, verify it on port `9100`:
 kubectl port-forward -n <namespace-name> svc/redis-agent-memory-controlplane 9100:9100
 curl http://localhost:9100/health/readiness
 # Admin endpoints require the token (HTTP 401 without it):
-curl -H "Authorization: Bearer <admin-token>" http://localhost:9100/v1/stores
+curl -H "Authorization: Bearer <admin-token>" http://localhost:9100/iris/v1/agent-memory/stores
 ```
 
 ## Observability / Metrics
@@ -2582,14 +2571,14 @@ The async-queue signals are split across the two processes, so collecting the
 full picture requires scraping **both**:
 
 - **Server** (`redis-agent-memory` Deployment + Service): emits the submission
-  metric `jobqueue_enqueue_total` (with `service_name="dataplane"`) alongside the
+  metric `iris_jobqueue_enqueue_total` (with `service_name="dataplane"`) alongside the
   HTTP/runtime metrics. Reachable through the `redis-agent-memory` Service on port
   `9000`.
 - **Worker** (`redis-agent-memory-worker` Deployment): emits the job-processing
-  metrics (all with `service_name="worker"`) — `jobqueue_processing_duration_seconds`,
-  `jobqueue_schedule_to_start_seconds`,
-  `jobqueue_size`, `jobqueue_oldest_pending_seconds`,
-  and `jobqueue_worker_up`.
+  metrics (all with `service_name="worker"`) — `iris_jobqueue_processing_duration_seconds`,
+  `iris_jobqueue_schedule_to_start_seconds`,
+  `iris_jobqueue_size`, `iris_jobqueue_oldest_pending_seconds`,
+  and `iris_jobqueue_worker_up`.
 
 Every `jobqueue_*` series also carries the constant identity labels
 `service_namespace="agent-memory"` and `service_name` (`dataplane` on the server, `worker`
@@ -2640,7 +2629,7 @@ Control Plane. Existing static-store Redis data is not deleted, but new stores
 receive new IDs and do not automatically address it; preserving an old ID or
 adopting its data requires a separate migration procedure.
 
-Three changes from MOD-19875 can stop an upgrade:
+The auth-profile change from MOD-19875 can stop an upgrade:
 
 - The data plane refuses `memory.auth.method: none` when `memory.profile` is
   not `dev`. An empty profile is `prod`. The pod does not start. Use
@@ -2649,25 +2638,6 @@ Three changes from MOD-19875 can stop an upgrade:
   `auth.method: none` without `profile: dev`. The `dev` profile also sets the
   gin debug mode and the development logger. The `basic` and `multi-region`
   examples use it.
-- The Playbook control plane requests `actions: [read, read_all_owners]` for
-  each extraction source grant. This action lets a service subject read the
-  records of all owners in that store when `ownership.enabled` is on. An API
-  key cannot hold it. A caller with `write` or `full` on the store keeps the
-  owner checks. Add `read_all_owners` to the `memory` / `mem-store` entry of
-  `subjectGrants.allowed` on the Identity Service release this chart connects
-  to. Upgrade that Identity Service release and this chart, with its control
-  plane image, before you upgrade Playbook. An older Identity Service does not
-  know the action, and an older RAM control plane refuses it when it validates
-  the grant.
-- If the Identity Service or the RAM control plane refuses the full grant with 400, the Playbook control
-  plane sends the grant again with `read` only. It logs one warning for each
-  binding. The binding stays ready, but with `ownership.enabled` on the worker
-  cannot read personal sessions. After you add `read_all_owners`, the next
-  reconcile installs the full grant. A refused grant now costs two requests to
-  the Identity Service. If the second request also gets 400, the binding stops
-  with `source_grant_refused`. See
-  [ram-enforce-ownership-transition.md](../../docs/runbooks/ram-enforce-ownership-transition.md).
-
 <!-- markdownlint-enable MD013 MD060 -->
 
 ## Health probe migration

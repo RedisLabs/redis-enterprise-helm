@@ -13,8 +13,7 @@
           "properties": {
             "audience": {
               "type": "string",
-              "minLength": 1,
-              "description": "Audience accepted on IdP access tokens, rendered as the audience of every enabled auth.oidc block (data plane and control plane). An audience already written in a block must equal it, or the render fails."
+              "description": "Audience accepted on IdP access tokens, rendered as the audience of every enabled auth.oidc block (data plane and control plane). Empty means api://redis-iris (global.iris.auth.oidc.audience under redis-iris). An audience already written in a block must equal it, or the render fails."
             }
           },
           "additionalProperties": false
@@ -135,7 +134,7 @@
               "description": "Store ID configured in the mounted memory-dataplane config and used by the smoke test API paths.",
               "minLength": 1,
               "maxLength": 64,
-              "pattern": "^[a-zA-Z0-9-]+$"
+              "pattern": "^[a-zA-Z0-9_-]+$"
             },
             "image": {
               "type": "object",
@@ -314,8 +313,8 @@
       "description": "Worker-to-RAM authentication preset. When enabled, the chart creates or uses a worker service account and mounts a projected Kubernetes service-account token for dataplane_client.auth.type=service_account_token. The shared config Secret must still configure auth.worker_identity.",
       "properties": {
         "enabled": {
-          "type": "boolean",
-          "description": "When true, render worker projected service-account token wiring with the defaults from worker.serviceAccount.token.*."
+          "type": ["boolean", "null"],
+          "description": "When true, render worker projected service-account token wiring with the defaults from worker.serviceAccount.token.*. Null means false; redis-iris enables it."
         }
       },
       "additionalProperties": false
@@ -611,8 +610,8 @@
       "description": "Connection to the Identity Service release this chart does not deploy.",
       "properties": {
         "allowInsecureTransport": {
-          "type": "boolean",
-          "description": "Accept an http:// dataplane.identityServiceBaseURL. Refused under the fips security profile."
+          "type": ["boolean", "null"],
+          "description": "Accept an http:// dataplane.identityServiceBaseURL. Refused under the fips security profile. Null means false; redis-iris enables it for its in-cluster Identity Service."
         },
         "credential": {
           "type": "object",
