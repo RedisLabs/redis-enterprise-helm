@@ -1,0 +1,47 @@
+{
+  "product": "redis-agent-memory",
+  "deployment": "on-prem",
+  "version": "1.0.0",
+  "release": true,
+  "commit": "e53035d633d535ea414565997345b32a7878832c",
+  "components": {
+    "controlplane": {
+      "publication": {
+        "status": "published",
+        "component": "controlplane",
+        "commit": "e53035d633d535ea414565997345b32a7878832c",
+        "image": "docker.io/redislabs/agent-memory-control-plane:1.0.0",
+        "digest": "sha256:64090d7e983a5cfd77fcb4599183d6209642ca0a6b3e3298a2591d6e026aefe0",
+        "reference": "docker.io/redislabs/agent-memory-control-plane@sha256:64090d7e983a5cfd77fcb4599183d6209642ca0a6b3e3298a2591d6e026aefe0"
+      }
+    },
+    "dataplane": {
+      "publication": {
+        "status": "published",
+        "component": "dataplane",
+        "commit": "e53035d633d535ea414565997345b32a7878832c",
+        "image": "docker.io/redislabs/agent-memory:1.0.0",
+        "digest": "sha256:8192f3aae815effd5bc19f850347f7dec34994c3b1a97a295673fac88dd2b802",
+        "reference": "docker.io/redislabs/agent-memory@sha256:8192f3aae815effd5bc19f850347f7dec34994c3b1a97a295673fac88dd2b802"
+      }
+    }
+  },
+  "publication": {
+    "status": "published",
+    "sourceRun": "https://github.com/redislabsdev/iris/actions/runs/41893781423",
+    "chartSha256": "sha256:d29c07043d29e86a48a12788f7f7ffa3a6cb7d09e96e3bd88c9c3b6a92505f4e",
+    "contentsDigest": "sha256:3f0338c2c50e91e84554ad6a7170b4d792f0816bf4f14994b61a45208a72e3e9",
+    "evidenceRecovery": {
+      "method": "Chart reconstructed without dependency downloads from original Enterprise Helm release commit; normalized contents matched original published release asset. Image digests recovered from original Docker push log and matched current registry manifests.",
+      "chartSourceCommit": "ec29334e706049e52a4f71285f9c0e57b3c87412",
+      "chartSourcePath": "ai/charts/redis-agent-memory",
+      "chartSourcePullRequest": "https://github.com/RedisLabs/redis-enterprise-helm/pull/141",
+      "chartPublicationRun": "https://github.com/RedisLabs/redis-enterprise-helm/actions/runs/41911922245",
+      "chartReleaseAsset": "https://api.github.com/repos/RedisLabs/redis-enterprise-helm/releases/assets/710919767",
+      "imagePublicationJob": "https://github.com/redislabsdev/iris/actions/runs/41893781423/job/126802142819",
+      "imagePublicationLogSha256": "sha256:f89ec05c6aab0b5421c3983ce797f136ac0ccd9474a891bd9bf6857e89716949",
+      "reconstructionHelmVersion": "3.10.3",
+      "digestImplementation": "https://github.com/redislabsdev/iris/blob/1118d570331b35007f9e95b9c145deab4bec2a58/.github/scripts/chart-contents.js"
+    }
+  }
+}
