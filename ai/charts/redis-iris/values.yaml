@@ -1,0 +1,218 @@
+# redis-iris umbrella values. Each product chart's own values sit under its
+# alias (identityService, memory, playbook, lens, contextGateway, intent, ui) and keep their meaning; see each chart's
+# README. global.iris holds the suite-level settings the products share.
+# The main switches, with their defaults, prerequisites, and examples, are in
+# README.md (Suite values).
+
+global:
+  iris:
+    products:
+      memory:
+        # Installs Agent Memory (the dependency condition in Chart.yaml).
+        enabled: true
+      playbook:
+        # Installs Agent Playbook (the dependency condition in Chart.yaml). It
+        # needs its own values: see examples/playbook.yaml.
+        enabled: true
+      lens:
+        # Installs Lens. It needs its own values: see examples/lens.yaml.
+        enabled: true
+      contextGateway:
+        # Installs Context Gateway. It needs its own values, including
+        # contextGateway.publicBaseURL: see examples/context-gateway.yaml.
+        enabled: true
+      intent:
+        # Installs Intent Router. It needs its own values (storage and the
+        # embedding model): see examples/intent.yaml.
+        enabled: true
+    # The cluster's DNS domain. The UI gateway completes its upstream Service
+    # names with it.
+    clusterDomain: cluster.local
+    # helm: installed with helm install/upgrade. gitops: rendered offline
+    # (helm template, Argo CD, Flux), which needs secrets.generate: false.
+    renderMode: helm
+    secrets:
+      # Generate the suite's credentials as lookup-guarded hook Secrets (see
+      # templates/credentials.yaml); each product's own generator is off.
+      generate: true
+      # With generate: false, the Secrets you supply. Each product reads only
+      # its own key: <product>-dp in the first (memory-dp, playbook-dp, lens-dp,
+      # context-gateway-dp, intent-dp), <product> in the second (memory, playbook,
+      # lens, context-gateway, intent). The products and the Identity Service derive their
+      # references from these.
+      dataplaneServiceCredentials:
+        existingSecret: ""
+      controlplaneInternalTokens:
+        existingSecret: ""
+    extraction:
+      # Playbook -> Memory extraction: derives the Playbook worker and connection
+      # and Memory's trust in them. Needs both products, playbook.worker.region,
+      # and playbook.worker.existingSecret. Turning it off: see README.md (Suite values).
+      enabled: false
+
+# The admin token, Control token, and session key references below name the
+# generated Secrets (templates/credentials.yaml). To bring your own, create
+# Secrets with these names before installing, or point a reference at your own.
+
+# Availability (MOD-20416, MOD-20760; README "Availability"). Every data plane
+# rolls without dropping ready capacity: one surge Pod, none removed before it is
+# Ready, also under an HPA. Fixed; templates/validate.yaml rejects another
+# strategy. Every chart's PodDisruptionBudgets are on, also fixed: a Deployment
+# that keeps more than one Pod gets maxUnavailable: 1. The replica counts below
+# are defaults; size them for your load.
+
+# Fixed names: the products reach each other, and the UI reaches them, by these
+# Service names in the release namespace, whatever the release is called.
+
+identityService:
+  fullnameOverride: iris-identity-service
+  replicaCount: 2
+  podDisruptionBudget:
+    enabled: true
+  control:
+    existingSecret: iris-identity-service-control-token
+    autoGenerate: false
+  # The product wiring (service credentials, validators, tenant, Control login)
+  # is derived from global.iris and the enabled products; see the chart README,
+  # "Running under redis-iris".
+
+memory:
+  fullnameOverride: redis-agent-memory
+  podDisruptionBudget:
+    enabled: true
+  # The server and the worker already default to two replicas (HPA 2-10, 2-5).
+  server:
+    strategy: &rollout
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 0
+        maxSurge: 1
+  config:
+    render: true
+  controlplane:
+    config:
+      render: true
+    adminToken:
+      existingSecret: iris-memory-admin-token
+      autoGenerate: false
+  supportPackage:
+    enabled: false
+  # The suite preflight (templates/preflight.yaml) replaces Memory's own.
+  preflight:
+    enabled: false
+  # The Identity Service connection, the worker identity (projected
+  # ServiceAccount token, verified against global.iris.workloadIdentity), the
+  # tenant, the license, and the control-plane OIDC derive from global.iris;
+  # see the chart README, "Running under redis-iris".
+
+playbook:
+  fullnameOverride: redis-agent-playbook
+  podDisruptionBudget:
+    enabled: true
+  dataplane:
+    replicaCount: 2
+    strategy: *rollout
+  # The tenant, license, Identity Service connection, and OIDC derive from
+  # global.iris; see the chart README, "Running under redis-iris".
+  controlplane:
+    adminToken:
+      existingSecret: iris-playbook-admin-token
+      autoGenerate: false
+
+lens:
+  fullnameOverride: redis-lens
+  podDisruptionBudget:
+    enabled: true
+  dataplane:
+    server:
+      replicaCount: 2
+      strategy: *rollout
+  # The tenant, license, Identity Service connection, both suite credentials,
+  # and OIDC derive from global.iris; see the chart README, "Running under redis-iris".
+  controlplane:
+    adminToken:
+      existingSecret: iris-lens-admin-token
+      autoGenerate: false
+
+contextGateway:
+  fullnameOverride: redis-context-gateway
+  podDisruptionBudget:
+    enabled: true
+  dataplane:
+    replicaCount: 2
+    strategy: *rollout
+  # The tenant, license, Identity Service connection, both suite credentials,
+  # CA bundle, and control-plane OIDC derive from global.iris; see the chart
+  # README, "Running under redis-iris". publicBaseURL (an https origin) and the
+  # metadata and credential storage are yours to set.
+  controlplane:
+    adminToken:
+      existingSecret: iris-context-gateway-admin-token
+
+intent:
+  fullnameOverride: redis-intent-router
+  podDisruptionBudget:
+    enabled: true
+  dataplane:
+    replicaCount: 2
+    strategy: *rollout
+  # The tenant, license, Identity Service connection, both suite credentials,
+  # and OIDC derive from global.iris; see the chart README, "Running under
+  # redis-iris". storage and inference (the one embedding model) are yours to set.
+  controlplane:
+    adminToken:
+      existingSecret: iris-intent-admin-token
+      autoGenerate: false
+
+ui:
+  fullnameOverride: iris-ui
+  replicaCount: 2
+  podDisruptionBudget:
+    enabled: true
+  uiAuth:
+    replicas: 2
+  # IdP login. It needs global.iris.auth.oidc.{issuer,jwksURI},
+  # global.iris.publicURL, and sso.{clientId,clientCredential.existingSecret,
+  # redis.existingSecret}; the render fails naming whichever is missing. Set
+  # it to false for Admin Token mode (operators paste each product's token;
+  # the break-glass path, docs/runbooks/iris-onprem-admin-token-break-glass.md).
+  sso:
+    enabled: true
+    session:
+      existingSecret: iris-ui-session-key
+  # Standard networking.k8s.io/v1 Ingress for the UI, host from
+  # global.iris.publicURL, class and TLS Secret from global.iris.ingress.
+  ingress:
+    enabled: true
+  # The routes (memory; playbook and playbook-dp; lens; context-gateway and
+  # context-gateway-dp; intent and intent-data; api-keys) follow the enabled
+  # products. An entry here
+  # overrides one by key: label, showInNavigation, and maxRequestBodyBytes only.
+  products: []
+
+tests:
+  suiteVerify:
+    # The Memory database (a key of the Memory `databases` registry) the helm test
+    # creates its temporary store in.
+    databaseId: "1"
+    # The Python standard-library image the test Pod runs. Point it at your
+    # mirror when the cluster cannot pull from Docker Hub; the Pod uses
+    # global.imagePullSecrets.
+    image:
+      repository: python
+      tag: 3.13-alpine
+      pullPolicy: IfNotPresent
+    # Test hook for tests/kind.sh: fail right after minting the key, to prove
+    # suite-verify still revokes it. Never set it on a real install.
+    failAfterMint: false
+
+# The suite preflight (troubleshoot.sh), Secret iris-preflight: the Kubernetes
+# version, baseline sizing, the metrics API, the UI ingress class, supplied
+# credential keys, and the workload identity issuer and JWKS. See README.md
+# (Suite preflight).
+preflight:
+  enabled: true
+  # The curl image the collector Pods run; they use global.imagePullSecrets.
+  image:
+    repository: curlimages/curl
+    tag: 8.17.0

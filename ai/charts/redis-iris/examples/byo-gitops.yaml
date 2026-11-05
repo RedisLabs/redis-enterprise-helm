@@ -1,0 +1,68 @@
+# Bring-your-own credentials, rendered offline (helm template, Argo CD, Flux).
+# The umbrella generates nothing and evaluates no lookup, so every render is the
+# same. Create these Secrets in the release namespace first:
+#
+#   iris-byo-dataplane-credentials  key memory-dp           the Memory data plane's Identity Service credential
+#                                   key playbook-dp         the Playbook data plane's Identity Service credential
+#                                   key lens-dp             the Lens data plane's Identity Service credential
+#                                   key context-gateway-dp  the Context Gateway data plane's Identity Service credential
+#                                   key intent-dp           the Intent Router data plane's Identity Service credential
+#   iris-byo-internal-tokens        key memory              the Memory control plane's internal token
+#                                   key playbook            the Playbook control plane's internal token
+#                                   key lens                the Lens control plane's internal token
+#                                   key context-gateway     the Context Gateway control plane's internal token
+#                                   key intent              the Intent Router control plane's internal token
+#   iris-byo-memory-admin-token     key token        the Memory admin token
+#   iris-byo-playbook-admin-token   key token        the Playbook admin token
+#   iris-byo-lens-admin-token       key token        the Lens admin token
+#   iris-byo-gateway-admin-token    key token        the Context Gateway admin token
+#   iris-byo-intent-admin-token     key token        the Intent Router admin token
+#   iris-byo-ids-control-token      key token        the Identity Service Control token
+#   iris-byo-ui-session-key         key key          the UI session key (only read with ui.sso.enabled)
+#
+# Each product mounts only its own key of the two aggregates. A missing key is not
+# caught at render time (gitops evaluates no lookup): that Pod fails to start.
+
+global:
+  iris:
+    renderMode: gitops
+    secrets:
+      generate: false
+      dataplaneServiceCredentials:
+        existingSecret: iris-byo-dataplane-credentials
+      controlplaneInternalTokens:
+        existingSecret: iris-byo-internal-tokens
+
+memory:
+  controlplane:
+    adminToken:
+      existingSecret: iris-byo-memory-admin-token
+
+playbook:
+  controlplane:
+    adminToken:
+      existingSecret: iris-byo-playbook-admin-token
+
+lens:
+  controlplane:
+    adminToken:
+      existingSecret: iris-byo-lens-admin-token
+
+contextGateway:
+  controlplane:
+    adminToken:
+      existingSecret: iris-byo-gateway-admin-token
+
+intent:
+  controlplane:
+    adminToken:
+      existingSecret: iris-byo-intent-admin-token
+
+identityService:
+  control:
+    existingSecret: iris-byo-ids-control-token
+
+ui:
+  sso:
+    session:
+      existingSecret: iris-byo-ui-session-key

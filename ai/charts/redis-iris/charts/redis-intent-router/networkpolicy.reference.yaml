@@ -1,0 +1,170 @@
+# Reference policies for redis-intent-router. Do not apply this file until every
+# <placeholder> is replaced. The chart intentionally does not guess caller,
+# Redis, DNS, ingress-controller, or service-mesh identities.
+#
+# <identity-service-namespace> and <identity-service-release-name> name the
+# separate Identity Service release this chart connects to (this chart deploys
+# none). For an https:// mesh or gateway endpoint, replace those selectors with
+# that endpoint's approved identity, CIDR and port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: <release-name>-intent-default-deny
+  namespace: <namespace>
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis-intent-router
+      app.kubernetes.io/instance: <release-name>
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# CP ingress: the Identity Service release's grant validator and approved
+# administrators or the UI gateway.
+# CP egress: the metadata Redis (the Router records, idempotency claims and the
+# mailbox the data plane reads; the control plane never calls the data plane), DNS,
+# and, when the matching feature is on, the identity provider and a trace collector.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: <release-name>-intent-controlplane
+  namespace: <namespace>
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis-intent-router
+      app.kubernetes.io/instance: <release-name>
+      app.kubernetes.io/component: controlplane
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: <identity-service-namespace>
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: iris-identity-service
+              app.kubernetes.io/instance: <identity-service-release-name>
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: <admin-caller-namespace>
+          podSelector:
+            matchLabels:
+              <admin-caller-label-key>: <admin-caller-label-value>
+      ports:
+        - {protocol: TCP, port: 9400}
+  egress:
+    - to:
+        - ipBlock:
+            cidr: <metadata-redis-cidr>
+      ports:
+        - {protocol: TCP, port: <metadata-redis-port>}
+    # When controlplane.oidc.enabled: the identity provider's issuer and JWKS endpoint
+    # (replace with the approved gateway when egress is proxied).
+    - to:
+        - ipBlock:
+            cidr: <identity-provider-cidr>
+      ports:
+        - {protocol: TCP, port: 443}
+    # When opentelemetry exports traces: the OTLP collector.
+    - to:
+        - ipBlock:
+            cidr: <otlp-collector-cidr>
+      ports:
+        - {protocol: TCP, port: <otlp-collector-port>}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+# DP ingress: approved API callers and the UI gateway. The control plane does not
+# call the data plane: the two coordinate through the mailbox Redis.
+# DP egress: its own Redis (storage.redis), the mailbox Redis (runtime.redis), the
+# customer databases its Routers use, the Identity Service release (agent-key
+# introspection), the embedding provider, DNS, and, when the matching feature is
+# on, the identity provider and a trace collector.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: <release-name>-intent-dataplane
+  namespace: <namespace>
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis-intent-router
+      app.kubernetes.io/instance: <release-name>
+      app.kubernetes.io/component: dataplane
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: <api-caller-namespace>
+          podSelector:
+            matchLabels:
+              <api-caller-label-key>: <api-caller-label-value>
+      ports:
+        - {protocol: TCP, port: 9401}
+  egress:
+    - to:
+        - ipBlock:
+            cidr: <dataplane-redis-cidr>
+      ports:
+        - {protocol: TCP, port: <dataplane-redis-port>}
+    # The mailbox Redis (runtime.redis): the control plane's specs in, statuses out.
+    - to:
+        - ipBlock:
+            cidr: <mailbox-redis-cidr>
+      ports:
+        - {protocol: TCP, port: <mailbox-redis-port>}
+    # Customer databases named in `databases`: one rule per registered database.
+    - to:
+        - ipBlock:
+            cidr: <customer-database-cidr>
+      ports:
+        - {protocol: TCP, port: <customer-database-port>}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: <identity-service-namespace>
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: iris-identity-service
+              app.kubernetes.io/instance: <identity-service-release-name>
+      ports:
+        - {protocol: TCP, port: 9200}
+    # Embedding provider. Replace with the approved gateway when egress is proxied.
+    - to:
+        - ipBlock:
+            cidr: <embedding-provider-cidr>
+      ports:
+        - {protocol: TCP, port: 443}
+    # When dataplane.oidc.enabled: the identity provider's issuer and JWKS endpoint.
+    - to:
+        - ipBlock:
+            cidr: <identity-provider-cidr>
+      ports:
+        - {protocol: TCP, port: 443}
+    # When opentelemetry exports traces: the OTLP collector.
+    - to:
+        - ipBlock:
+            cidr: <otlp-collector-cidr>
+      ports:
+        - {protocol: TCP, port: <otlp-collector-port>}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}

@@ -1,0 +1,93 @@
+# Example only. Do not commit real Redis URLs, credentials, tokens, or licenses.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: intent-storage
+type: Opaque
+stringData:
+  # Router records. Separate from the data plane's Redis on purpose.
+  intent-controlplane-storage.yaml: |
+    storage:
+      metadata:
+        urls:
+          - rediss://<metadata-user>:<metadata-password>@<metadata-host>:6379
+    # Optional. Customer databases a Router may bind to with "databaseId". List
+    # the same IDs, with the same URLs, under the data plane's key below. This
+    # plane only checks the IDs and never connects.
+    # databases:
+    #   customer-a:
+    #     urls:
+    #       - rediss://<user>:<password>@<customer-a-host>:6379
+  # The data plane's runtime records and the default database: intents,
+  # examples and the per-Router vector indexes of every Router that names no
+  # database. Needs Redis Search.
+  intent-dataplane-storage.yaml: |
+    # Optional. The customer databases a Router may bind to with "databaseId";
+    # each needs Redis Search and must not be the mailbox Redis below.
+    # databases:
+    #   customer-a:
+    #     urls:
+    #       - rediss://<user>:<password>@<customer-a-host>:6379
+    storage:
+      redis:
+        urls:
+          - rediss://<dataplane-user>:<dataplane-password>@<dataplane-host>:6379
+    # The mailbox the planes coordinate through: the control plane's metadata
+    # Redis above. Only <keyPrefix>:runtime keys are used there.
+    runtime:
+      redis:
+        urls:
+          - rediss://<metadata-user>:<metadata-password>@<metadata-host>:6379
+---
+# Credentials, each a distinct token. The control-plane admin and internal tokens
+# may be omitted: set autoGenerate=true (the default) to let the chart create them.
+# The data plane's runtime credential is always provisioned by deployment
+# automation and registered on the Identity Service release; the chart never
+# generates it.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: intent-controlplane-admin
+type: Opaque
+stringData:
+  token: <distinct-controlplane-admin-token>
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: intent-controlplane-internal
+type: Opaque
+stringData:
+  token: <distinct-controlplane-internal-token>
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: intent-dp-credential
+type: Opaque
+stringData:
+  token: <distinct-intent-dp-runtime-credential>
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: intent-license
+type: Opaque
+stringData:
+  license: <redis-intent-router-license>
+---
+# Required for non-noop providers. Mounted only into the data plane. Keep the
+# provider/model/dimensions identical to Helm values.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: intent-inference
+type: Opaque
+stringData:
+  inference.yaml: |
+    embedders_connection_details:
+      openai:
+        base_url: https://api.openai.com/v1
+        credentials:
+          type: static
+          api_key: <provider-api-key>

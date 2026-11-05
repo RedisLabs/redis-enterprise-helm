@@ -1,0 +1,57 @@
+{{- $at := include "redis-lens.at" . -}}
+{{- $s := include "redis-lens.suite" . | fromJson -}}
+{{- $_ := required (printf "%stenantId is required" $at) (trim $s.tenantId) -}}
+{{- $_ := required (printf "%sstorage.existingSecret is required" $at) .Values.storage.existingSecret -}}
+{{- $_ := required (printf "%slicense.existingSecret is required" $at) $s.license.existingSecret -}}
+{{- $_ := required (printf "%sdataplane.image.tag is required" $at) .Values.dataplane.image.tag -}}
+{{- $_ := required (printf "%scontrolplane.image.tag is required" $at) .Values.controlplane.image.tag -}}
+{{- if not (regexMatch "^[A-Za-z0-9._:-]{1,128}$" (toString .Values.instance.id)) -}}
+{{- fail "instance.id must match ^[A-Za-z0-9._:-]{1,128}$" -}}
+{{- end -}}
+{{- if and (not .Values.controlplane.adminToken.existingSecret) (not .Values.controlplane.adminToken.autoGenerate) -}}
+{{- fail (printf "%scontrolplane.adminToken: set existingSecret or autoGenerate=true" $at) -}}
+{{- end -}}
+{{- if and (not $s.internalToken.existingSecret) (not .Values.controlplane.internalToken.autoGenerate) -}}
+{{- fail "controlplane.internalToken: set existingSecret or autoGenerate=true" -}}
+{{- end -}}
+{{- /*
+  The Identity Service is a separate release this chart deploys none of. Only
+  the data plane calls it, so the URL and the data plane's credential are
+  always required.
+*/ -}}
+{{- $idsURL := required "dataplane.identityServiceBaseURL is required: the URL of the Identity Service release the data plane introspects agent keys against" $s.identityServiceBaseURL -}}
+{{- $_ := required "identityService.credential.existingSecret is required: the data plane's runtime credential registered on the Identity Service release" $s.credential.existingSecret -}}
+{{- if and (not (hasPrefix "https://" $idsURL)) (not $s.allowInsecureTransport) -}}
+{{- fail (printf "dataplane.identityServiceBaseURL %q must be https:// (an http:// URL is accepted only with identityService.allowInsecureTransport=true)" $idsURL) -}}
+{{- end -}}
+{{- $refs := list
+  (printf "%s/%s" (include "redis-lens.controlplaneAdminTokenSecretName" .) .Values.controlplane.adminToken.secretKey)
+  (printf "%s/%s" (include "redis-lens.controlplaneInternalTokenSecretName" .) $s.internalToken.secretKey)
+  (printf "%s/%s" $s.credential.existingSecret $s.credential.secretKey) -}}
+{{- if ne (len (uniq $refs)) 3 -}}
+{{- fail "control-plane admin, product-validation, and data-plane Identity Service credentials must reference three different Secret keys" -}}
+{{- end -}}
+{{- if and $s.controlplaneOIDC (not $s.dataplaneOIDC.enabled) -}}
+{{- fail "controlplane.oidc requires dataplane.oidc.enabled: the control plane validates operator tokens against the same issuer, JWKS and roleMappings" -}}
+{{- end -}}
+{{- if $s.dataplaneOIDC.enabled -}}
+{{- $oidc := $s.dataplaneOIDC -}}
+{{- $issuer := required "dataplane.oidc.issuer is required when dataplane.oidc is enabled" $oidc.issuer -}}
+{{- $jwksURI := required "dataplane.oidc.jwksURI is required when dataplane.oidc is enabled" $oidc.jwksURI -}}
+{{- if not $oidc.roleMappings -}}
+{{- fail "dataplane.oidc requires dataplane.oidc.roleMappings: unmapped IdP values are never accepted" -}}
+{{- end -}}
+{{- if not (trim $s.audience) -}}
+{{- fail "auth.oidc.audience is required when dataplane.oidc is enabled: set the audience the IdP issues for the Iris API" -}}
+{{- end -}}
+{{- if contains "*" $s.audience -}}
+{{- fail "auth.oidc.audience must not contain a wildcard" -}}
+{{- end -}}
+{{- /*
+The issuer is an identifier compared with a token's iss and never fetched, so an http:// issuer (AD FS) needs no
+transport opt-in. Only the JWKS URI is fetched, so only it carries the HTTPS rule.
+*/ -}}
+{{- if and (not $oidc.allowInsecureTransport) (hasPrefix "http://" $jwksURI) -}}
+{{- fail "dataplane.oidc.jwksURI over HTTP requires allowInsecureTransport=true" -}}
+{{- end -}}
+{{- end -}}

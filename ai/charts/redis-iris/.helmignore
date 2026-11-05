@@ -1,0 +1,5 @@
+# Test harnesses and dev-loop files stay out of the packaged chart.
+/tests/
+Taskfile.yml
+# Bytecode the suite-verify unit test writes next to files/suite-verify.py.
+__pycache__/

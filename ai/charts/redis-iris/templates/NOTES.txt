@@ -1,0 +1,83 @@
+{{- $iris := .Values.global.iris }}
+{{- /* key: the alias and global.iris.products key; id: the product id in Secret names and keys. */}}
+{{- $products := list
+  (dict "key" "memory" "id" "memory" "label" "Agent Memory" "services" "svc/redis-agent-memory:9000 (data plane), svc/redis-agent-memory-controlplane:9100 (control plane)")
+  (dict "key" "playbook" "id" "playbook" "label" "Agent Playbook" "services" "svc/redis-agent-playbook-dataplane:9201 (data plane), svc/redis-agent-playbook-controlplane:9200 (control plane)")
+  (dict "key" "lens" "id" "lens" "label" "Lens" "services" "svc/redis-lens-dataplane:9000 (data plane), svc/redis-lens-controlplane:9300 (control plane)")
+  (dict "key" "contextGateway" "id" "context-gateway" "label" "Context Gateway" "services" "svc/redis-context-gateway-dataplane:8083 (data plane), svc/redis-context-gateway-controlplane:9100 (control plane)")
+  (dict "key" "intent" "id" "intent" "label" "Intent Router" "services" "svc/redis-intent-router-dataplane:9401 (data plane), svc/redis-intent-router-controlplane:9400 (control plane)") }}
+{{- $enabled := list }}
+{{- range $products }}{{- if (index $iris.products .key).enabled }}{{- $enabled = append $enabled . }}{{- end }}{{- end }}
+{{- $control := .Values.identityService.control }}
+{{- $controlKey := $control.secretKey | default "token" }}
+redis-iris {{ .Chart.Version }} is installed as release {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+
+Components (fixed names):
+  Identity Service  svc/iris-identity-service:9200
+{{- range $enabled }}
+  {{ printf "%-17s" .label }} {{ .services }}
+{{- end }}
+{{- if $iris.extraction.enabled }}
+  Extraction        deploy/redis-agent-playbook-worker reads Agent Memory sessions; before setting
+                    global.iris.extraction.enabled=false, pause or delete the extraction bindings
+{{- end }}
+  UI                svc/iris-ui:8080
+
+Credentials (Secret names only; values are never shown here):
+{{- if and $iris.secrets.generate (eq $iris.renderMode "helm") }}
+  Generated once by this chart and kept on upgrade, rollback and uninstall:
+{{- range $enabled }}
+    iris-{{ .id }}-dataplane-credential (key {{ .id }}-dp), iris-{{ .id }}-internal-token (key {{ .id }})
+{{- end }}
+{{- else }}
+  Supplied by you:
+    {{ $iris.secrets.dataplaneServiceCredentials.existingSecret }} (keys:{{ range $enabled }} {{ .id }}-dp{{ end }})
+    {{ $iris.secrets.controlplaneInternalTokens.existingSecret }} (keys:{{ range $enabled }} {{ .id }}{{ end }})
+{{- end }}
+{{- range $enabled }}
+{{- $label := printf "%s admin token" .label }}
+{{- with (index $.Values .key).controlplane.adminToken }}
+  {{ printf "%-28s" $label }} {{ .existingSecret }} (key {{ .secretKey | default "token" }})
+{{- end }}
+{{- end }}
+  Identity Service Control     {{ $control.existingSecret }} (key {{ $controlKey }})
+  Read one to paste it at the UI's prompt{{ if .Values.ui.sso.enabled }} in Admin Token mode{{ end }}, for example:
+    kubectl -n {{ .Release.Namespace }} get secret {{ $control.existingSecret }} -o jsonpath='{.data.{{ $controlKey }}}' | base64 -d
+{{- if or $iris.products.lens.enabled $iris.products.intent.enabled }}
+{{- $mint := "curl -s -X POST http://127.0.0.1:9200/v1/api-keys -H \"Authorization: Bearer $CONTROL\" -H 'Content-Type: application/json'" }}
+
+Agent keys, minted with the Control token through
+  kubectl -n {{ .Release.Namespace }} port-forward svc/iris-identity-service 9200:9200
+  CONTROL="$(kubectl -n {{ .Release.Namespace }} get secret {{ $control.existingSecret }} -o jsonpath='{.data.{{ $controlKey }}}' | base64 -d)"
+{{- if $iris.products.lens.enabled }}
+  Lens read key (the sessions of instance default):
+    {{ $mint }} -d '{"name":"lens-reader","grants":[{"product":"lens","resourceType":"lens-instance","resourceId":"default","actions":["read"]}]}'
+{{- end }}
+{{- if $iris.products.intent.enabled }}
+  Intent Router agent key for one Router (in Admin Token mode the console asks for it after the admin token):
+    {{ $mint }} -d '{"name":"intent-console","grants":[{"product":"intent","resourceType":"intent-router","resourceId":"<routerId>","actions":["full"]}]}'
+{{- end }}
+{{- end }}
+{{- if $iris.products.contextGateway.enabled }}
+
+Context Gateway MCP endpoint: each Gateway advertises
+  {{ trimSuffix "/" (toString .Values.contextGateway.publicBaseURL) }}/iris/data/v1/context-gateway/gateways/<gatewayId>/mcp
+{{- if .Values.contextGateway.dataplane.ingress.enabled }}
+  served by Ingress redis-context-gateway-dataplane.
+{{- else }}
+  Route that origin to svc/redis-context-gateway-dataplane:8083 (contextGateway.dataplane.ingress is off).
+{{- end }}
+{{- end }}
+
+Open the UI:
+{{- if .Values.ui.sso.enabled }}
+  browse {{ $iris.publicURL }} and sign in through your IdP (IdP login, ui.sso.enabled)
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/iris-ui 8080:8080
+  then browse http://127.0.0.1:8080 (Admin Token mode, ui.sso.enabled=false)
+{{- end }}
+
+Keep this chart version next to your values, for a rollback and for break-glass (switching to Admin
+Token mode during an IdP outage without reaching helm.redis.io; see the redis-iris break-glass runbook,
+docs/runbooks/iris-onprem-admin-token-break-glass.md):
+  helm pull redis-ai/redis-iris --version {{ .Chart.Version }}

@@ -1,0 +1,12 @@
+{{- /* One PodDisruptionBudget per Deployment that keeps more than one Pod; redis-onprem.pdb skips the rest. */ -}}
+{{- $budgets := list (dict "name" (include "ui.fullname" .) "component" "gateway" "replicas" .Values.replicaCount) -}}
+{{- if .Values.sso.enabled -}}
+{{- $budgets = append $budgets (dict "name" (include "ui.auth.fullname" .) "component" "ui-auth" "replicas" .Values.uiAuth.replicas) -}}
+{{- end -}}
+{{- range $budgets }}
+{{- with (include "redis-onprem.pdb" (merge (dict "root" $ "enabled" $.Values.podDisruptionBudget.enabled
+  "labelsTemplate" "ui.labels" "selectorLabelsTemplate" "ui.selectorLabels") .) | trim) }}
+---
+{{ . }}
+{{- end }}
+{{- end }}

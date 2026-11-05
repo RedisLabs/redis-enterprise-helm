@@ -1,0 +1,9 @@
+{{- include "redis-onprem.pdb" (dict
+  "root" .
+  "enabled" .Values.podDisruptionBudget.enabled
+  "name" (include "iris-identity-service.fullname" .)
+  "component" "identity-service"
+  "labelsTemplate" "iris-identity-service.labels"
+  "selectorLabelsTemplate" "iris-identity-service.selectorLabels"
+  "replicas" .Values.replicaCount
+) }}

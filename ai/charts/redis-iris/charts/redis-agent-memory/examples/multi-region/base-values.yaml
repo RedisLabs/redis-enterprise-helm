@@ -1,0 +1,134 @@
+# Multi-region Agent Memory — SHARED base values.
+#
+# Holds everything identical across regions. Deploy one release per region,
+# combining this file with a small per-region file:
+#
+#   helm install ram-eu ../.. -f base-values.yaml -f region-eu.yaml \
+#     --set image.tag=<RAM_VERSION> --set controlplane.image.tag=<RAM_VERSION>
+#   helm install ram-us ../.. -f base-values.yaml -f region-us.yaml \
+#     --set image.tag=<RAM_VERSION> --set controlplane.image.tag=<RAM_VERSION>
+#
+# Helm deep-merges base + region, so each region file carries only its non-secret
+# deltas (region id, worker_regions, ingress host) — see region-*.yaml.
+#
+# Secrets are NEVER in these files. Each region names one pre-created credentials
+# Secret (secrets.secretName in its region file) holding that region's API keys
+# and Redis URLs; see region-<x>.secret-overlay.example.yaml for the contents.
+
+# Every agent key carries a tenant (MOD-19463). This single-tenant example
+# uses "default"; set the Identity Service release's
+# runtime.apiKeyTenant.singleTenantID to the same value.
+tenantId: default
+
+image:
+  repository: redislabs/agent-memory
+  # tag is supplied at install time: --set image.tag=<RAM_VERSION>
+
+license:
+  # Pre-created Secret holding the enterprise license.
+  existingSecret: ram-license
+
+# Chart renders the structural config ConfigMap from shared + memory (below).
+config:
+  render: true
+
+# The credentials Secret is named per region (secrets.secretName in
+# region-<x>.yaml), since each region's Secret carries that region's own Redis
+# URLs. Nothing secret-related belongs in this shared base file.
+
+# Blocks common to the data plane and bundled control plane. Structure only.
+shared:
+  databases:
+    "1":
+      name: default
+
+# Data-plane config body (snake_case). Region files override the region-identity
+# fields only; everything here is the stable, non-secret default.
+memory:
+  default_extraction_strategy: instruct
+  ownership:
+    # Leave false until stored owner_id values match Principal.UserID.
+    # See docs/runbooks/ram-enforce-ownership-transition.md.
+    enabled: false
+  namespace_features:
+    api: true
+    routing:
+      policy_api: true
+      automatic: true
+      admission: true
+  # This starter assumes infrastructure-controlled access in each region.
+  # The data plane accepts auth.method none only with profile dev. Before you
+  # enable ingress or keep data in it, use agent_key auth, remove profile dev,
+  # and configure worker identity.
+  profile: dev
+  auth:
+    method: none
+  embedders_connection_details:
+    openai:
+      base_url: https://api.openai.com
+      credentials:
+        # api_key arrives via the regional secret overlay — not stored here.
+        type: static
+  embedding:
+    provider: openai
+    models:
+      default_embedding_model: text-embedding-3-large
+      dimensions: 3072
+  client_pool:
+    enable: true
+    max_size: 1000
+  background_jobs:
+    # Regional Redis queue backend — the supported Active-Active on-prem model
+    # (Asynq is the internal engine). Queue names are
+    # <queue_prefix>:<region>:<job_slug>; each region owns its queues via
+    # worker_regions (set per region) and request_region.default.
+    redis:
+      enabled: true
+      # urls arrive via the regional secret overlay; worker_regions set per region.
+      queue_prefix: ram
+      defaults:
+        concurrency: 4
+        max_retry: 3
+        timeout: 10m
+        completed_retention: 1h
+        requeue_without_retry_delay: 5s
+        shutdown_timeout: 30s
+  dataplane_client:
+    auth:
+      disabled: true
+
+# Connection to the Identity Service release (installed first, same
+# namespace). Deployment automation provisions both shared Secrets: the data
+# plane's memory-dp credential, registered on the Identity Service release, and
+# the control plane's internal token, which the release's memory validator
+# presents. Each region runs its own Identity Service release next to its
+# Memory release, so the same values hold in every region. This starter runs
+# with `auth.method: none` and `profile: dev`, so nothing introspects yet. The
+# in-cluster Service speaks http, hence allowInsecureTransport (refused under
+# fips).
+dataplane:
+  identityServiceBaseURL: http://iris-identity-service:9200
+identityService:
+  allowInsecureTransport: true
+  credential:
+    existingSecret: memory-dp-credential
+
+controlplane:
+  image:
+    repository: redislabs/agent-memory-control-plane
+  internalToken:
+    existingSecret: memory-internal-token
+  config:
+    render: true
+  configData:
+    profile: prod
+    auth:
+      type: admin-token
+      admin_token:
+        token_file: /etc/controlplane-onprem/admin/token
+      internal_token:
+        token_file: /etc/controlplane-onprem/internal/token
+    license:
+      license_path: /etc/redis-agent-memory/license
+    embedding:
+      dimensions: 3072

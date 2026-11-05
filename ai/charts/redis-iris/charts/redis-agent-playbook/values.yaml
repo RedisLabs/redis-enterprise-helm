@@ -1,0 +1,283 @@
+nameOverride: ""
+fullnameOverride: ""
+
+tenantId: ""
+
+# Audience of IdP access tokens, shared by every Iris service. Set it to the
+# value the IdP puts in the token's aud: the Iris API identifier on most IdPs, or
+# the API's Application (client) ID GUID on Entra ID v2. Use the same value in
+# every Iris chart.
+#
+# The data plane and control plane accept exactly this audience. Used only when
+# dataplane.oidc or controlplane.oidc is enabled. To keep accepting tokens issued
+# for api://playbook-dp, set this to api://playbook-dp. extraction.connection
+# worker tokens keep their own fixed audience.
+auth:
+  oidc:
+    audience: ""  # default api://redis-iris; redis-iris sets global.iris.auth.oidc.audience
+
+# Playbook CP, DP, and extraction workers send spans to a deployment-owned OTLP collector.
+# The shared exporter uses plaintext gRPC; use a trusted local collector hop.
+tracing:
+  enabled: false
+  otlpGRPCEndpoint: ""
+  capture: none
+
+# Falls back to global.imagePullSecrets when empty.
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+security:
+  # Empty selects the default Go crypto runtime (or global.security.profile when
+  # set). Set fips only with rediss:// storage URLs and an https://
+  # dataplane.identityServiceBaseURL.
+  profile: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+
+tls:
+  # Optional Secret containing additional CA certificates (falls back to
+  # global.tls.caCertSecret). Every container receives it at /etc/ssl/custom
+  # and SSL_CERT_DIR points at that directory; the data plane trusts it for an
+  # https:// dataplane.identityServiceBaseURL.
+  caCertSecret: ""
+  caCertSecretChecksum: ""
+
+license:
+  existingSecret: ""
+  secretKey: ""  # default license; redis-iris sets global.iris.license.secretKey
+  existingSecretChecksum: ""
+
+storage:
+  # This Secret must already exist. playbookKey must contain storage.metadata
+  # and storage.content URLs. The Identity Service's metadata Redis belongs to
+  # the Identity Service release.
+  existingSecret: ""
+  playbookKey: playbook-storage.yaml
+  existingSecretChecksum: ""
+  keyPrefix: iris:playbook
+  # Maximum Playbooks in this service's tenant inventory. The list API is unpaginated.
+  maxPlaybooksPerTenant: 128
+
+inference:
+  # Optional Secret containing `embedders_connection_details` for the
+  # data plane. It is required when any configured provider is not `noop`.
+  # The control plane receives only the public vector-space identities below.
+  existingSecret: ""
+  secretKey: inference.yaml
+  existingSecretChecksum: ""
+  # Required at install time. Public, immutable vector-space identities.
+  # Provider names select private embedding connection entries.
+  # Development fixtures explicitly opt into the noop provider.
+  models: []
+
+# The CP validates whole-store consent and ownership; workers use static JWT access.
+# Under redis-iris, global.iris.extraction.enabled derives enabled, connection.enabled, issuer,
+# jwksURI, ramControlPlaneBaseURL and allowInsecureTransport (and worker.enabled, worker.sourceURL).
+extraction:
+  enabled: null  # false when unset; redis-iris derives it
+  connection:
+    enabled: null  # false when unset; redis-iris derives it
+    issuer: ""
+    jwksURI: ""
+    # Additional ordinary IdS-authenticated workers, separate from this chart's extractor.
+    workerSubjects: []
+    # RAM CP trusts the dedicated CP ServiceAccount as viewer in tenantId.
+    ramControlPlaneBaseURL: ""
+    ramControlPlaneAudience: api://memory-cp
+    ramControlPlaneTokenExpirationSeconds: 3600
+    allowInsecureTransport: null  # false when unset; redis-iris derives it
+
+# PodDisruptionBudget (maxUnavailable: 1) for each Deployment that keeps more than one Pod
+# (minReplicas under autoscaling). Off by default; redis-iris turns it on.
+podDisruptionBudget:
+  enabled: false
+
+controlplane:
+  replicaCount: 1
+  image:
+    repository: redislabs/iris-agent-playbook-control
+    # The image release this chart version ships; override to run another.
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 9200
+  # Bring-your-own control-plane config. When existingSecret is set the chart
+  # renders no control-plane ConfigMap and mounts that Secret instead, so an
+  # operator can supply settings the chart does not render. Set existingSecretChecksum to roll the
+  # Deployment when the Secret's contents change.
+  config:
+    existingSecret: ""
+    secretKey: playbook-controlplane.yaml
+    existingSecretChecksum: ""
+  adminToken:
+    # Shared CP/DP recovery credential with full Playbook access in tenantId.
+    # BYO existingSecret takes precedence. Otherwise the chart creates a
+    # stable random token Secret and preserves it across Helm upgrades.
+    existingSecret: ""
+    secretKey: token
+    autoGenerate: true
+    existingSecretChecksum: ""
+  internalToken:
+    existingSecret: ""
+    secretKey: token
+    autoGenerate: true
+    existingSecretChecksum: ""
+  # Operator bearer tokens validated locally by the control plane against the
+  # dataplane.oidc issuer, JWKS, tenant source, and roleMappings.
+  oidc:
+    enabled: null  # false when unset; redis-iris derives it
+    # The audience is auth.oidc.audience, the same value as the data plane.
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+dataplane:
+  replicaCount: 1
+  # Deployment spec.strategy, rendered verbatim when set. redis-iris fixes it to
+  # RollingUpdate with maxUnavailable 0 and maxSurge 1.
+  strategy: {}
+  image:
+    repository: redislabs/iris-agent-playbook-data
+    # The image release this chart version ships; override to run another.
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 9201
+  # URL of the Identity Service release the data plane introspects agent keys
+  # and looks up worker grants against (required). The extraction connection's
+  # Identity Service URLs default to it. Must be https:// unless
+  # identityService.allowInsecureTransport=true.
+  identityServiceBaseURL: ""
+  # Optional direct validation of corporate IdP access tokens. Agent keys stay
+  # enabled. The resolved tenant must equal tenantId. Explicitly mapped human
+  # product_admin/suite_admin roles receive tenant-wide Playbook full access.
+  oidc:
+    enabled: null  # false when unset; redis-iris derives it
+    # An identifier compared with a token's iss, never fetched, so it may be http://
+    # without allowInsecureTransport. On AD FS it is the discovery document's
+    # access_token_issuer (http://<host>/adfs/services/trust).
+    issuer: ""
+    # Fetched for signing keys: must be https:// unless allowInsecureTransport (refused under FIPS).
+    jwksURI: ""
+    # Set exactly one tenant source; chart validation rejects configurations with both.
+    tenantIDClaim: ""
+    staticTenantID: ""
+    # Empty uses the shared defaults: roles and groups.
+    roleClaims: null
+    # Trusted human IdP group -> Iris role, also used by controlplane.oidc.
+    # Empty grants no admin access; raw role names are never accepted implicitly.
+    roleMappings: null
+    allowInsecureTransport: null  # false when unset
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# The Identity Service release this chart connects to. The chart deploys no
+# Identity Service; install it first as its own release.
+identityService:
+  # Accept http:// Identity Service URLs (dataplane.identityServiceBaseURL and
+  # the extraction.connection overrides), for example the in-cluster Service.
+  # Refused under the fips security profile.
+  allowInsecureTransport: null  # false when unset; redis-iris turns it on for its in-cluster Identity Service
+  # The data plane's runtime credential (subject playbook-dp, operation
+  # api-key-introspect, product playbook). Deployment automation provisions the Secret and
+  # registers it on the Identity Service release. Mounted at
+  # /etc/identity-service/runtime/playbook-dp/token. Required.
+  credential:
+    existingSecret: ""
+    secretKey: token
+    # Set to roll the data plane when the Secret's content changes.
+    existingSecretChecksum: ""
+
+tests:
+  # Enable the health checks and shared security-profile assertions for
+  # `helm test`. The default omits all test Pods and their read-only RBAC.
+  enabled: false
+  securityProfileImage:
+    repository: alpine/k8s
+    tag: "1.35.4"
+    pullPolicy: IfNotPresent
+
+worker:
+  enabled: null  # false when unset; redis-iris derives it
+  replicaCount: 1
+  region: ""
+  # Queues are <queuePrefix>:<region>:scan/extract across every replica.
+  # Override for independent deployments sharing the same queue Redis.
+  queuePrefix: playbook-extraction
+  # Atomic unfinished-task bound per queue, shared by all submitters.
+  maxPending: 1000
+  # Private worker.redis, worker.target_token, worker.llm, inference_providers overlay.
+  existingSecret: ""
+  secretKey: worker.yaml
+  existingSecretChecksum: ""
+  # RAM data-plane endpoint used only by the worker; required when enabled.
+  sourceURL: ""
+  # Projected worker token must match RAM's auth.jwt_subjects audience.
+  sourceTokenAudience: api://memory-dp
+  sourceTokenExpirationSeconds: 3600
+  # Empty uses this release's data-plane service.
+  targetURL: ""
+  # Deployment-wide FAQ strategy timeout. Model selection lives in worker.llm.models.
+  timeout: 2m
+  reasoningEffort: low
+  maxInputTokens: 8192
+  maxCompletionTokens: 4096
+  dispatchInterval: 5s
+  # Binding discovery recurrence; independent of dispatcher polling and session idle policy.
+  scanInterval: 300s
+  shutdownTimeoutSeconds: 30
+  # Includes HTTP shutdown, dispatcher stop, consumer drain and telemetry flush.
+  terminationGracePeriodSeconds: 90
+  scanConcurrency: 1
+  extractConcurrency: 1
+  jobs: [faq-scan, faq-extract]
+  port: 9203
+  # Preserved when tracing.enabled is false; the shared tracing switch and
+  # collector override these two tracing keys when enabled. Capture is DP-only.
+  opentelemetry:
+    enable_tracing: false
+  podAnnotations: {}
+  podLabels: {}
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+
+# Umbrella-chart fallbacks, read when the local value is empty:
+# security.profile, imagePullSecrets, tls.caCertSecret.
+global: {}

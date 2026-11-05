@@ -1,0 +1,150 @@
+{{- define "redis-agent-playbook.controlplaneAnnotations" -}}
+{{- if .Values.controlplane.config.existingSecret }}
+checksum/config: {{ .Values.controlplane.config.existingSecretChecksum | quote }}
+{{- else }}
+{{- $config := dict "tenantId" (include "redis-agent-playbook.suite" $ | fromJson).tenantId "service" .Values.controlplane.service "keyPrefix" .Values.storage.keyPrefix "models" .Values.inference.models }}
+{{- /* Under redis-iris the license key and audience come from global.iris; standalone renders stay unchanged. */}}
+{{- if include "redis-onprem.suite.enabled" . }}
+{{- $_ := set $config "license" (include "redis-agent-playbook.suite" $ | fromJson).license }}
+{{- $_ := set $config "audience" (include "redis-agent-playbook.suite" $ | fromJson).audience }}
+{{- end }}
+{{- if (include "redis-agent-playbook.suite" $ | fromJson).controlplaneOIDC.enabled }}
+{{- $_ := set $config "oidc" (dict "controlplane" (include "redis-agent-playbook.suite" $ | fromJson).controlplaneOIDC "dataplane" (include "redis-agent-playbook.suite" $ | fromJson).dataplaneOIDC) }}
+{{- end }}
+{{- /* Keep source ownership transport configured independently of the gate. */}}
+{{- if or (include "redis-agent-playbook.suite" $ | fromJson).extraction.enabled (include "redis-agent-playbook.suite" $ | fromJson).extraction.connection.enabled }}
+{{- $_ := set $config "extraction" (include "redis-agent-playbook.suite" $ | fromJson).extraction }}
+
+{{- end }}
+{{- $_ := set $config "tracing" (dict "enabled" .Values.tracing.enabled "endpoint" .Values.tracing.otlpGRPCEndpoint) }}
+checksum/config: {{ toJson $config | sha256sum | quote }}
+{{- end }}
+{{- with .Values.storage.existingSecretChecksum }}
+checksum/storage-secret: {{ . | quote }}
+{{- end }}
+{{- with .Values.controlplane.adminToken.existingSecretChecksum }}
+checksum/admin-token: {{ . | quote }}
+{{- end }}
+{{- with .Values.controlplane.internalToken.existingSecretChecksum }}
+checksum/internal-token: {{ . | quote }}
+{{- end }}
+{{- with .Values.license.existingSecretChecksum }}
+checksum/license: {{ . | quote }}
+{{- end }}
+{{- if and (include "redis-agent-playbook.tlsCaCertSecret" .) (default (dict) .Values.tls).caCertSecretChecksum }}
+checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
+{{- end }}
+{{- end }}
+
+{{- define "redis-agent-playbook.controlplaneArgs" -}}
+- --config
+- /etc/playbook/config/playbook-controlplane.yaml
+- --config
+- /etc/playbook/storage/storage.yaml
+{{- end }}
+
+{{- define "redis-agent-playbook.controlplaneEnv" -}}
+{{ include "redis-agent-playbook.commonEnv" . }}
+{{- end }}
+
+{{- define "redis-agent-playbook.controlplaneVolumeMounts" -}}
+- name: config
+  mountPath: /etc/playbook/config
+  readOnly: true
+- name: storage
+  mountPath: /etc/playbook/storage
+  readOnly: true
+- name: admin-token
+  mountPath: /etc/playbook/credentials/admin
+  readOnly: true
+- name: internal-token
+  mountPath: /etc/playbook/credentials/internal
+  readOnly: true
+- name: license
+  mountPath: /etc/playbook/license
+  readOnly: true
+{{- if (include "redis-agent-playbook.suite" $ | fromJson).extraction.connection.ramControlPlaneBaseURL }}
+- name: extraction-ram-cp
+  mountPath: /etc/playbook/credentials/extraction-ram-cp
+  readOnly: true
+{{- end }}
+{{ include "redis-agent-playbook.commonTLSMount" . }}
+{{- end }}
+
+{{- define "redis-agent-playbook.controlplaneVolumes" -}}
+- name: config
+  {{- if .Values.controlplane.config.existingSecret }}
+  secret:
+    secretName: {{ .Values.controlplane.config.existingSecret }}
+    items:
+      - key: {{ .Values.controlplane.config.secretKey }}
+        path: playbook-controlplane.yaml
+  {{- else }}
+  configMap:
+    name: {{ include "redis-agent-playbook.controlplaneName" . }}-config
+  {{- end }}
+- name: storage
+  secret:
+    secretName: {{ required "storage.existingSecret is required" .Values.storage.existingSecret }}
+    items:
+      - key: {{ .Values.storage.playbookKey }}
+        path: storage.yaml
+- name: admin-token
+  secret:
+    secretName: {{ include "redis-agent-playbook.controlplaneAdminTokenSecretName" . }}
+    items:
+      - key: {{ .Values.controlplane.adminToken.secretKey }}
+        path: token
+- name: internal-token
+  secret:
+    secretName: {{ include "redis-agent-playbook.controlplaneInternalTokenSecretName" . }}
+    items:
+      - key: {{ include "redis-agent-playbook.controlplaneInternalTokenSecretKey" . }}
+        path: token
+- name: license
+  secret:
+    secretName: {{ required "license.existingSecret is required" (include "redis-agent-playbook.suite" $ | fromJson).license.existingSecret }}
+    items:
+      - key: {{ (include "redis-agent-playbook.suite" $ | fromJson).license.secretKey }}
+        path: {{ (include "redis-agent-playbook.suite" $ | fromJson).license.secretKey }}
+{{- if (include "redis-agent-playbook.suite" $ | fromJson).extraction.connection.ramControlPlaneBaseURL }}
+- name: extraction-ram-cp
+  projected:
+    sources:
+      - serviceAccountToken:
+          audience: {{ (include "redis-agent-playbook.suite" $ | fromJson).extraction.connection.ramControlPlaneAudience | quote }}
+          expirationSeconds: {{ (include "redis-agent-playbook.suite" $ | fromJson).extraction.connection.ramControlPlaneTokenExpirationSeconds }}
+          path: token
+{{- end }}
+{{ include "redis-agent-playbook.commonTLSVolume" . }}
+{{- end }}
+
+{{- include "redis-onprem.controlplane.deployment" (dict
+  "root" .
+  "name" (include "redis-agent-playbook.controlplaneName" .)
+  "component" "controlplane"
+  "labelsTemplate" "redis-agent-playbook.labels"
+  "selectorLabelsTemplate" "redis-agent-playbook.selectorLabels"
+  "replicas" .Values.controlplane.replicaCount
+  "annotationsTemplate" "redis-agent-playbook.controlplaneAnnotations"
+  "podAnnotations" .Values.controlplane.podAnnotations
+  "podLabels" .Values.controlplane.podLabels
+  "imagePullSecrets" (include "redis-agent-playbook.imagePullSecrets" . | fromJsonArray)
+  "serviceAccountName" (include "redis-agent-playbook.controlplaneServiceAccountName" .)
+  "automountServiceAccountToken" false
+  "podSecurityContext" .Values.podSecurityContext
+  "containerName" "controlplane"
+  "argsTemplate" "redis-agent-playbook.controlplaneArgs"
+  "containerSecurityContext" .Values.securityContext
+  "image" .Values.controlplane.image
+  "envTemplate" "redis-agent-playbook.controlplaneEnv"
+  "port" .Values.controlplane.service.port
+  "livenessProbe" (dict "httpGet" (dict "path" "/health/liveness" "port" "http") "initialDelaySeconds" 5 "periodSeconds" 10)
+  "readinessProbe" (dict "httpGet" (dict "path" "/health/readiness" "port" "http") "initialDelaySeconds" 3 "periodSeconds" 5)
+  "resources" .Values.controlplane.resources
+  "volumeMountsTemplate" "redis-agent-playbook.controlplaneVolumeMounts"
+  "volumesTemplate" "redis-agent-playbook.controlplaneVolumes"
+  "nodeSelector" .Values.controlplane.nodeSelector
+  "affinity" .Values.controlplane.affinity
+  "tolerations" .Values.controlplane.tolerations
+) }}

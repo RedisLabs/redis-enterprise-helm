@@ -1,0 +1,70 @@
+# Example only. Do not commit real Redis URLs, credentials, tokens, or licenses.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: playbook-storage
+type: Opaque
+stringData:
+  playbook-storage.yaml: |
+    storage:
+      metadata:
+        urls:
+          - rediss://<metadata-user>:<metadata-password>@<metadata-host>:6379
+      content:
+        urls:
+          - rediss://<content-user>:<content-password>@<content-host>:6379
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: playbook-controlplane-admin
+type: Opaque
+stringData:
+  token: <distinct-controlplane-admin-token>
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: playbook-controlplane-internal
+type: Opaque
+stringData:
+  token: <distinct-controlplane-internal-token>
+---
+# The data plane's runtime credential. Register the same value on the
+# Identity Service release as subject playbook-dp.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: playbook-dp-credential
+type: Opaque
+stringData:
+  token: <distinct-playbook-dp-token>
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: playbook-license
+type: Opaque
+stringData:
+  license: <redis-agent-playbook-license>
+---
+# Required for non-noop providers. This Secret is mounted only into the data
+# plane. Keep the provider/model/dimensions identical to Helm values and add
+# the provider client configuration here.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: playbook-inference
+type: Opaque
+stringData:
+  inference.yaml: |
+    embedders_connection_details:
+      openai:
+        base_url: https://api.openai.com/v1
+        batching:
+          embeddings:
+            # As in RAM, batching is opt-in on this connection.
+            enabled: true
+        credentials:
+          type: static
+          api_key: <provider-api-key>

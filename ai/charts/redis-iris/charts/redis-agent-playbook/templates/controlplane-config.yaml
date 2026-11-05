@@ -1,0 +1,60 @@
+{{- $suite := include "redis-agent-playbook.suite" . | fromJson -}}
+{{- /*
+  Chart-rendered Control Plane config ConfigMap.
+
+  Skipped entirely when controlplane.config.existingSecret is set, so an
+  operator can supply the whole control-plane config themselves.
+*/}}
+{{- if not .Values.controlplane.config.existingSecret }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "redis-agent-playbook.controlplaneName" . }}-config
+  labels:
+    {{- include "redis-agent-playbook.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controlplane
+data:
+  playbook-controlplane.yaml: |
+    profile: prod
+    tenant_id: {{ $suite.tenantId | quote }}
+    server:
+      host: 0.0.0.0
+      port: {{ .Values.controlplane.service.port }}
+      timeout: 30s
+      read_timeout: 30s
+      write_timeout: 35s
+    auth:
+      type: admin-token
+      admin_token:
+        token_file: /etc/playbook/credentials/admin/token
+      internal_token:
+        token_file: /etc/playbook/credentials/internal/token
+      {{- if $suite.controlplaneOIDC.enabled }}
+      oidc:
+        {{- include "redis-agent-playbook.oidcValidation" . | nindent 8 }}
+        audience:
+          {{- toYaml (list (trim $suite.audience)) | nindent 10 }}
+      {{- end }}
+    license:
+      license_path: /etc/playbook/license/{{ $suite.license.secretKey }}
+    storage:
+      key_prefix: {{ .Values.storage.keyPrefix | quote }}
+      max_playbooks_per_tenant: {{ .Values.storage.maxPlaybooksPerTenant }}
+    inference:
+      models:
+        {{- toYaml .Values.inference.models | nindent 8 }}
+    opentelemetry:
+      enable_tracing: {{ .Values.tracing.enabled }}
+      otlp_grpc_endpoint: {{ .Values.tracing.otlpGRPCEndpoint | quote }}
+    {{- if or $suite.extraction.enabled $suite.extraction.connection.enabled }}
+    extraction:
+      enabled: {{ $suite.extraction.enabled }}
+      {{- $connection := $suite.extraction.connection }}
+      {{- if $connection.ramControlPlaneBaseURL }}
+      ram_control_plane:
+        base_url: {{ $connection.ramControlPlaneBaseURL | quote }}
+        token_file: /etc/playbook/credentials/extraction-ram-cp/token
+      allow_insecure_transport: {{ $connection.allowInsecureTransport }}
+      {{- end }}
+    {{- end }}
+{{- end }}

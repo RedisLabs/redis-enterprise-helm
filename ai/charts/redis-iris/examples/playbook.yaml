@@ -1,0 +1,24 @@
+# Agent Playbook values for the redis-iris suite, release iris in namespace
+# redis-ai. Install it with examples/memory-only.yaml:
+#   helm install iris redis-ai/redis-iris -n redis-ai \
+#     -f examples/memory-only.yaml -f examples/playbook.yaml
+# Playbook is on by default (global.iris.products.playbook.enabled), so an
+# upgrade from 0.1.0 needs this file too; without it the render fails and names
+# the missing playbook.* fields.
+#
+# Create these first in namespace redis-ai (tests/kind.sh shows each one):
+#   playbook-storage  key playbook-storage.yaml  the Playbook metadata and content Redis URLs
+#                                                (two distinct Redis deployments)
+# The license is the suite's (global.iris.license, see examples/memory-only.yaml).
+#
+# The one embedding model is noop, so the demo needs no model provider and no
+# playbook.inference.existingSecret. Replace it for anything else.
+
+playbook:
+  storage:
+    existingSecret: playbook-storage
+  inference:
+    models:
+      - provider: noop
+        model: playbook-test
+        dimensions: 384

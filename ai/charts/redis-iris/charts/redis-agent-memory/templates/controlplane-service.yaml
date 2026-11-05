@@ -1,0 +1,9 @@
+{{- include "redis-onprem.controlplane.service" (dict
+  "root" .
+  "name" (include "redis-agent-memory.controlplaneFullname" .)
+  "component" "controlplane"
+  "labelsTemplate" "redis-agent-memory.labels"
+  "selectorLabelsTemplate" "redis-agent-memory.selectorLabels"
+  "type" .Values.controlplane.service.type
+  "port" .Values.controlplane.service.port
+) }}

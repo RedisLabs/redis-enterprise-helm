@@ -1,0 +1,41 @@
+tenantId: default
+
+instance:
+  id: default
+
+# Off by default because nothing trims the span streams yet; see the README.
+ingest:
+  enabled: true
+
+tests:
+  enabled: true
+
+dataplane:
+  image:
+    repository: registry.example.com/redis/lens-dataplane-onprem
+    tag: 1.0.0
+  # The Identity Service release 's Service in the same namespace.
+  identityServiceBaseURL: http://iris-identity-service:9200
+
+controlplane:
+  image:
+    repository: registry.example.com/redis/lens-controlplane-onprem
+    tag: 1.0.0
+  # The Identity Service release's productValidation.products.lens.credential
+  # names the same Secret.
+  internalToken:
+    existingSecret: lens-internal-token
+
+# The same Secret is registered on the Identity Service release as the
+# lens-dataplane runtime credential.
+identityService:
+  # The in-cluster Identity Service Service speaks plain http.
+  allowInsecureTransport: true
+  credential:
+    existingSecret: lens-dp-credential
+
+license:
+  existingSecret: lens-license
+
+storage:
+  existingSecret: lens-storage

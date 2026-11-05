@@ -1,0 +1,40 @@
+{{- $suite := include "redis-agent-playbook.suite" . | fromJson -}}
+Redis Playbook has been rendered as two independently scalable services:
+
+  Control plane:   {{ include "redis-agent-playbook.controlplaneName" . }}:{{ .Values.controlplane.service.port }}
+  Data plane:      {{ include "redis-agent-playbook.dataplaneName" . }}:{{ .Values.dataplane.service.port }}
+
+The chart lookup-generates the control-plane admin and internal tokens unless a
+BYO existingSecret is configured for a credential. Generated credential Secrets
+carry helm.sh/resource-policy=keep and remain stable across upgrades. The
+chart does not create license material or Redis databases; confirm those
+existing Secrets are present before rollout.
+
+Identity Service : separate release (this chart deploys none)
+  URL             : {{ include "redis-agent-playbook.identityServiceBaseURL" . }}
+  DP credential   : Secret {{ (include "redis-agent-playbook.dpCredential" . | fromJson).secret }} (key: {{ (include "redis-agent-playbook.dpCredential" . | fromJson).key }})
+  Validator       : set productValidation.products.playbook on the Identity Service release to
+    baseURL       : http://{{ include "redis-onprem.suite.fqdn" (dict "root" . "name" (include "redis-agent-playbook.controlplaneName" .)) }}:{{ .Values.controlplane.service.port }}
+{{- if eq (include "redis-agent-playbook.securityProfile" .) "fips" }}
+                    (fips: the Identity Service refuses http://; front the control plane with TLS and use that https:// URL)
+{{- end }}
+    credential    : Secret {{ include "redis-agent-playbook.controlplaneInternalTokenSecretName" . }} (key: {{ include "redis-agent-playbook.controlplaneInternalTokenSecretKey" . }}), the internal token
+
+{{- if and .Release.IsUpgrade (or $suite.dataplaneOIDC.enabled $suite.controlplaneOIDC.enabled) }}
+UPGRADE: IdP access tokens must now carry the audience {{ trim $suite.audience | quote }} (auth.oidc.audience).
+The data plane used to accept only api://playbook-dp. If your IdP still issues that
+audience, set auth.oidc.audience to it, or every token will be rejected.
+{{- end }}
+{{- if and (or $suite.dataplaneOIDC.enabled $suite.controlplaneOIDC.enabled) (ne (trim $suite.audience) "api://redis-iris") }}
+WARNING: auth.oidc.audience is {{ trim $suite.audience | quote }}, not the default api://redis-iris.
+Every IdP access token must carry exactly this audience, or the data plane and
+control plane reject it. Confirm it against the aud claim the IdP issues.
+{{- end }}
+
+{{ if .Values.tests.enabled }}
+Run the chart's post-install smoke test with:
+  helm test {{ .Release.Name }} --namespace {{ .Release.Namespace }}
+{{ else }}
+Chart smoke-test hooks are disabled. Set tests.enabled=true at install or upgrade
+to enable them, then run helm test {{ .Release.Name }} --namespace {{ .Release.Namespace }}.
+{{ end }}

@@ -1,0 +1,147 @@
+# Redis Agent Memory — default deployment values.
+#
+# One bundled control plane + server + worker deployment. The chart renders the
+# structural config into a ConfigMap; one pre-created Secret supplies the
+# credentials (Redis connection URLs + embedder/LLM API keys) through a mounted
+# overlay, so nothing secret lives in this file.
+#
+# 1. Create the license and credentials Secrets:
+#      kubectl create secret generic ram-license --from-file=license=./license
+#      kubectl create secret generic ram-secrets \
+#        --from-file=overlay.yaml=./secret-overlay.example.yaml
+# 2. Create the two Secrets this release shares with the Identity Service
+#    release, then install that release as `iris-identity-service` with the
+#    memory-dp credential, the memory validator and singleTenantID default
+#    (see "Connecting to the Identity Service" in the chart README):
+#      kubectl create secret generic memory-dp-credential \
+#        --from-literal=token="$(openssl rand -hex 32)"
+#      kubectl create secret generic memory-internal-token \
+#        --from-literal=token="$(openssl rand -hex 32)"
+# 3. Install:
+#      helm install ram ../.. -f values.yaml --set image.tag=<RAM_VERSION> \
+#        --set controlplane.image.tag=<RAM_VERSION>
+#
+# See secret-overlay.example.yaml in this directory for the overlay contents.
+
+# Every agent key carries a tenant (MOD-19463). This single-tenant quick start
+# uses "default"; set the Identity Service release's
+# runtime.apiKeyTenant.singleTenantID to the same value.
+tenantId: default
+
+image:
+  repository: redislabs/agent-memory
+  # tag is supplied at install time: --set image.tag=<RAM_VERSION>
+
+license:
+  # Pre-created Secret holding the enterprise license.
+  existingSecret: ram-license
+
+# Chart renders the structural config ConfigMap from shared + memory (below).
+config:
+  render: true
+
+# Pre-created Secret with your credentials, mounted as an overlay and merged over
+# the rendered config at runtime. See secret-overlay.example.yaml.
+secrets:
+  secretName: ram-secrets
+
+# Blocks shared by the data plane and bundled control plane. Structure only.
+shared:
+  databases:
+    "1":
+      name: default
+
+# Data-plane config body (snake_case). Structure only — no URLs, no API keys.
+memory:
+  default_extraction_strategy: instruct
+  ownership:
+    # Leave false until stored owner_id values match Principal.UserID.
+    # See docs/runbooks/ram-enforce-ownership-transition.md.
+    enabled: false
+  namespace_features:
+    api: true
+    routing:
+      policy_api: true
+      automatic: true
+      admission: true
+  # This starter keeps the Data Plane behind an infrastructure access boundary.
+  # The data plane accepts auth.method none only with profile dev. Before you
+  # expose it or keep data in it, use agent_key auth, remove profile dev, and
+  # configure worker identity as described in the on-prem guide.
+  profile: dev
+  auth:
+    method: none
+  embedders_connection_details:
+    openai:
+      base_url: https://api.openai.com
+      credentials:
+        # api_key arrives via the overlay — not stored here.
+        type: static
+  embedding:
+    provider: openai
+    models:
+      default_embedding_model: text-embedding-3-large
+      dimensions: 3072
+  background_jobs:
+    redis:
+      enabled: true
+      # urls arrive via the overlay.
+      queue_prefix: ram
+      # Logical region this deployment owns. Any name works for one deployment;
+      # it only matters when you run multiple regions (see ../multi-region).
+      worker_regions:
+        - default
+  request_region:
+    default: default
+  dataplane_client:
+    base_url: http://ram-redis-agent-memory:9000
+    auth:
+      disabled: true
+
+# Connection to the Identity Service release (installed first, same
+# namespace) through the two shared Secrets from step 2: the data plane's
+# memory-dp credential, registered on the Identity Service release, and the
+# control plane's internal token, which the release's memory validator
+# presents. This starter runs with `auth.method: none` and `profile: dev`, so
+# nothing introspects yet; wiring the connection now means turning agent-key
+# auth on needs no re-plumbing. The in-cluster Service speaks http, hence
+# allowInsecureTransport (refused under fips).
+dataplane:
+  identityServiceBaseURL: http://iris-identity-service:9200
+identityService:
+  allowInsecureTransport: true
+  credential:
+    existingSecret: memory-dp-credential
+
+controlplane:
+  image:
+    repository: redislabs/agent-memory-control-plane
+  internalToken:
+    existingSecret: memory-internal-token
+  config:
+    render: true
+  configData:
+    profile: prod
+    auth:
+      type: admin-token
+      admin_token:
+        token_file: /etc/controlplane-onprem/admin/token
+      internal_token:
+        token_file: /etc/controlplane-onprem/internal/token
+    license:
+      license_path: /etc/redis-agent-memory/license
+    embedding:
+      dimensions: 3072
+
+# Expose the API through an ingress host (optional).
+ingress:
+  enabled: false
+  hosts:
+    - host: memory.example.com
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls:
+    - secretName: ram-tls
+      hosts:
+        - memory.example.com

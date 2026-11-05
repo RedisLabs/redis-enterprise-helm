@@ -1,0 +1,136 @@
+{{- define "redis-agent-playbook.dataplaneAnnotations" -}}
+{{- $config := dict "tenantId" (include "redis-agent-playbook.suite" $ | fromJson).tenantId "service" .Values.dataplane.service "oidc" (include "redis-agent-playbook.suite" $ | fromJson).dataplaneOIDC "connection" (include "redis-agent-playbook.suite" $ | fromJson).extraction.connection "workerEnabled" (include "redis-agent-playbook.suite" $ | fromJson).worker.enabled "keyPrefix" .Values.storage.keyPrefix "models" .Values.inference.models "identityServiceBaseURL" (include "redis-agent-playbook.identityServiceBaseURL" .) "securityProfile" (include "redis-agent-playbook.securityProfile" .) "tracing" .Values.tracing "adminToken" (dict "secretName" (include "redis-agent-playbook.controlplaneAdminTokenSecretName" .) "secretKey" .Values.controlplane.adminToken.secretKey) }}
+{{- /* Under redis-iris the license key and audience come from global.iris; standalone renders stay unchanged. */}}
+{{- if include "redis-onprem.suite.enabled" . }}
+{{- $_ := set $config "license" (include "redis-agent-playbook.suite" $ | fromJson).license }}
+{{- $_ := set $config "audience" (include "redis-agent-playbook.suite" $ | fromJson).audience }}
+{{- end }}
+checksum/config: {{ toJson $config | sha256sum | quote }}
+{{- with .Values.controlplane.adminToken.existingSecretChecksum }}
+checksum/admin-token: {{ . | quote }}
+{{- end }}
+{{- with .Values.storage.existingSecretChecksum }}
+checksum/storage-secret: {{ . | quote }}
+{{- end }}
+{{- if and .Values.inference.existingSecret .Values.inference.existingSecretChecksum }}
+checksum/inference-secret: {{ .Values.inference.existingSecretChecksum | quote }}
+{{- end }}
+{{- with .Values.identityService.credential.existingSecretChecksum }}
+checksum/identity-credential: {{ . | quote }}
+{{- end }}
+{{- with .Values.license.existingSecretChecksum }}
+checksum/license: {{ . | quote }}
+{{- end }}
+{{- if and (include "redis-agent-playbook.tlsCaCertSecret" .) (default (dict) .Values.tls).caCertSecretChecksum }}
+checksum/tls-ca: {{ .Values.tls.caCertSecretChecksum | quote }}
+{{- end }}
+{{- end }}
+
+{{- define "redis-agent-playbook.dataplaneArgs" -}}
+- --config
+- /etc/playbook/config/playbook-dataplane.yaml
+- --config
+- /etc/playbook/storage/storage.yaml
+{{- if .Values.inference.existingSecret }}
+- --config
+- /etc/playbook/inference/{{ .Values.inference.secretKey }}
+{{- end }}
+{{- end }}
+
+{{- define "redis-agent-playbook.dataplaneEnv" -}}
+{{ include "redis-agent-playbook.commonEnv" . }}
+{{- end }}
+
+{{- define "redis-agent-playbook.dataplaneVolumeMounts" -}}
+- name: config
+  mountPath: /etc/playbook/config
+  readOnly: true
+- name: storage
+  mountPath: /etc/playbook/storage
+  readOnly: true
+{{- if .Values.inference.existingSecret }}
+- name: inference
+  mountPath: /etc/playbook/inference
+  readOnly: true
+{{- end }}
+- name: identity-credential
+  mountPath: /etc/identity-service/runtime/playbook-dp
+  readOnly: true
+- name: admin-token
+  mountPath: /etc/playbook/credentials/admin
+  readOnly: true
+- name: license
+  mountPath: /etc/playbook/license
+  readOnly: true
+{{ include "redis-agent-playbook.commonTLSMount" . }}
+{{- end }}
+
+{{- define "redis-agent-playbook.dataplaneVolumes" -}}
+- name: config
+  configMap:
+    name: {{ include "redis-agent-playbook.dataplaneName" . }}-config
+- name: storage
+  secret:
+    secretName: {{ required "storage.existingSecret is required" .Values.storage.existingSecret }}
+    items:
+      - key: {{ .Values.storage.playbookKey }}
+        path: storage.yaml
+{{- if .Values.inference.existingSecret }}
+- name: inference
+  secret:
+    secretName: {{ .Values.inference.existingSecret }}
+    items:
+      - key: {{ .Values.inference.secretKey }}
+        path: {{ .Values.inference.secretKey }}
+{{- end }}
+- name: identity-credential
+  secret:
+    secretName: {{ (include "redis-agent-playbook.dpCredential" . | fromJson).secret }}
+    items:
+      - key: {{ (include "redis-agent-playbook.dpCredential" . | fromJson).key }}
+        path: token
+- name: admin-token
+  secret:
+    secretName: {{ include "redis-agent-playbook.controlplaneAdminTokenSecretName" . }}
+    items:
+      - key: {{ .Values.controlplane.adminToken.secretKey }}
+        path: token
+- name: license
+  secret:
+    secretName: {{ required "license.existingSecret is required" (include "redis-agent-playbook.suite" $ | fromJson).license.existingSecret }}
+    items:
+      - key: {{ (include "redis-agent-playbook.suite" $ | fromJson).license.secretKey }}
+        path: {{ (include "redis-agent-playbook.suite" $ | fromJson).license.secretKey }}
+{{ include "redis-agent-playbook.commonTLSVolume" . }}
+{{- end }}
+
+{{- include "redis-onprem.dataplane.deployment" (dict
+  "root" .
+  "name" (include "redis-agent-playbook.dataplaneName" .)
+  "component" "dataplane"
+  "labelsTemplate" "redis-agent-playbook.labels"
+  "selectorLabelsTemplate" "redis-agent-playbook.selectorLabels"
+  "replicas" .Values.dataplane.replicaCount
+  "strategy" .Values.dataplane.strategy
+  "annotationsTemplate" "redis-agent-playbook.dataplaneAnnotations"
+  "podAnnotations" .Values.dataplane.podAnnotations
+  "podLabels" .Values.dataplane.podLabels
+  "imagePullSecrets" (include "redis-agent-playbook.imagePullSecrets" . | fromJsonArray)
+  "serviceAccountName" (include "redis-agent-playbook.serviceAccountName" .)
+  "automountServiceAccountToken" false
+  "podSecurityContext" .Values.podSecurityContext
+  "containerName" "dataplane"
+  "argsTemplate" "redis-agent-playbook.dataplaneArgs"
+  "containerSecurityContext" .Values.securityContext
+  "image" .Values.dataplane.image
+  "envTemplate" "redis-agent-playbook.dataplaneEnv"
+  "port" .Values.dataplane.service.port
+  "livenessProbe" (dict "httpGet" (dict "path" "/health/liveness" "port" "http") "initialDelaySeconds" 5 "periodSeconds" 10)
+  "readinessProbe" (dict "httpGet" (dict "path" "/health/readiness" "port" "http") "initialDelaySeconds" 3 "periodSeconds" 5)
+  "resources" .Values.dataplane.resources
+  "volumeMountsTemplate" "redis-agent-playbook.dataplaneVolumeMounts"
+  "volumesTemplate" "redis-agent-playbook.dataplaneVolumes"
+  "nodeSelector" .Values.dataplane.nodeSelector
+  "affinity" .Values.dataplane.affinity
+  "tolerations" .Values.dataplane.tolerations
+) }}

@@ -1,0 +1,114 @@
+{{- define "redis-agent-memory.serverAnnotations" -}}
+{{- if .Values.config.existingSecretChecksum }}
+checksum/config: {{ .Values.config.existingSecretChecksum | quote }}
+{{- else if .Values.config.render }}
+checksum/config: {{ include "redis-agent-memory.dataplaneConfig" . | sha256sum | quote }}
+{{- end }}
+{{- if include "redis-agent-memory.overlaySecretNames" . | fromJsonArray }}
+checksum/overlay: {{ include "redis-agent-memory.overlayChecksum" . | quote }}
+{{- end }}
+{{- if .Values.license.existingSecretChecksum }}
+checksum/license: {{ .Values.license.existingSecretChecksum | quote }}
+{{- end }}
+{{- with (include "redis-agent-memory.dpCredential" . | fromJson).checksum }}
+checksum/dp-credential: {{ . | quote }}
+{{- end }}
+{{- end }}
+
+{{- define "redis-agent-memory.serverArgs" -}}
+{{- with .Values.args }}
+{{- toYaml . }}
+{{- end }}
+- "--mode=server"
+{{- include "redis-agent-memory.overlayConfigArgs" . }}
+{{- end }}
+
+{{- define "redis-agent-memory.serverVolumeMounts" -}}
+- name: config-volume
+  mountPath: /etc/ai
+  readOnly: true
+- name: license-volume
+  mountPath: {{ .Values.license.mountDir }}
+  readOnly: true
+{{- if (include "redis-agent-memory.dpCredential" . | fromJson).secret }}
+- name: identity-service-runtime-memory-dp
+  mountPath: /etc/identity-service/runtime/memory-dp
+  readOnly: true
+{{- end }}
+{{ include "redis-agent-memory.overlayVolumeMounts" . }}
+{{ include "redis-agent-memory.tlsVolumeMount" . }}
+{{- with .Values.volumeMounts }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "redis-agent-memory.serverVolumes" -}}
+- name: config-volume
+  {{- if .Values.config.existingSecret }}
+  secret:
+    secretName: {{ include "redis-agent-memory.configName" . }}
+    items:
+      - key: {{ .Values.config.secretKey }}
+        path: memory-dataplane.config.yaml
+  {{- else }}
+  configMap:
+    name: {{ include "redis-agent-memory.configName" . }}
+    items:
+      - key: {{ .Values.config.secretKey }}
+        path: memory-dataplane.config.yaml
+  {{- end }}
+- name: license-volume
+  secret:
+    secretName: {{ include "redis-agent-memory.licenseSecretName" . }}
+    items:
+      - key: {{ include "redis-agent-memory.licenseSecretKey" . }}
+        path: {{ .Values.license.fileName }}
+{{- with include "redis-agent-memory.dpCredential" . | fromJson }}
+{{- if .secret }}
+- name: identity-service-runtime-memory-dp
+  secret:
+    secretName: {{ .secret }}
+    items:
+      - key: {{ .key }}
+        path: token
+{{- end }}
+{{- end }}
+{{ include "redis-agent-memory.overlayVolumes" . }}
+{{ include "redis-agent-memory.tlsVolume" . }}
+{{- with .Values.volumes }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- include "redis-agent-memory.validate" . }}
+{{- include "redis-onprem.dataplane.deployment" (dict
+  "root" .
+  "name" (include "redis-agent-memory.fullname" .)
+  "component" "server"
+  "labelsTemplate" "redis-agent-memory.labels"
+  "selectorLabelsTemplate" "redis-agent-memory.selectorLabels"
+  "replicas" .Values.server.replicaCount
+  "strategy" .Values.server.strategy
+  "autoscalingEnabled" .Values.server.autoscaling.enabled
+  "annotationsTemplate" "redis-agent-memory.serverAnnotations"
+  "podAnnotations" .Values.podAnnotations
+  "podLabels" .Values.podLabels
+  "imagePullSecrets" (include "redis-agent-memory.imagePullSecrets" . | fromJsonArray)
+  "serviceAccountName" (include "redis-agent-memory.serviceAccountName" .)
+  "podSecurityContext" .Values.podSecurityContext
+  "containerName" (include "redis-agent-memory.name" .)
+  "command" .Values.command
+  "argsTemplate" "redis-agent-memory.serverArgs"
+  "containerSecurityContext" .Values.securityContext
+  "image" .Values.image
+  "envTemplate" "redis-agent-memory.env"
+  "port" .Values.service.port
+  "livenessProbe" .Values.livenessProbe
+  "readinessProbe" .Values.readinessProbe
+  "resources" .Values.server.resources
+  "volumeMountsTemplate" "redis-agent-memory.serverVolumeMounts"
+  "volumesTemplate" "redis-agent-memory.serverVolumes"
+  "nodeSelector" .Values.server.nodeSelector
+  "affinity" .Values.server.affinity
+  "tolerations" .Values.server.tolerations
+) }}

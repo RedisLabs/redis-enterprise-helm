@@ -1,0 +1,185 @@
+{{- /*
+Suite-level guards (MOD-20393): fail `helm install` / `helm template` with the field to fix,
+before a half-started suite. Each rule has a failing case in tests/template-render.sh.
+*/ -}}
+{{- $iris := .Values.global.iris }}
+{{- $secrets := $iris.secrets }}
+{{- $memory := $iris.products.memory.enabled }}
+{{- $playbook := $iris.products.playbook.enabled }}
+{{- $lens := $iris.products.lens.enabled }}
+{{- $contextGateway := $iris.products.contextGateway.enabled }}
+{{- $intent := $iris.products.intent.enabled }}
+{{- /* The enabled products' ids, for the generate: false messages. */}}
+{{- $ids := list }}
+{{- range $p := list (list $memory "memory") (list $playbook "playbook") (list $lens "lens") (list $contextGateway "context-gateway") (list $intent "intent") }}
+{{- if first $p }}{{- $ids = append $ids (last $p) }}{{- end }}
+{{- end }}
+{{- if not $ids }}
+{{- fail "global.iris.products: no product enabled; set global.iris.products.<memory|playbook|lens|contextGateway|intent>.enabled to true" }}
+{{- end }}
+{{- /* Product prerequisites the product chart itself does not reject. Playbook's own rules name
+their playbook.* field under the umbrella (playbook/helm/templates/validation.yaml). */}}
+{{- if and $memory (not (dig "secrets" "secretName" "" .Values.memory)) (not (dig "secrets" "additionalSecrets" list .Values.memory)) (not (dig "config" "existingSecret" "" .Values.memory)) }}
+{{- fail "memory.secrets.secretName: required with global.iris.products.memory.enabled (the Agent Memory Redis URLs and model credentials), or set memory.secrets.additionalSecrets or memory.config.existingSecret" }}
+{{- end }}
+{{- /* MCP clients use contextGateway.publicBaseURL as is, so under the suite it is an https origin:
+the chart's own rule accepts http:// and a path for standalone installs. It is never derived from
+global.iris.publicURL, the UI's address. */}}
+{{- if $contextGateway }}
+{{- $publicBaseURL := toString (dig "publicBaseURL" "" .Values.contextGateway) }}
+{{- if not (regexMatch "^https://[^/@?#]+/?$" $publicBaseURL) }}
+{{- fail (printf "contextGateway.publicBaseURL (%q): required with global.iris.products.contextGateway.enabled, an https:// origin with no path, query or fragment (the URL MCP clients reach the Context Gateway data plane at)" $publicBaseURL) }}
+{{- end }}
+{{- end }}
+{{- /* Extraction connects the two products; Playbook names its own missing worker.region and
+worker.existingSecret. Memory trusts these two audiences without seeing Playbook's values. */}}
+{{- if $iris.extraction.enabled }}
+{{- if not $memory }}
+{{- fail "global.iris.products.memory.enabled: required with global.iris.extraction.enabled (Playbook extracts from Agent Memory sessions)" }}
+{{- end }}
+{{- if not $playbook }}
+{{- fail "global.iris.products.playbook.enabled: required with global.iris.extraction.enabled (the Playbook worker extracts)" }}
+{{- end }}
+{{- range $path, $audience := dict "extraction.connection.ramControlPlaneAudience" "api://memory-cp" "worker.sourceTokenAudience" "api://memory-dp" }}
+{{- $value := $.Values.playbook }}
+{{- range $k := splitList "." $path }}{{- $value = get (default (dict) $value) $k }}{{- end }}
+{{- if ne (toString $value) $audience }}
+{{- fail (printf "playbook.%s: must stay %q with global.iris.extraction.enabled; Agent Memory trusts that audience" $path $audience) }}
+{{- end }}
+{{- end }}
+{{- /* The derived trust and wiring land only in chart-rendered configs: a bring-your-own config
+Secret is mounted unchanged, so the render would pass and extraction fail at runtime. */}}
+{{- range $path, $what := dict
+  "memory.config.existingSecret" "the Playbook worker's jwt_subjects in the Memory data-plane config"
+  "memory.controlplane.config.existingSecret" "the Playbook control plane's workload_identity in the Memory control-plane config"
+  "playbook.controlplane.config.existingSecret" "the extraction settings in the Playbook control-plane config" }}
+{{- $value := $.Values }}
+{{- range $k := splitList "." $path }}{{- $value = get (default (dict) $value) $k }}{{- end }}
+{{- if $value }}
+{{- fail (printf "%s: unset it with global.iris.extraction.enabled; the chart must render %s, and a bring-your-own config Secret is mounted unchanged" $path $what) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- /* The Identity Service wiring and the UI routes follow the product selection: the product charts
+derive them from global.iris (identity-service/helm "iris-identity-service.wiring", iris/ui/helm
+"ui.resolved"). */}}
+{{- if hasKey .Values.identityService "enabled" }}
+{{- fail "identityService.enabled: remove it; redis-iris always installs the Identity Service" }}
+{{- end }}
+{{- /* The components reach each other by these fixed Service names, written out in values.yaml
+(validator URLs, UI upstreams, worker endpoints), so another name would deploy and route nowhere. */}}
+{{- range $alias, $name := dict "identityService" "iris-identity-service" "memory" "redis-agent-memory" "playbook" "redis-agent-playbook" "lens" "redis-lens" "contextGateway" "redis-context-gateway" "intent" "redis-intent-router" "ui" "iris-ui" }}
+{{- if ne (dig "fullnameOverride" "" (get $.Values $alias)) $name }}
+{{- fail (printf "%s.fullnameOverride: must stay %q; the other components reach it by that Service name" $alias $name) }}
+{{- end }}
+{{- end }}
+{{- /* ...and these fixed ports (validator URLs, UI upstreams, worker endpoints, suite-verify). */}}
+{{- range $path, $port := dict "identityService.service.port" 9200 "memory.service.port" 9000 "memory.controlplane.service.port" 9100 "playbook.controlplane.service.port" 9200 "playbook.dataplane.service.port" 9201 "lens.dataplane.service.port" 9000 "lens.controlplane.service.port" 9300 "contextGateway.controlplane.service.port" 9100 "contextGateway.dataplane.service.port" 8083 "intent.controlplane.service.port" 9400 "intent.dataplane.service.port" 9401 }}
+{{- $keys := splitList "." $path }}
+{{- $value := get $.Values (first $keys) }}
+{{- range $k := rest $keys }}{{- $value = get (default (dict) $value) $k }}{{- end }}
+{{- /* get yields "" when unset: Helm merges no defaults for a product whose condition is false. */}}
+{{- if and (ne (toString $value) "") (ne (toString $value) (toString $port)) }}
+{{- fail (printf "%s: must stay %d; the other components reach it on that port" $path $port) }}
+{{- end }}
+{{- end }}
+{{- /* Ready capacity during a roll (MOD-20416): each data plane surges one Pod and removes none
+before it is Ready, with or without an HPA. A published product chart without the strategy input
+renders none; tests/template-render.sh asserts the rendered spec.strategy. */}}
+{{- $rollout := toJson (dict "type" "RollingUpdate" "rollingUpdate" (dict "maxUnavailable" 0 "maxSurge" 1)) }}
+{{- range $path := list "memory.server.strategy" "playbook.dataplane.strategy" "lens.dataplane.server.strategy" "contextGateway.dataplane.strategy" "intent.dataplane.strategy" }}
+{{- $keys := splitList "." $path }}
+{{- $value := get $.Values (first $keys) }}
+{{- range $k := rest $keys }}{{- $value = get (default (dict) $value) $k }}{{- end }}
+{{- if ne (toJson $value) $rollout }}
+{{- fail (printf "%s: must stay RollingUpdate with maxUnavailable 0 and maxSurge 1; the data plane must keep its ready capacity during a rollout" $path) }}
+{{- end }}
+{{- end }}
+{{- /* ...and the PodDisruptionBudgets (MOD-20760): a drain may take one Pod at a time from any
+Deployment that keeps more than one. */}}
+{{- range $alias := list "identityService" "memory" "playbook" "lens" "contextGateway" "intent" "ui" }}
+{{- if ne (toString (dig "podDisruptionBudget" "enabled" "" (get $.Values $alias))) "true" }}
+{{- fail (printf "%s.podDisruptionBudget.enabled: must stay true; a node drain must not take every Pod of a replicated Deployment at once" $alias) }}
+{{- end }}
+{{- end }}
+{{- /* ...and the one Lens instance: the UI's lens route (iris/ui/helm "ui.resolved") names "default". */}}
+{{- $lensInstance := toString (dig "instance" "id" "" (default (dict) .Values.lens)) }}
+{{- if and $lens $lensInstance (ne $lensInstance "default") }}
+{{- fail (printf "lens.instance.id (%q): must stay \"default\"; the UI's Lens route queries that instance" $lensInstance) }}
+{{- end }}
+{{- /* A product CA may stand alone, but must not contradict global.tls.caCertSecret: the product
+charts would let the local one win. */}}
+{{- $globalCA := dig "tls" "caCertSecret" "" .Values.global }}
+{{- range $path := list "identityService.tls.caCertSecret" "memory.tls.caCertSecret" "playbook.tls.caCertSecret" "lens.tls.caCertSecret" "intent.tls.caCertSecret" "contextGateway.tls.caBundle.existingSecret" }}
+{{- $keys := splitList "." $path }}
+{{- $local := get $.Values (first $keys) }}
+{{- range $k := rest $keys }}{{- $local = get (default (dict) $local) $k }}{{- end }}
+{{- if and $globalCA $local (ne (toString $local) $globalCA) }}
+{{- fail (printf "%s (%q) conflicts with global.tls.caCertSecret (%q); remove the product value" $path $local $globalCA) }}
+{{- end }}
+{{- end }}
+{{- /* The control planes and Identity Service enable OIDC on the issuer alone and fail at startup
+without a JWKS endpoint, and a JWKS endpoint without an issuer is ignored: set both or neither. */}}
+{{- $oidc := dig "auth" "oidc" dict $iris }}
+{{- if and $oidc.issuer (not $oidc.jwksURI) }}
+{{- fail "global.iris.auth.oidc.jwksURI: required with global.iris.auth.oidc.issuer" }}
+{{- end }}
+{{- if and $oidc.jwksURI (not $oidc.issuer) }}
+{{- fail "global.iris.auth.oidc.issuer: required with global.iris.auth.oidc.jwksURI" }}
+{{- end }}
+{{- /* An http:// JWKS URI turns on allow_insecure_transport in every OIDC consumer. Identity Service
+prod refuses it and crash-loops; the Memory and Playbook planes accept it in any profile, so dev is
+the explicit opt-in, and the message says what it costs. */}}
+{{- if and (hasPrefix "http://" (toString $oidc.jwksURI)) (ne (dig "configData" "profile" "" .Values.identityService) "dev") }}
+{{- fail "global.iris.auth.oidc.jwksURI: use https://. http:// needs identityService.configData.profile=dev (the default prod profile refuses insecure transport), and then every product fetches the IdP keys without TLS, so anyone on the network path can forge tokens: development and test clusters only" }}
+{{- end }}
+{{- /* ui-auth and the products compare group names trimmed and case-insensitively, and refuse two
+that match in one product's mappings; a suite-wide binding lands in every product's.
+upper then lower matches Go's strings.EqualFold over every rune ("ſ" and "s", the Kelvin sign
+and "k" fold together), except that it would also join "ı" and "İ" with "i", which EqualFold
+keeps apart; they are swapped for caseless private-use runes first.
+ponytail: a group name containing U+E000 or U+E001 itself could collide with "ı" or "İ". */}}
+{{- $bindings := dig "auth" "roleBindings" list $iris }}
+{{- range $i, $a := $bindings }}
+{{- range $b := slice $bindings (add1 $i) }}
+{{- $foldA := trim $a.group | replace "ı" "" | replace "İ" "" | upper | lower }}
+{{- $foldB := trim $b.group | replace "ı" "" | replace "İ" "" | upper | lower }}
+{{- if and (ne $a.group $b.group) (eq $foldA $foldB) (or (not $a.product) (not $b.product) (eq $a.product $b.product)) }}
+{{- fail (printf "global.iris.auth.roleBindings: groups %q and %q are the same group (compared trimmed and case-insensitively); use one spelling" $a.group $b.group) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if eq (dig "security" "profile" "" .Values.global) "fips" }}
+{{- fail "global.security.profile: fips is not supported by redis-iris 0.1; FIPS support is planned for redis-iris 1.1" }}
+{{- end }}
+{{- if and (eq $iris.renderMode "gitops") $secrets.generate }}
+{{- fail "global.iris.renderMode: gitops renders offline, where credentials cannot be generated; set global.iris.secrets.generate: false and supply them (see examples/byo-gitops.yaml)" }}
+{{- end }}
+{{- $dataplane := $secrets.dataplaneServiceCredentials.existingSecret }}
+{{- $controlplane := $secrets.controlplaneInternalTokens.existingSecret }}
+{{- if $secrets.generate }}
+{{- if $dataplane }}
+{{- fail "global.iris.secrets.dataplaneServiceCredentials.existingSecret: set only with global.iris.secrets.generate: false; with generate: true the umbrella generates iris-<product>-dataplane-credential" }}
+{{- end }}
+{{- if $controlplane }}
+{{- fail "global.iris.secrets.controlplaneInternalTokens.existingSecret: set only with global.iris.secrets.generate: false; with generate: true the umbrella generates iris-<product>-internal-token" }}
+{{- end }}
+{{- else }}
+{{- if not $dataplane }}
+{{- $dpKeys := list }}
+{{- range $ids }}{{- $dpKeys = append $dpKeys (printf "%s-dp" .) }}{{- end }}
+{{- fail (printf "global.iris.secrets.dataplaneServiceCredentials.existingSecret: required with global.iris.secrets.generate: false (a Secret with a key per enabled product: %s)" (join ", " $dpKeys)) }}
+{{- end }}
+{{- if not $controlplane }}
+{{- fail (printf "global.iris.secrets.controlplaneInternalTokens.existingSecret: required with global.iris.secrets.generate: false (a Secret with a key per enabled product: %s)" (join ", " $ids)) }}
+{{- end }}
+{{- if eq $dataplane $controlplane }}
+{{- fail (printf "global.iris.secrets: dataplaneServiceCredentials and controlplaneInternalTokens must name different Secrets (both are %q)" $dataplane) }}
+{{- end }}
+{{- /* An empty memory or playbook controlplane.adminToken, or identityService.control, reference already fails
+in the product chart, which names the field: the umbrella turns both generators off. The UI
+would generate its own session key, so that one is checked here. */}}
+{{- if and .Values.ui.sso.enabled (not .Values.ui.sso.session.existingSecret) }}
+{{- fail "ui.sso.session.existingSecret: required with ui.sso.enabled and global.iris.secrets.generate: false" }}
+{{- end }}
+{{- end }}

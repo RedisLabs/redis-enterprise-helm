@@ -1,0 +1,19 @@
+{{- /*
+Optional, controller-neutral Ingress: one host rule forwarding "/" to the UI
+nginx Service. All path routing stays in the UI nginx; the customer owns the
+ingress controller, DNS and certificate. No controller annotations are set here.
+*/ -}}
+{{- $host := (include "ui.resolved" $ | fromJson).ingress.host -}}
+{{- $secretName := (include "ui.resolved" $ | fromJson).ingress.tlsSecretName -}}
+{{- include "redis-onprem.dataplane.ingress" (dict
+  "root" .
+  "enabled" .Values.ingress.enabled
+  "name" (include "ui.fullname" .)
+  "labelsTemplate" "ui.labels"
+  "annotations" .Values.ingress.annotations
+  "className" (include "ui.resolved" $ | fromJson).ingress.className
+  "tls" (ternary (list (dict "hosts" (list $host) "secretName" $secretName)) (list) (ne $secretName ""))
+  "hosts" (list (dict "host" $host "paths" (list (dict "path" "/" "pathType" "Prefix"))))
+  "serviceName" (include "ui.fullname" .)
+  "servicePort" .Values.service.port
+) }}

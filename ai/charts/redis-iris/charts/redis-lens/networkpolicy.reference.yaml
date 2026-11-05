@@ -1,0 +1,76 @@
+# Reference only; the chart does not render NetworkPolicies. Replace the
+# placeholders, including <identity-service-namespace> and
+# <identity-service-release-name> with the separate Identity Service release
+# this chart connects to, and apply with your cluster's policy engine.
+#
+# Allowed flows:
+#   agents        -> dataplane:9000         POST /iris/data/v1beta1/lens/v1/traces (ingest key)
+#   UI gateway    -> dataplane:9000         GET  /iris/data/v1beta1/lens/instances/<id>/* (read key)
+#   operators     -> controlplane:9300      GET/PATCH /iris/v1beta1/lens/instance (admin token)
+#   identity-svc  -> controlplane:9300      POST /internal/v1/grants/validate (internal token)
+#
+# Egress is not restricted here. If you add an egress policy, the data plane
+# must reach the Identity Service release (dataplane.identityServiceBaseURL,
+# port 9200 by default) for key introspection, and every workload must reach
+# DNS and the customer Redis databases.
+#
+# With dataplane.oidc enabled, the data plane (and the control plane, when
+# controlplane.oidc is enabled) also validates operator tokens itself and
+# fetches the IdP's signing keys directly from dataplane.oidc.jwksURI. Allow
+# that egress (usually TCP 443 to the IdP host) from both. It is a second,
+# separate dependency from the Identity Service: agent keys are checked by the
+# Identity Service, operator tokens only against the IdP's keys.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: <release>-redis-lens-default-deny
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis-lens
+      app.kubernetes.io/instance: <release>
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: <release>-redis-lens-controlplane
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: <release>
+      app.kubernetes.io/component: controlplane
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: <identity-service-namespace>
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: iris-identity-service
+              app.kubernetes.io/instance: <identity-service-release-name>
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: <operator-namespace>
+      ports:
+        - port: 9300
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: <release>-redis-lens-dataplane
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: <release>
+      app.kubernetes.io/component: dataplane
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: <agent-namespace>
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: <ui-gateway-namespace>
+      ports:
+        - port: 9000

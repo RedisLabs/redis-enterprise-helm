@@ -1,0 +1,43 @@
+tenantId: acme
+
+# Enables the health and shared security-profile checks run by `helm test`.
+tests:
+  enabled: true
+
+controlplane:
+  image:
+    repository: registry.example.com/redis/intent-router-controlplane-onprem
+    tag: 1.0.0
+  adminToken:
+    existingSecret: intent-controlplane-admin
+  internalToken:
+    existingSecret: intent-controlplane-internal
+
+dataplane:
+  image:
+    repository: registry.example.com/redis/intent-router-dataplane-onprem
+    tag: 1.0.0
+  # The Identity Service release's Service in the same namespace.
+  identityServiceBaseURL: http://iris-identity-service:9200
+
+# The Identity Service release installed first in the same namespace. Its
+# release must register the intent-dp credential and the Intent validator.
+identityService:
+  allowInsecureTransport: true
+  credential:
+    existingSecret: intent-dp-credential
+
+license:
+  existingSecret: intent-license
+
+storage:
+  existingSecret: intent-storage
+
+# Illustrative external-provider configuration, not a supported-model promise.
+# Keep this identity identical to prerequisites.example.yaml's private overlay.
+inference:
+  existingSecret: intent-inference
+  models:
+    - provider: openai
+      model: text-embedding-3-small
+      dimensions: 1536

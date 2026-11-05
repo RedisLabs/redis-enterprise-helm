@@ -1,0 +1,642 @@
+# Default values for redis-agent-memory.
+
+image:
+  repository: 'redislabs/agent-memory'
+  pullPolicy: IfNotPresent
+  # The image release this chart version ships; override to run another.
+  tag: "1.0.0"
+
+# Empty falls back to global.imagePullSecrets.
+imagePullSecrets: []
+# Keep the short chart name stable in labels and notes.
+nameOverride: 'redis-agent-memory'
+# Default to stable resource names so the shared on-prem config can always call
+# the dataplane Service at http://redis-agent-memory:9000.
+# This assumes a single release per namespace.
+fullnameOverride: 'redis-agent-memory'
+
+# tenantId is for single-tenant deployments only: the one tenant that owns
+# this deployment's resources, for example "default". When set it becomes the
+# static tenant of every enabled auth.oidc block (data plane and control
+# plane) and, with controlplane.config.render, the control plane's
+# auth.admin_tenant_id: stores created with the static admin token belong to
+# this tenant. Empty keeps the control plane's deprecated admin tenant "1"; with
+# controlplane.config.existingSecret, set auth.admin_tenant_id yourself. Set
+# the Identity Service release's runtime.apiKeyTenant.singleTenantID to the
+# same value, which pins every agent key to it; this chart cannot check another
+# release's values. A differing static_tenant_id, or any enabled oidc
+# block with a tenant_id_claim (multi-tenant), or a differing
+# controlplane.configData.auth.admin_tenant_id, fails the render. The schema
+# type is string: use --set-string for numeric tenants.
+tenantId: ""
+
+# Audience of IdP access tokens, shared by every Iris service. Set it to the
+# value the IdP puts in the token's aud: the Iris API identifier on most IdPs, or
+# the API's Application (client) ID GUID on Entra ID v2. Use the same value in
+# every Iris chart.
+#
+# With config.render or controlplane.config.render, the chart sets it as the
+# audience of every enabled auth.oidc block (memory.auth.oidc and
+# controlplane.configData.auth.oidc); an audience written there must equal it or
+# the render fails. With config.existingSecret or controlplane.config.existingSecret,
+# set the same audience in that file. To keep accepting tokens issued for
+# api://memory-dp, set this to api://memory-dp. It does not apply to
+# auth.service_subjects (the worker's projected token keeps api://memory-dp).
+auth:
+  oidc:
+    audience: ""  # default api://redis-iris; redis-iris sets global.iris.auth.oidc.audience
+
+airgap:
+  # Enables disconnected-environment validation for the deployment artifacts
+  # that Helm still controls directly.
+  enabled: false
+
+# security.profile selects the application-level security posture for the
+# on-prem Agent Memory binary. See the chart README section
+# "FIPS-oriented posture" for the full list of guarantees, caveats, and
+# required config file changes when profile=fips is selected.
+#
+# Allowed values:
+#   ""     (default) - existing posture, no app-level guardrails applied.
+#                      The chart sets GODEBUG=fips140=off, matching pre-FIPS
+#                      behavior.
+#   "fips"           - opt-in FIPS-oriented posture. The chart sets
+#                      GODEBUG=fips140=on so the Go runtime activates its
+#                      FIPS module; the binary additionally refuses to
+#                      start if the config sets skip_verify=true on any
+#                      outbound HTTP client or if any Redis URL is not
+#                      rediss://. This is NOT a formal FIPS compliance
+#                      claim; see the README.
+#
+# This value is translated to GODEBUG=fips140=on|off for every application
+# container. The binaries inject the effective Go runtime profile into DI.
+# Empty falls back to global.security.profile.
+security:
+  profile: ""
+
+# tests.enabled gates the `helm test` hooks shipped with this chart.
+#
+# When true, the chart renders:
+#   - templates/tests/security-profile.yaml - a Pod that asserts the server
+#     Deployment carries the expected GODEBUG FIPS mode.
+#   - templates/tests/api-smoke.yaml - an optional Pod that calls the public
+#     RAM API to verify short-term memory writes, optional async promotion,
+#     long-term memory writes, and long-term memory search against the
+#     configured store.
+#   - templates/tests/rbac.yaml - minimal release-managed Role + RoleBinding
+#     resources granting the chart ServiceAccount `get` on the two release
+#     Deployments, scoped to the release namespace while tests.enabled=true.
+#
+# Defaults to false so clusters that never run `helm test` get no extra
+# RBAC. Enable when you plan to run `helm test <release>` in a validation
+# step, e.g. as part of a customer acceptance gate.
+tests:
+  enabled: false
+  smoke:
+    # Enable this with tests.enabled=true to run an API smoke test through
+    # `helm test`. The smoke test writes one short-term session event,
+    # optionally waits for async promotion into long-term memory, writes one
+    # long-term memory record, searches for it, then best-effort deletes the
+    # records it created.
+    enabled: false
+    # Must match a store ID configured in the mounted memory-dataplane config.
+    storeId: "00000000000000000000000000000001"
+    image:
+      repository: python
+      tag: "3.13-alpine"
+      pullPolicy: IfNotPresent
+    # Per HTTP request timeout used by the smoke script.
+    timeoutSeconds: 30
+    # Maximum runtime for the smoke test pod. The default covers the optional
+    # async-promotion path with RAM's default 5m promotion deduplication window.
+    activeDeadlineSeconds: 600
+    # Search is retried to tolerate Redis index visibility delays.
+    searchRetries: 6
+    searchRetryIntervalSeconds: 5
+    asyncPromotion:
+      # Enable this to make the smoke test wait for the worker to promote the
+      # smoke session event into long-term memory. Leave disabled for quick API
+      # checks that should not depend on the worker, job Redis, or an LLM.
+      enabled: false
+      # Promotion polling is separate from search retries because it waits for
+      # queue + worker + LLM processing, not just Redis index visibility. The
+      # default 90x5s window gives the worker time to run after RAM's default
+      # 5m promotion_deduplication_window.
+      promotionRetries: 90
+      promotionRetryIntervalSeconds: 5
+
+# supportPackage renders Replicated Troubleshoot specs for sanitized RAM support
+# bundles. Enabled by default so an installed release is ready for
+# `kubectl support-bundle` without an extra Helm upgrade.
+supportPackage:
+  enabled: true
+  # Config and overlay values are collected through exact chart-configured
+  # Secret/ConfigMap names and keys. Redactors still run over the bundle.
+  logLimits:
+    maxLines: 10000
+    maxBytes: 5000000
+  healthChecks:
+    # Runs temporary in-cluster pods that probe Service DNS with Troubleshoot.
+    enabled: true
+    timeout: 5s
+    queueMonitorPath: /
+  healthCheckImage:
+    # Troubleshoot image used by healthChecks. Mirror this image for airgap.
+    repository: replicated/troubleshoot
+    tag: 0.131.0
+    pullPolicy: IfNotPresent
+  healthCheckImagePullSecretName: ""
+  healthCheckPodTimeout: 30s
+  registryImages:
+    enabled: true
+    imagePullSecretName: ""
+    imagePullSecretType: kubernetes.io/dockerconfigjson
+  nodeMetrics: {}
+
+# preflight renders a static Kubernetes-only Replicated Troubleshoot Preflight
+# spec as a ConfigMap. The same spec is also packaged at
+# support/ram-preflight.yaml for pre-install checks from an unpacked chart.
+preflight:
+  enabled: true
+
+# Args to pass to the container entrypoint (applied to all pods).
+# The chart appends "--mode=server" or "--mode=worker" automatically.
+args:
+  - "--config"
+  - "/etc/ai/memory-dataplane.config.yaml"
+
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ''
+
+# Configuration source. Two mutually-exclusive modes:
+#
+#   1. Chart-rendered (config.render=true, RECOMMENDED): the chart renders the
+#      structural config into a ConfigMap from .Values.shared + .Values.memory
+#      (see those blocks below) and checksums it automatically, so pods roll on
+#      config changes with no manual checksum step. This is the
+#      multi-region-friendly path — put shared structure in a base values file
+#      and only the per-region deltas in a region values file, then
+#      `helm install -f base-values.yaml -f region-<x>.yaml`. Credentials
+#      (Redis connection URLs, embedder/LLM API keys) are NEVER rendered into
+#      this ConfigMap; they arrive via the mounted secret overlays (see the
+#      secrets block below) and are merged over the config by the loader at
+#      runtime.
+#
+#   2. Bring your own (default for backwards compatibility): set
+#      config.existingSecret to a pre-created Secret holding the full on-prem
+#      config file. Prefer this only if you already generate that file from an
+#      external pipeline (Vault, Terraform, etc.); otherwise prefer render=true.
+#
+# Mutually exclusive: the chart fails at install time if both existingSecret
+# and render are set. render defaults to false so existing existingSecret-based
+# installs are unaffected. secretKey is the key that holds the config body,
+# inside either the rendered ConfigMap or the BYO Secret.
+config:
+  existingSecret: ""
+  render: false
+  secretKey: "memory-dataplane.config.yaml"
+  existingSecretChecksum: ""
+
+# secrets carries the NAMES of pre-created Secrets, each holding a single YAML
+# overlay file that is mounted read-only and deep-merged over the base config by
+# the config loader at runtime (later overlay wins). This keeps credentials out
+# of values.yaml and out of the rendered ConfigMap — the overlays hold the actual
+# Redis connection URLs (redis://user:pass@host:port) and API keys, never these
+# values files.
+#
+# For most deployments a single Secret named by secretName is all you need: put
+# the Redis connection URLs and the embedder/LLM API keys in one
+# overlay YAML document under overlayKey. The overlay mirrors the config's own
+# snake_case paths, e.g.:
+#   embedders_connection_details:
+#     openai: { credentials: { api_key: sk-... } }
+#   metadata:
+#     urls: [redis://user:pass@metadata-redis:6379]
+#   databases:
+#     "1": { urls: [redis://user:pass@store-redis:6379] }
+#   background_jobs: { redis: { urls: [redis://user:pass@host:6379] } }
+#
+# Create the Secret out of band, for example:
+#   kubectl create secret generic ram-secrets \
+#     --from-file=overlay.yaml=./overlay.yaml
+#
+# The chart builds an ORDERED overlay list of (secretName, then each
+# additionalSecrets entry), mounts each read-only at /etc/ai/overlays/<i>/overlay.yaml
+# (0-based index), and appends one repeatable "--config <path>" arg per overlay in
+# that order after the base --config on the server, worker, and control-plane
+# containers (later paths win the merge). When the ordered list is empty (no
+# secretName, no additionalSecrets — e.g. a BYO config.existingSecret deployment
+# with credentials embedded in the URLs), no overlay volumes/mounts and no overlay
+# --config args are added.
+#
+# Rotation: the pod checksum tracks only the overlay Secret NAMES (and their
+# order), and credentials are read at client construction — so rotating an
+# overlay's contents in place (same Secret name) does NOT roll the pods on its
+# own. Restart them with `kubectl rollout restart` after updating the Secret.
+secrets:
+  # Pre-created Secret holding your credentials (Redis connection URLs, embedder/LLM
+  # API keys) as a single YAML document under overlayKey. For most deployments this
+  # one Secret is all you need. Merged over the rendered config at startup.
+  secretName: ""
+  # Key within each credentials Secret holding the YAML overlay document.
+  overlayKey: "overlay.yaml"
+  # Optional: extra Secrets layered on top of secretName, merged in order (later
+  # wins) — e.g. keep shared API keys in secretName and put a per-region Redis-URL
+  # Secret here. Leave empty if one Secret is enough.
+  additionalSecrets: []
+
+# shared holds config blocks common to the data plane and control plane
+# (metadata and database registry structure). It is deep-merged
+# UNDER both .Values.memory and .Values.controlplane.configData so overlapping
+# config is defined once. The component-specific block wins on key conflicts.
+# Keep only fields accepted by both binaries here. Leave empty ({}) if you do
+# not use the chart-rendered config path.
+shared: {}
+
+# memory is the rendered data-plane config file body, in the on-prem config
+# file's own snake_case keys (see the chart README for the full annotated file).
+# Only used when config.render=true. Contains STRUCTURE ONLY — no Redis
+# connection URLs and no API keys; those arrive via the mounted secret overlays
+# (see the secrets block). Helm deep-merges base-values + region overrides into
+# this subtree before rendering, which is what makes multi-region overrides small.
+#
+# Example (put the stable parts in base-values.yaml):
+#   memory:
+#     default_extraction_strategy: instruct
+#     namespace_features:
+#       api: true
+#       routing:
+#         policy_api: true
+#         automatic: true
+#         admission: true
+#     document_ingestion:                    # optional MemoryETL; off when omitted
+#       enabled: true
+#       max_decoded_bytes: 1048576
+#       max_input_tokens: 8000
+#       max_reconciliation_input_tokens: 32000
+#       max_chunks: 32
+#       max_output_records: 100
+#       max_queued_bytes_per_store: 10485760
+#       max_retries: 3
+#       max_execution_seconds: 900
+#       source_retention_seconds: 86400
+#       checkpoint_retention_seconds: 86400
+#     embedding:
+#       provider: openai
+#       models:
+#         default_embedding_model: text-embedding-3-large
+#         dimensions: 3072
+#     background_jobs:
+#       redis:                                # regional Active-Active queue backend
+#         enabled: true                       # urls via the regional secret overlay
+#         queue_prefix: ram
+#         worker_regions: ["eu1"]             # set per region
+#     databases:
+#       "1": {}                              # urls via the secret overlay
+#     request_region:
+#       default: ""                            # set per region (e.g. eu1)
+memory: {}
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext: {}
+securityContext: {}
+
+service:
+  type: ClusterIP
+  port: 9000
+
+ingress:
+  enabled: false
+  className: 'nginx'
+  hosts:
+    - host: redis-agent-memory.example.com
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  # Controller-specific annotations, none by default: the Ingress works on any controller
+  # (ingress-nginx, Traefik). The former nginx rewrite-target: / default sent every request to /,
+  # so nothing relied on it.
+  annotations: {}
+  tls: []
+  #  - secretName: redis-agent-memory-tls
+  #    hosts:
+  #      - redis-agent-memory.example.com
+
+livenessProbe:
+  httpGet:
+    path: /health/liveness
+    port: http
+readinessProbe:
+  httpGet:
+    path: /health/readiness
+    port: http
+
+# Additional volumes for both server and worker Deployments.
+volumes: []
+# - name: foo
+#   secret:
+#     secretName: mysecret
+#     optional: false
+
+# Additional volumeMounts for both server and worker Deployments.
+volumeMounts: []
+# - name: foo
+#   mountPath: "/etc/foo"
+#   readOnly: true
+
+# TLS certificates for outbound connections (Redis, embedding providers, LLM).
+# Mount a CA bundle from a pre-created Secret so the container trusts your
+# private Certificate Authority in addition to the built-in system CAs.
+tls:
+  # Name of a pre-created Secret containing a PEM-encoded CA certificate bundle.
+  # Leave empty to just use the default CA bundle shipped in the container image
+  # (or global.tls.caCertSecret when set). The data plane also trusts it for an
+  # https:// dataplane.identityServiceBaseURL.
+  caCertSecret: ""
+  # Key inside the Secret that contains the PEM-encoded CA certificate(s).
+  caCertKey: "ca.crt"
+
+# Enterprise license file. Provide a customer-specific Secret and reference it
+# with license.existingSecret.
+license:
+  existingSecret: ""
+  secretKey: ""  # default license; redis-iris sets global.iris.license.secretKey
+  mountDir: "/etc/redis-agent-memory"
+  fileName: "license"
+  existingSecretChecksum: ""
+
+# ---------------------------------------------------------------------------
+# Per-component settings
+# server.* applies to the API Deployment, worker.* to the background worker.
+# ---------------------------------------------------------------------------
+
+# PodDisruptionBudget (maxUnavailable: 1) for each Deployment that keeps more than one Pod
+# (minReplicas under autoscaling). Off by default; redis-iris turns it on.
+podDisruptionBudget:
+  enabled: false
+
+server:
+  replicaCount: 2
+  # Deployment spec.strategy, rendered verbatim when set. redis-iris fixes it to
+  # RollingUpdate with maxUnavailable 0 and maxSurge 1.
+  strategy: {}
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+
+worker:
+  replicaCount: 2
+  serviceAccount:
+    # Leave disabled to keep using the chart-level serviceAccount. Enable to
+    # give worker pods a distinct Kubernetes identity for worker-to-RAM auth.
+    create: false
+    automount: false
+    annotations: {}
+    name: ''
+    token:
+      enabled: false
+      audience: redis-agent-memory
+      expirationSeconds: 3600
+      mountPath: /var/run/secrets/redis-agent-memory-worker
+      fileName: token
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+
+# Worker-to-RAM authentication preset. When enabled, the chart gives worker pods
+# a Kubernetes projected service-account token suitable for
+# dataplane_client.auth.type=service_account_token. By default this also creates
+# a dedicated worker ServiceAccount unless worker.serviceAccount.name is set.
+#
+# Customize the rendered Kubernetes identity and token mount through
+# worker.serviceAccount.* above. The shared memory-dataplane config Secret must
+# still enable dataplane_client.auth and auth.worker_identity with matching
+# issuer/JWKS/audience/subject settings.
+workerAuth:
+  enabled: null  # false when unset; redis-iris turns it on
+
+# ---------------------------------------------------------------------------
+# On-prem Control Plane (CP) — the admin store API (/iris/v1/agent-memory/stores,
+# admin-token auth) used to create/list/get/update/delete memory stores at runtime.
+#
+# The bundled control plane is mandatory and provisions every store at runtime.
+# It shares metadata Redis and the top-level `databases` fallback registry with
+# the data plane.
+#
+# The CP runs as its own Deployment + Service (port 9100), reuses the chart's
+# license / TLS / serviceAccount / security settings, and mounts its own config
+# Secret + a single admin-token Secret.
+# ---------------------------------------------------------------------------
+controlplane:
+  image:
+    # Separate image from the data plane (control-plane binary).
+    repository: 'redislabs/agent-memory-control-plane'
+    pullPolicy: IfNotPresent
+    # The image release this chart version ships; override to run another.
+    tag: "1.0.0"
+
+  replicaCount: 1
+
+  # The CP config file (admin/internal token sources, metadata Redis, databases registry, embedding)
+  # mounted at /etc/ai — rendered into a ConfigMap (config.render=true) or brought
+  # as a pre-created Secret (config.existingSecret). The config's
+  # auth.admin_token.token_file and auth.internal_token.token_file must point at
+  # separate mounted Secret paths; metadata.namespace defaults to iris:memory.
+  config:
+    existingSecret: ""
+    # RECOMMENDED: when true (and no existingSecret), the chart renders the CP
+    # config into a ConfigMap from .Values.shared + .Values.controlplane.configData,
+    # mirroring the data-plane config.render path (see config.render above for why
+    # it's preferred). Credentials arrive via the mounted secret overlays (see the
+    # secrets block). Defaults to false so existing existingSecret-based installs
+    # are unaffected.
+    render: false
+    secretKey: "controlplane-onprem.config.yaml"
+    existingSecretChecksum: ""
+
+  # Rendered control-plane config file body (snake_case), used when
+  # controlplane.config.render=true. Structure only; Redis URLs and API keys
+  # arrive via the mounted secret overlays.
+  configData: {}
+
+  # Admin API token (single value; rotation = edit the Secret, read-on-use picks
+  # it up with no redeploy). Precedence: existingSecret (BYO) wins; else
+  # autoGenerate lookup-or-generates a Helm-managed Secret on first install
+  # (stable across upgrades; never clobbers an operator edit).
+  adminToken:
+    existingSecret: ""
+    secretKey: "token"
+    autoGenerate: true
+    existingSecretChecksum: ""
+
+  # RAM control-plane internal validation token. It must be distinct from
+  # adminToken and is mounted at /etc/controlplane-onprem/internal/token when
+  # generated or provided here. The Identity Service release presents it when
+  # it calls this control plane's grant validator, so in production deployment
+  # automation provisions it and both releases reference it through
+  # existingSecret. autoGenerate is a single-chart development convenience.
+  internalToken:
+    existingSecret: ""
+    secretKey: "token"
+    autoGenerate: true
+    existingSecretChecksum: ""
+
+  service:
+    type: ClusterIP
+    port: 9100
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+
+  # Additional volumes / volumeMounts for the control-plane Deployment. Use these
+  # to mount a Secrets Store CSI (SecretProviderClass) volume so the CP pod keeps
+  # a CSI-synced Secret (config / admin token / license) alive — the synced K8s
+  # Secret only exists while a pod mounting the CSI volume runs.
+  volumes: []
+  # - name: secrets-store
+  #   csi:
+  #     driver: secrets-store.csi.k8s.io
+  #     readOnly: true
+  #     volumeAttributes:
+  #       secretProviderClass: ram-controlplane-spc
+  volumeMounts: []
+  # - name: secrets-store
+  #   mountPath: /mnt/secrets-store
+  #   readOnly: true
+
+  # Optional Asynqmon queue monitor for the regional Redis job queue backend
+  # (`background_jobs.redis`). Disabled by default. When enabled, Asynqmon runs
+  # as a separate low-resource Deployment and connects to the same Redis queue
+  # backend through an operator-provided Secret. The Ingress path is protected by
+  # Basic Auth using a separate htpasswd-formatted Secret; Helm never derives it
+  # from the control-plane admin-token Secret.
+  queueMonitor:
+    enabled: false
+    readOnly: true
+
+    image:
+      repository: hibiken/asynqmon
+      pullPolicy: IfNotPresent
+      tag: 0.7.2
+
+    replicaCount: 1
+
+    service:
+      type: ClusterIP
+      port: 8080
+
+    redis:
+      # Pre-created Secret holding REDIS_URL for the same Redis used by
+      # background_jobs.redis.urls. Use rediss:// for TLS where required. The
+      # upstream Asynqmon image supports password-only Redis URLs; named ACL
+      # users require a compatible wrapper image.
+      existingSecret: ""
+      urlKey: REDIS_URL
+      # Optional keys in the same Secret. Asynqmon treats REDIS_TLS as the TLS
+      # server name and REDIS_INSECURE_TLS as a bool.
+      tlsServerNameKey: REDIS_TLS
+      insecureTLSKey: REDIS_INSECURE_TLS
+
+    auth:
+      type: basic
+      # Pre-created htpasswd-formatted Secret consumed by ingress-nginx.
+      existingSecret: ""
+      secretKey: auth
+
+    ingress:
+      enabled: false
+      className: nginx
+      host: ""
+      path: /
+      pathType: Prefix
+      annotations: {}
+      tls:
+        secretName: ""
+
+    resources:
+      limits:
+        cpu: 200m
+        memory: 128Mi
+      requests:
+        cpu: 25m
+        memory: 64Mi
+
+    podAnnotations: {}
+    podLabels: {}
+    securityContext: {}
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+
+# ---------------------------------------------------------------------------
+# Iris Identity Service (IdS) — agent-key lifecycle and runtime introspection.
+# This chart deploys no Identity Service: install the iris-identity-service
+# chart as its own release (same namespace is the supported layout) and connect
+# the data plane to it here. See "Connecting to the Identity Service" in the README for what
+# each release needs from the other.
+# ---------------------------------------------------------------------------
+dataplane:
+  # Runtime URL of the Identity Service release the data plane introspects
+  # agent keys against. Required with config.render=true and agent-key auth
+  # (memory.auth.method agent_key or agent_keys.enabled, or unset with no
+  # other auth flavour enabled). Must be https:// unless
+  # identityService.allowInsecureTransport=true.
+  identityServiceBaseURL: ""
+
+identityService:
+  # Accept an http:// dataplane.identityServiceBaseURL, for example the
+  # in-cluster Service. Refused under the fips security profile.
+  allowInsecureTransport: null  # false when unset; redis-iris turns it on for its in-cluster Identity Service
+  # The data plane's runtime credential (subject memory-dp, operation
+  # api-key-introspect, product memory). Deployment automation provisions the
+  # Secret and registers it on the Identity Service release. Mounted at
+  # /etc/identity-service/runtime/memory-dp/token. Required with
+  # config.render=true and agent-key auth.
+  credential:
+    existingSecret: ""
+    secretKey: token
+    # Set to roll the data plane when the Secret's content changes.
+    existingSecretChecksum: ""
+
+# Umbrella-chart fallbacks, read when the local value is empty:
+# security.profile, imagePullSecrets, tls.caCertSecret.
+global: {}

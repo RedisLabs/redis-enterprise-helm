@@ -1,0 +1,9 @@
+{{- include "redis-onprem.service" (dict
+  "root" .
+  "name" (include "ui.fullname" .)
+  "component" "gateway"
+  "labelsTemplate" "ui.labels"
+  "selectorLabelsTemplate" "ui.selectorLabels"
+  "type" .Values.service.type
+  "port" .Values.service.port
+) }}

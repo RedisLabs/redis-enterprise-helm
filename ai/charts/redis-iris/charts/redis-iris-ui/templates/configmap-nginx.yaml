@@ -1,0 +1,283 @@
+{{- /*
+Shared between the health-bypass and prefix locations for the same product,
+so the two can never drift apart on TLS/host handling and let a health probe
+trust a different upstream than real API traffic does. Takes one product
+entry from (include "ui.resolved" $ | fromJson).products (needs .key and .upstream).
+*/ -}}
+{{- /* With SSO on, a product's /api/<key>/ location sets Authorization itself, to the session's access
+token: see ui.ssoApiDirectives. */ -}}
+{{- define "ui.upstreamProxyDirectives" -}}
+proxy_set_header Host $host;
+proxy_http_version 1.1;
+# Authorization / X-API-Key pass through unchanged by nginx's own default
+# proxying behavior -- no proxy_set_header override for either, deliberately,
+# per AC5.
+{{- if eq .upstream.scheme "https" }}
+# nginx does not send SNI by default, so a virtual-hosted upstream (multiple
+# certs behind one IP/port) can present the wrong certificate even with
+# verification on -- send the configured host explicitly rather than relying
+# on the connection's bare IP.
+proxy_ssl_server_name on;
+proxy_ssl_name {{ .upstream.host }};
+{{- if .upstream.caSecretName }}
+proxy_ssl_trusted_certificate /etc/nginx/ca/{{ .key }}/ca.crt;
+proxy_ssl_verify on;
+{{- else if .upstream.insecureSkipVerify }}
+proxy_ssl_verify off;
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- /*
+Security headers for responses the app serves itself: the SPA's pages and static
+assets and /config.json (TDD SEC-4). They do not depend on a session, so they
+render whether SSO is on or off. Include this in each of those locations and
+nowhere else: an add_header in a location replaces every add_header it would
+inherit from the server block, and proxied /api/<key>/ responses are the
+backends' own to describe. `always` keeps them on error pages too.
+
+default-src 'self' is the script and resource policy; frame-ancestors has no
+fallback to it, so it is set on its own. style-src adds 'unsafe-inline' because
+redis-ui's styled-components inject <style> tags at run time; without it the SPA
+renders blank (checked in a browser). img-src adds data: for the design system's
+inline SVG icons. base-uri and form-action have no fallback to default-src, so they
+are set to 'self' on their own. Scripts stay 'self' only. The design
+system's CSS also @imports Google Fonts (fonts.googleapis.com, fonts.gstatic.com);
+those hosts are deliberately not allowed, so an on-prem console makes no request
+to a third party and the fonts fall back to the system's. Strict-Transport-Security follows
+publicURL: the chart serves plain HTTP behind the customer's ingress, so it can
+only advertise HTTPS when the operator said the public URL is HTTPS. No
+includeSubDomains: the chart owns one hostname, not the customer's domain.
+*/ -}}
+{{- define "ui.spaSecurityHeaders" -}}
+add_header Content-Security-Policy "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;
+add_header X-Content-Type-Options "nosniff" always;
+add_header Referrer-Policy "same-origin" always;
+{{- if hasPrefix "https://" ((include "ui.resolved" $ | fromJson).publicURL | default "") }}
+add_header Strict-Transport-Security "max-age=31536000" always;
+{{- end }}
+{{- end -}}
+
+{{- /*
+The UI auth service is reached over one upstream block so connections are reused (keepalive; nginx
+only keeps connections alive to an upstream block, and the check runs on every API call). The name is
+resolved at run time (`resolve`, with its own `resolver`, from nginx 1.27.3 -- the gateway image is
+nginx 1.27), so a missing or recreated Service does not stop nginx from starting and a new ClusterIP is
+picked up within the resolver's `valid` time. nginx's own resolver does not apply the pod's DNS search
+domains, so the name must be fully qualified: <service>.<namespace>.svc.<clusterDomain>.
+*/ -}}
+{{- define "ui.authUpstreamHost" -}}
+{{ include "ui.auth.fullname" . }}.{{ .Release.Namespace }}.svc.{{ (include "ui.resolved" $ | fromJson).clusterDomain }}
+{{- end -}}
+
+{{- /*
+Directives shared by every location that calls the UI auth service, which is plain HTTP in the cluster:
+it has no TLS listener of its own.
+*/ -}}
+{{- define "ui.authProxyDirectives" -}}
+proxy_http_version 1.1;
+proxy_set_header Connection "";
+proxy_set_header Host $host;
+proxy_connect_timeout {{ .Values.nginx.limits.authProxyConnectTimeout }};
+proxy_read_timeout {{ .Values.nginx.limits.authProxyReadTimeout }};
+{{- end -}}
+
+{{- /*
+What every proxied /api/<key>/ location adds when SSO is on: nginx asks the UI auth service
+whether the browser's session may call this route, then replaces the browser's credentials with
+the session's access token. The session cookie and CSRF token are the gateway's own and must not
+reach a product.
+*/ -}}
+{{- define "ui.ssoApiDirectives" -}}
+auth_request /_auth_check;
+auth_request_set $iris_token $upstream_http_x_auth_token;
+proxy_set_header Authorization "Bearer $iris_token";
+{{ include "ui.ssoStripSessionHeaders" . }}
+{{- end -}}
+
+{{- /*
+The session cookie and CSRF token are the gateway's own: no product location passes them on, whether
+or not it is session-checked.
+*/ -}}
+{{- define "ui.ssoStripSessionHeaders" -}}
+proxy_set_header Cookie "";
+proxy_set_header X-CSRF-Token "";
+{{- end -}}
+
+{{- define "ui.nginxConfig" -}}
+{{- if .Values.sso.enabled }}
+upstream ui_auth {
+    zone ui_auth 64k;
+    # An upstream block takes its own resolver (nginx 1.27.3+), separate from the server block's.
+    resolver ${NGINX_LOCAL_RESOLVERS} valid=10s;
+    server {{ include "ui.authUpstreamHost" . }}:9000 resolve;
+    keepalive 16;
+}
+
+{{ end -}}
+server {
+    # Always 8080: nginx runs as uid 101 with every capability dropped, so it
+    # can never bind a privileged port. .Values.service.port is the Service's
+    # own, independently configurable exposed port -- see deployment.yaml.
+    listen 8080;
+    server_name _;
+
+    # Redirects stay relative: behind an Ingress the browser reaches this server on the
+    # public host and port, never on the internal Host:8080 nginx would otherwise emit.
+    absolute_redirect off;
+
+    # Defers each product's proxy_pass upstream DNS lookup to request time
+    # (via the $upstream variable set in each location below) instead of
+    # nginx's normal startup/reload-time resolution of a literal hostname --
+    # otherwise any one product's Service being unresolvable (not installed
+    # yet, briefly recreated) would refuse the whole gateway's nginx.conf and
+    # crash-loop every product's route, not just that one. ${NGINX_LOCAL_RESOLVERS}
+    # is substituted at container start from this pod's own /etc/resolv.conf
+    # (see deployment.yaml's NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1 and this
+    # ConfigMap's .template mount) -- resolver requires a literal IP, not a
+    # hostname, so it can't be hardcoded or deferred any other way.
+    resolver ${NGINX_LOCAL_RESOLVERS} valid=10s;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    location = /healthz {
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # The SPA's runtime config (iris/ui/src/hooks/useRuntimeConfig/useRuntimeConfig.ts):
+    # a static file rendered by this chart from products[], never
+    # generated inside the running container.
+    location = /config.json {
+        default_type application/json;
+        alias /etc/ui/runtime-config/config.json;
+        {{- include "ui.spaSecurityHeaders" . | nindent 8 }}
+    }
+
+    {{- if .Values.sso.enabled }}
+
+    # The UI auth service's sign-in routes. Its responses carry their own security headers.
+    location /auth/ {
+        proxy_pass http://ui_auth;
+        {{- include "ui.authProxyDirectives" . | nindent 8 }}
+        client_max_body_size {{ .Values.nginx.limits.authClientMaxBodySize }};
+        # The sign-in redirects and session cookies are response headers too.
+        proxy_buffer_size {{ .Values.nginx.limits.authProxyBufferSize }};
+        proxy_buffers {{ .Values.nginx.limits.authProxyBuffers }};
+        proxy_busy_buffers_size {{ include "ui.authBusyBuffersBytes" . }};
+    }
+
+    # nginx's session check for /api/<key>/ (auth_request). Only the body is dropped: the browser's
+    # Origin, Sec-Fetch-Site and X-CSRF-Token must reach the service, which uses them for the CSRF
+    # and origin checks on writes, so proxy_pass_request_headers stays on. X-Auth-Token comes back
+    # in the response headers, so the buffers must hold a large access token.
+    # $request_method and $request_uri are the browser's own request's even here: nginx resolves them
+    # from the main request inside an auth_request subrequest (which is itself a GET), so the service
+    # sees POST/PUT/DELETE and runs its CSRF and origin checks (see kind-smoke.sh: a POST without
+    # the token is refused).
+    location = /_auth_check {
+        internal;
+        proxy_pass http://ui_auth/internal/check;
+        {{- include "ui.authProxyDirectives" . | nindent 8 }}
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Original-Method $request_method;
+        proxy_set_header X-Original-URI $request_uri;
+        proxy_buffer_size {{ .Values.nginx.limits.authProxyBufferSize }};
+        proxy_buffers {{ .Values.nginx.limits.authProxyBuffers }};
+        proxy_busy_buffers_size {{ include "ui.authBusyBuffersBytes" . }};
+    }
+    {{- end }}
+
+    {{- /* Copies, so resolving upstream.host (ui.upstreamHost) leaves .Values untouched. */}}
+    {{- $products := list }}
+    {{- range (include "ui.resolved" $ | fromJson).products }}
+    {{- $product := deepCopy . }}
+    {{- $_ := set $product.upstream "host" (include "ui.upstreamHost" (dict "root" $ "upstream" .upstream)) }}
+    {{- $products = append $products $product }}
+    {{- end }}
+
+    {{- range $products }}
+    # Health probe: readiness lives at the upstream's service root, not
+    # under basePath, so this exact-match location bypasses the prefix
+    # location below entirely. Same deferred $upstream/resolver DNS as that
+    # location, for the same crash-loop-prevention reason.
+    location = /api/{{ .key }}{{ .healthPath }} {
+        set $upstream "{{ .upstream.scheme }}://{{ .upstream.host }}:{{ .upstream.port }}";
+        proxy_pass $upstream{{ .healthPath }};
+        {{- include "ui.upstreamProxyDirectives" . | nindent 8 }}
+        {{- if $.Values.sso.enabled }}
+        # Health needs no session, but the browser's session cookie is not for a product either.
+        {{- include "ui.ssoStripSessionHeaders" . | nindent 8 }}
+        {{- end }}
+    }
+
+    {{- if .protectedResourceMetadata }}
+
+    # RFC 9728 protected resource metadata, which a product serves without a credential (the
+    # Context Gateway data plane's sign-in metadata). With SSO on, this is the only path under
+    # /api/{{ .key }}/ without a session check, and only for GET. It comes before the location below
+    # because nginx takes the first regex location that matches, and it forwards only under the
+    # metadata prefix, so no other product path is reached without a session.
+    location ~ ^/api/{{ .key }}/\.well-known/oauth-protected-resource/(?<rest>.*)$ {
+        limit_except GET { deny all; }
+        set $upstream "{{ .upstream.scheme }}://{{ .upstream.host }}:{{ .upstream.port }}";
+        proxy_pass $upstream{{ .upstream.basePath }}/.well-known/oauth-protected-resource/$rest$is_args$args;
+        {{- include "ui.upstreamProxyDirectives" . | nindent 8 }}
+        {{- if $.Values.sso.enabled }}
+        # The metadata needs no credential, and the session's cookie and token are not for it.
+        proxy_set_header Authorization "";
+        {{- include "ui.ssoStripSessionHeaders" . | nindent 8 }}
+        {{- end }}
+    }
+    {{- end }}
+
+    # {{ .label }}
+    # A regex location (with a captured $rest) is required here: once
+    # proxy_pass's target includes a variable, nginx stops doing its usual
+    # prefix-location URI rewrite and instead sends only the literal text
+    # written after the variable -- so without capturing and re-appending
+    # $rest (and the query string via $is_args$args), every request here
+    # would silently collapse to the bare basePath, dropping the client's
+    # actual sub-path and query string entirely.
+    location ~ ^/api/{{ .key }}/(?<rest>.*)$ {
+        set $upstream "{{ .upstream.scheme }}://{{ .upstream.host }}:{{ .upstream.port }}";
+        proxy_pass $upstream{{ .upstream.basePath }}/$rest$is_args$args;
+        {{- include "ui.upstreamProxyDirectives" . | nindent 8 }}
+        {{- if $.Values.sso.enabled }}
+        {{- include "ui.ssoApiDirectives" . | nindent 8 }}
+        {{- end }}
+        client_max_body_size {{ .maxRequestBodyBytes | default 1048576 | int }};
+        error_page 413 = @request_too_large;
+    }
+    {{- end }}
+
+    # A bounded API upload failure must remain a problem document, not HTML.
+    location @request_too_large {
+        default_type application/problem+json;
+        return 413 '{"type":"/errors/payload-too-large","title":"Payload Too Large","status":413,"detail":"The request exceeds this product gateway upload limit."}';
+    }
+
+    # SPA history fallback: any path not matching a real static asset falls
+    # through to index.html so client-side routes (deep links) resolve.
+    location / {
+        try_files $uri $uri/ /index.html;
+        {{- include "ui.spaSecurityHeaders" . | nindent 8 }}
+    }
+}
+{{- end }}
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ui.nginxConfigName" . }}
+  labels:
+    {{- include "ui.labels" . | nindent 4 }}
+data:
+  # .template (not default.conf directly): mounted under
+  # /etc/nginx/templates/ so the base image's own docker-entrypoint.d
+  # envsubst step substitutes ${NGINX_LOCAL_RESOLVERS} into
+  # /etc/nginx/conf.d/default.conf at container start.
+  default.conf.template: |
+    {{- include "ui.nginxConfig" . | nindent 4 }}

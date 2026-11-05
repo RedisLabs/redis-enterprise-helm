@@ -1,0 +1,36 @@
+{{- if .Values.tests.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "ui.healthTestName" . }}
+  labels:
+    {{- include "ui.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: health
+      image: curlimages/curl:8.17.0
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+      command:
+        - sh
+        - -ec
+        - |
+          curl --fail --silent --show-error http://{{ include "ui.fullname" . }}:{{ .Values.service.port }}/healthz
+{{- end }}

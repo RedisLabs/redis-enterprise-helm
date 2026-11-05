@@ -1,0 +1,100 @@
+{{- define "redis-lens.controlplaneAnnotations" -}}
+checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum | quote }}
+{{- with .Values.storage.existingSecretChecksum }}
+checksum/storage-secret: {{ . | quote }}
+{{- end }}
+{{- with .Values.controlplane.adminToken.existingSecretChecksum }}
+checksum/admin-token: {{ . | quote }}
+{{- end }}
+{{- with .Values.controlplane.internalToken.existingSecretChecksum }}
+checksum/internal-token: {{ . | quote }}
+{{- end }}
+{{- with .Values.license.existingSecretChecksum }}
+checksum/license: {{ . | quote }}
+{{- end }}
+{{- include "redis-lens.tlsCaAnnotation" . }}
+{{- end }}
+
+{{- define "redis-lens.controlplaneArgs" -}}
+- --config
+- /etc/lens/config/lens-controlplane.yaml
+- --config
+- /etc/lens/storage/storage.yaml
+{{- end }}
+
+{{- define "redis-lens.controlplaneEnv" -}}
+{{ include "redis-lens.commonEnv" . }}
+{{- end }}
+
+{{- define "redis-lens.controlplaneVolumeMounts" -}}
+- name: config
+  mountPath: /etc/lens/config
+  readOnly: true
+- name: storage
+  mountPath: /etc/lens/storage
+  readOnly: true
+- name: admin-token
+  mountPath: /etc/lens/credentials/admin
+  readOnly: true
+- name: internal-token
+  mountPath: /etc/lens/credentials/internal
+  readOnly: true
+{{ include "redis-lens.licenseMount" . }}
+{{- include "redis-lens.tlsCaMount" . }}
+{{- end }}
+
+{{- define "redis-lens.controlplaneVolumes" -}}
+- name: config
+  configMap:
+    name: {{ include "redis-lens.controlplaneName" . }}-config
+- name: storage
+  secret:
+    secretName: {{ required "storage.existingSecret is required" .Values.storage.existingSecret }}
+    items:
+      - key: {{ .Values.storage.controlplaneKey }}
+        path: storage.yaml
+- name: admin-token
+  secret:
+    secretName: {{ include "redis-lens.controlplaneAdminTokenSecretName" . }}
+    items:
+      - key: {{ .Values.controlplane.adminToken.secretKey }}
+        path: token
+- name: internal-token
+  secret:
+    secretName: {{ include "redis-lens.controlplaneInternalTokenSecretName" . }}
+    items:
+      - key: {{ (include "redis-lens.suite" . | fromJson).internalToken.secretKey }}
+        path: token
+{{ include "redis-lens.licenseVolume" . }}
+{{- include "redis-lens.tlsCaVolume" . }}
+{{- end }}
+
+{{- include "redis-onprem.controlplane.deployment" (dict
+  "root" .
+  "name" (include "redis-lens.controlplaneName" .)
+  "component" "controlplane"
+  "labelsTemplate" "redis-lens.labels"
+  "selectorLabelsTemplate" "redis-lens.selectorLabels"
+  "replicas" .Values.controlplane.replicaCount
+  "annotationsTemplate" "redis-lens.controlplaneAnnotations"
+  "podAnnotations" .Values.controlplane.podAnnotations
+  "podLabels" .Values.controlplane.podLabels
+  "imagePullSecrets" (include "redis-lens.suite" . | fromJson).imagePullSecrets
+  "serviceAccountName" (include "redis-lens.serviceAccountName" .)
+  "automountServiceAccountToken" false
+  "podSecurityContext" .Values.podSecurityContext
+  "containerName" "controlplane"
+  "argsTemplate" "redis-lens.controlplaneArgs"
+  "containerSecurityContext" .Values.securityContext
+  "image" .Values.controlplane.image
+  "envTemplate" "redis-lens.controlplaneEnv"
+  "port" .Values.controlplane.service.port
+  "livenessProbe" (dict "httpGet" (dict "path" "/health/liveness" "port" "http") "initialDelaySeconds" 5 "periodSeconds" 10)
+  "readinessProbe" (dict "httpGet" (dict "path" "/health/readiness" "port" "http") "initialDelaySeconds" 3 "periodSeconds" 5)
+  "resources" .Values.controlplane.resources
+  "volumeMountsTemplate" "redis-lens.controlplaneVolumeMounts"
+  "volumesTemplate" "redis-lens.controlplaneVolumes"
+  "nodeSelector" .Values.controlplane.nodeSelector
+  "affinity" .Values.controlplane.affinity
+  "tolerations" .Values.controlplane.tolerations
+) }}

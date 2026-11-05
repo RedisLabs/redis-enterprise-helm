@@ -1,0 +1,494 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "tenantId",
+    "security",
+    "license",
+    "storage",
+    "inference",
+    "controlplane",
+    "dataplane",
+    "identityService",
+    "tests"
+  ],
+  "definitions": {
+    "image": {
+      "type": "object",
+      "required": [
+        "repository",
+        "tag",
+        "pullPolicy"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "required": [
+        "type",
+        "port"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "ClusterIP",
+            "NodePort",
+            "LoadBalancer"
+          ]
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
+    },
+    "credential": {
+      "type": "object",
+      "required": [
+        "existingSecret",
+        "secretKey",
+        "autoGenerate"
+      ],
+      "properties": {
+        "existingSecret": {
+          "type": "string"
+        },
+        "secretKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "autoGenerate": {
+          "type": "boolean"
+        },
+        "existingSecretChecksum": {
+          "type": "string"
+        }
+      }
+    },
+    "scheduling": {
+      "properties": {
+        "resources": {
+          "type": "object"
+        },
+        "podAnnotations": {
+          "type": "object"
+        },
+        "podLabels": {
+          "type": "object"
+        },
+        "nodeSelector": {
+          "type": "object"
+        },
+        "tolerations": {
+          "type": "array"
+        },
+        "affinity": {
+          "type": "object"
+        }
+      }
+    }
+  },
+  "properties": {
+    "tenantId": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "tracing": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "otlpGRPCEndpoint": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "security": {
+      "type": "object",
+      "required": [
+        "profile"
+      ],
+      "properties": {
+        "profile": {
+          "type": "string",
+          "enum": [
+            "",
+            "fips"
+          ]
+        }
+      }
+    },
+    "tls": {
+      "type": "object",
+      "properties": {
+        "caCertSecret": {
+          "type": "string"
+        },
+        "caCertSecretChecksum": {
+          "type": "string"
+        }
+      }
+    },
+    "license": {
+      "type": "object",
+      "required": [
+        "existingSecret",
+        "secretKey"
+      ],
+      "properties": {
+        "existingSecret": {
+          "type": "string"
+        },
+        "secretKey": {
+          "type": "string",
+          "description": "Empty means license; redis-iris sets global.iris.license.secretKey."
+        },
+        "existingSecretChecksum": {
+          "type": "string"
+        }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "required": [
+        "existingSecret",
+        "controlplaneKey",
+        "dataplaneKey",
+        "keyPrefix",
+        "maxRoutersPerTenant"
+      ],
+      "properties": {
+        "existingSecret": {
+          "type": "string"
+        },
+        "controlplaneKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dataplaneKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "existingSecretChecksum": {
+          "type": "string"
+        },
+        "keyPrefix": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^*?\\[\\]{}\\s]+$"
+        },
+        "maxRoutersPerTenant": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "identityServiceKey": {
+          "not": {},
+          "description": "Not a chart value: the Identity Service metadata Secret belongs to the Identity Service release."
+        }
+      }
+    },
+    "inference": {
+      "type": "object",
+      "required": [
+        "models"
+      ],
+      "properties": {
+        "existingSecret": {
+          "type": "string"
+        },
+        "secretKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "existingSecretChecksum": {
+          "type": "string"
+        },
+        "allowLocalModels": {
+          "type": "boolean"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "provider",
+              "model",
+              "dimensions"
+            ],
+            "properties": {
+              "provider": {
+                "type": "string",
+                "minLength": 1
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "dimensions": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "controlplane": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/scheduling"
+        }
+      ],
+      "type": "object",
+      "required": [
+        "replicaCount",
+        "image",
+        "service",
+        "adminToken",
+        "internalToken"
+      ],
+      "properties": {
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "image": {
+          "$ref": "#/definitions/image"
+        },
+        "service": {
+          "$ref": "#/definitions/service"
+        },
+        "requireDatabase": {
+          "type": "boolean"
+        },
+        "oidc": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": ["boolean", "null"],
+              "description": "Null means false; redis-iris derives it."
+            }
+          },
+          "additionalProperties": false
+        },
+        "reconcile": {
+          "type": "object",
+          "properties": {
+            "interval": {
+              "type": "string"
+            },
+            "provisioningDeadline": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "config": {
+          "type": "object",
+          "properties": {
+            "existingSecret": {
+              "type": "string"
+            },
+            "secretKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "existingSecretChecksum": {
+              "type": "string"
+            }
+          }
+        },
+        "adminToken": {
+          "$ref": "#/definitions/credential"
+        },
+        "internalToken": {
+          "$ref": "#/definitions/credential"
+        }
+      }
+    },
+    "dataplane": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/scheduling"
+        }
+      ],
+      "type": "object",
+      "required": [
+        "replicaCount",
+        "image",
+        "service"
+      ],
+      "properties": {
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "image": {
+          "$ref": "#/definitions/image"
+        },
+        "service": {
+          "$ref": "#/definitions/service"
+        },
+        "oidc": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": ["boolean", "null"],
+              "description": "Null means false; redis-iris derives it."
+            },
+            "issuer": {
+              "type": "string"
+            },
+            "jwksURI": {
+              "type": "string"
+            },
+            "tenantIDClaim": {
+              "type": "string"
+            },
+            "staticTenantID": {
+              "type": "string"
+            },
+            "roleClaims": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "roleMappings": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "enum": [
+                  "suite_admin",
+                  "product_admin",
+                  "operator",
+                  "viewer"
+                ]
+              }
+            },
+            "allowInsecureTransport": {
+              "type": ["boolean", "null"],
+              "description": "Null means false; redis-iris derives it."
+            }
+          },
+          "additionalProperties": false
+        },
+        "identityServiceBaseURL": {
+          "type": "string",
+          "pattern": "^(|https?://[^\\s]+)$",
+          "description": "URL of the Identity Service release the data plane introspects agent keys against. Required; must be https:// unless identityService.allowInsecureTransport=true outside fips."
+        },
+        "pollInterval": {
+          "type": "string"
+        },
+        "startupBudget": {
+          "type": "string"
+        },
+        "limits": {
+          "type": "object"
+        },
+        "match": {
+          "type": "object"
+        },
+        "search": {
+          "type": "object"
+        }
+      }
+    },
+    "identityService": {
+      "type": "object",
+      "description": "Connection to the Identity Service release this chart does not deploy.",
+      "properties": {
+        "allowInsecureTransport": {
+          "type": ["boolean", "null"],
+          "description": "Accept an http:// dataplane.identityServiceBaseURL. Refused under the fips security profile. Null means false; redis-iris enables it for its in-cluster Identity Service."
+        },
+        "credential": {
+          "type": "object",
+          "description": "The data plane's runtime credential, provisioned by deployment automation and registered on the Identity Service release.",
+          "properties": {
+            "existingSecret": {
+              "type": "string"
+            },
+            "secretKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "existingSecretChecksum": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "global": {
+      "type": "object",
+      "description": "Umbrella-chart fallbacks read when the local value is empty (security.profile, imagePullSecrets, tls.caCertSecret), and global.iris under redis-iris.",
+      "properties": {
+        "security": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "type": "string",
+              "enum": [
+                "",
+                "fips"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "tests": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "securityProfileImage"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "securityProfileImage": {
+          "$ref": "#/definitions/image"
+        }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "properties": {
+        "oidc": {
+          "type": "object",
+          "properties": {
+            "audience": {
+              "type": "string",
+              "description": "Audience accepted on IdP access tokens. Empty means api://redis-iris; redis-iris sets global.iris.auth.oidc.audience."
+            }
+          }
+        }
+      }
+    }
+  }
+}

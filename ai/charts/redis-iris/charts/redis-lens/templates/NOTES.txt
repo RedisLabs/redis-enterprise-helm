@@ -1,0 +1,22 @@
+Redis Iris Lens has been rendered as three workloads:
+
+  Data plane (ingest + read API): {{ include "redis-lens.dataplaneName" . }}:{{ .Values.dataplane.service.port }}
+  Worker (turn assembly):         {{ include "redis-lens.workerName" . }} (no Service)
+  Control plane:                  {{ include "redis-lens.controlplaneName" . }}:{{ .Values.controlplane.service.port }}
+
+Connected to the Identity Service at {{ include "redis-lens.identityServiceBaseURL" . }}.
+
+Instance: {{ .Values.instance.id }}. Mint ingest and read keys for
+lens-instance:{{ .Values.instance.id }} on that Identity Service release with
+its control token.
+{{- $suite := include "redis-lens.suite" . | fromJson }}
+{{- if and .Release.IsUpgrade (or $suite.dataplaneOIDC.enabled $suite.controlplaneOIDC) }}
+UPGRADE: IdP access tokens must carry the audience {{ trim $suite.audience | quote }} (auth.oidc.audience).
+{{- end }}
+{{ if not .Values.ingest.enabled }}
+Ingest is disabled: the data plane answers POST /iris/data/v1beta1/lens/v1/traces with 503 until
+ingest.enabled=true. Nothing trims the span streams yet; see the README.
+{{ end }}
+To read through the UI gateway, add a lens product entry whose upstream is
+{{ include "redis-lens.dataplaneName" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.dataplane.service.port }}
+with an empty basePath and instanceId {{ .Values.instance.id }}.

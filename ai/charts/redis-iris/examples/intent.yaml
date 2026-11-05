@@ -1,0 +1,26 @@
+# Intent Router values for the redis-iris suite, release iris in namespace redis-ai.
+# Install it with the other product examples:
+#   helm install iris redis-ai/redis-iris -n redis-ai \
+#     -f examples/memory-only.yaml -f examples/playbook.yaml \
+#     -f examples/lens.yaml -f examples/context-gateway.yaml -f examples/intent.yaml
+# Intent Router is on by default (global.iris.products.intent.enabled), so an
+# upgrade from 0.4.0 needs this file too, or global.iris.products.intent.enabled:
+# false; without either the render fails and names the missing intent.* field.
+#
+# Create these first in namespace redis-ai (tests/kind.sh shows them):
+#   intent-storage    key intent-controlplane-storage.yaml  storage.metadata.urls (and databases)
+#                     key intent-dataplane-storage.yaml     storage.redis.urls, runtime.redis.urls
+#                                                           (the control plane's metadata Redis), and databases
+#   intent-inference  key inference.yaml                    embedders_connection_details for the provider below
+# Register customer databases in both storage keys with the same ids (intent/helm README, "Storage").
+# The license, tenant, Identity Service connection, and credentials are the suite's.
+
+intent:
+  storage:
+    existingSecret: intent-storage
+  inference:
+    existingSecret: intent-inference
+    models:
+      - provider: openai
+        model: text-embedding-3-small
+        dimensions: 1536

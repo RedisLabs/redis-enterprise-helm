@@ -1,0 +1,189 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "global": {
+      "type": "object",
+      "properties": {
+        "iris": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "products": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "memory": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": { "type": "boolean", "description": "Install Agent Memory." }
+                  }
+                },
+                "playbook": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": { "type": "boolean", "description": "Install Agent Playbook." }
+                  }
+                },
+                "lens": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": { "type": "boolean", "description": "Install Lens." }
+                  }
+                },
+                "contextGateway": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": { "type": "boolean", "description": "Install Context Gateway." }
+                  }
+                },
+                "intent": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": { "type": "boolean", "description": "Install Intent Router." }
+                  }
+                }
+              }
+            },
+            "secrets": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "generate": {
+                  "type": "boolean",
+                  "description": "Generate the suite's credentials as lookup-guarded hook Secrets (templates/credentials.yaml)."
+                },
+                "dataplaneServiceCredentials": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "existingSecret": {
+                      "type": "string",
+                      "description": "With generate: false, the Secret holding each enabled product's data-plane credential for the Identity Service, keyed by credential name (memory-dp, playbook-dp)."
+                    }
+                  }
+                },
+                "controlplaneInternalTokens": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "existingSecret": {
+                      "type": "string",
+                      "description": "With generate: false, the Secret holding each enabled product's control-plane internal token, keyed by product (memory, playbook)."
+                    }
+                  }
+                }
+              }
+            },
+            "renderMode": {
+              "type": "string",
+              "enum": ["helm", "gitops"],
+              "description": "helm: installed with helm install/upgrade, which can generate credentials. gitops: rendered offline (helm template, Argo CD, Flux); evaluates no lookup and renders no credential hook."
+            },
+            "clusterDomain": {
+              "type": "string",
+              "maxLength": 253,
+              "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$",
+              "description": "The cluster DNS domain, dot-separated DNS labels; every derived in-cluster URL and the default workload identity issuer use it."
+            },
+            "tenantId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^ |\\x00-\\x1f\\x7f]([^|\\x00-\\x1f\\x7f]*[^ |\\x00-\\x1f\\x7f])?$",
+              "description": "The release's one tenant: each product's tenantId and the Identity Service single tenant. At most 64 characters, Agent Playbook's limit. Identity Service's tenant format: no | (its grant-record delimiter) and no control characters; no leading or trailing space either, because Agent Playbook trims the tenant."
+            },
+            "license": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "existingSecret": { "type": "string", "minLength": 1, "description": "The suite license Secret." },
+                "secretKey": { "type": "string", "minLength": 1, "description": "The license key in that Secret." }
+              }
+            },
+            "workloadIdentity": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "The cluster's ServiceAccount token issuer. Empty: https://kubernetes.default.svc.<clusterDomain> and <issuer>/openid/v1/jwks. EKS must set both.",
+              "properties": {
+                "issuer": { "type": "string", "pattern": "^(https://[^\\s/?#@]+([/?#]\\S*)?)?$", "description": "https only: the worker identity has no insecure-transport setting." },
+                "jwksURI": { "type": "string", "pattern": "^(https://[^\\s/?#@]+([/?#]\\S*)?)?$" }
+              }
+            },
+            "extraction": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean", "description": "Playbook -> Memory extraction: derives the Playbook worker and both products' machine trust." }
+              }
+            },
+            "auth": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "oidc": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "description": "The IdP, configured once for the UI, the control planes, and Identity Service Control.",
+                  "properties": {
+                    "issuer": { "type": "string", "pattern": "^(https?://[^\\s/?#@]+([/?#]\\S*)?)?$", "description": "Discovery issuer (UI sso.issuer). Empty: no control-plane OIDC." },
+                    "accessTokenIssuer": { "type": "string", "pattern": "^(https?://[^\\s/?#@]+([/?#]\\S*)?)?$", "description": "The iss of access tokens (e.g. AD FS); defaults to issuer." },
+                    "jwksURI": { "type": "string", "pattern": "^(https?://[^\\s/?#@]+([/?#]\\S*)?)?$" },
+                    "audience": { "type": "string", "minLength": 1 },
+                    "roleClaims": { "type": "array", "minItems": 1, "description": "ui-auth refuses role mappings without a claim to read them from. Each name is looked up verbatim in the token, so it may not start or end with whitespace.", "items": { "type": "string", "pattern": "^\\S(.*\\S)?$" } }
+                  }
+                },
+                "roleBindings": {
+                  "type": "array",
+                  "description": "Operator policy: IdP group to Iris role, suite-wide (suite_admin, no product) or per product (product_admin, operator, viewer).",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["group", "role"],
+                    "properties": {
+                      "group": { "type": "string", "pattern": "\\S", "description": "Compared trimmed; the Identity Service refuses an empty claim_value at startup." },
+                      "role": { "type": "string", "enum": ["suite_admin", "product_admin", "operator", "viewer"] },
+                      "product": { "type": "string", "enum": ["agent_memory", "playbook", "lens", "context_gateway", "intent", "identity"] }
+                    },
+                    "if": { "required": ["product"] },
+                    "then": { "properties": { "role": { "enum": ["product_admin", "operator", "viewer"] } } },
+                    "else": { "properties": { "role": { "const": "suite_admin" } } }
+                  }
+                }
+              }
+            },
+            "publicURL": { "type": "string", "description": "The suite's external URL; the UI ingress host and the SSO redirect base." },
+            "ingress": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "className": { "type": "string" },
+                "tls": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": { "secretName": { "type": "string" } }
+                }
+              }
+            }
+          }
+        },
+        "tls": {
+          "type": "object",
+          "properties": {
+            "caCertSecret": { "type": "string", "description": "CA trust for Redis, the IdP, and in-cluster TLS, mounted by every product." }
+          }
+        },
+        "imagePullSecrets": {
+          "type": "array",
+          "description": "Pull secrets for every pod.",
+          "items": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string", "minLength": 1 } } }
+        }
+      }
+    }
+  }
+}

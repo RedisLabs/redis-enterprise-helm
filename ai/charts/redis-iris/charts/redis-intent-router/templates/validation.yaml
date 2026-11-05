@@ -1,0 +1,127 @@
+{{- $at := include "redis-intent-router.at" . -}}
+{{- $s := include "redis-intent-router.suite" . | fromJson -}}
+{{- if and .Values.tracing.enabled (not (trim .Values.tracing.otlpGRPCEndpoint)) -}}
+{{- fail (printf "%stracing.otlpGRPCEndpoint is required when tracing.enabled=true" $at) -}}
+{{- end -}}
+{{- $_ := required (printf "%stenantId is required" $at) $s.tenantId -}}
+{{- if or (not (trim (toString $s.tenantId))) (ne (toString $s.tenantId) (trim (toString $s.tenantId))) -}}
+{{- fail (printf "%stenantId %q is blank or padded with whitespace: it must name the deployment's tenant" $at $s.tenantId) -}}
+{{- end -}}
+{{- /*
+  The first convergence pass runs before the listener opens, so the liveness probe
+  counts down while it works. Its first probe is at initialDelaySeconds; the pod is
+  restarted at the failureThreshold-th failed probe, that is initialDelaySeconds +
+  periodSeconds x (failureThreshold - 1) after start (the probes before it do not
+  restart anything). The listener must be up before that, with a margin for the
+  process to start. An empty or zero budget is the process's own default, 60s, so it
+  is checked as that.
+*/ -}}
+{{- $live := include "redis-intent-router.liveness" . | fromJson -}}
+{{- $killAt := add (int $live.initialDelaySeconds) (mul (int $live.periodSeconds) (sub (int $live.failureThreshold) 1)) -}}
+{{- $margin := 10 -}}
+{{- $budget := toString .Values.dataplane.startupBudget -}}
+{{- if not (regexMatch "^([0-9]+h)?([0-9]+m)?([0-9]+(\\.[0-9]+)?s)?$" $budget) -}}
+{{- fail (printf "%sdataplane.startupBudget %q must be a duration in hours, minutes and seconds, such as 20s or 1m" $at $budget) -}}
+{{- end -}}
+{{- $hours := float64 (default "0" (trimSuffix "h" (regexFind "[0-9]+h" $budget))) -}}
+{{- $minutes := float64 (default "0" (trimSuffix "m" (regexFind "[0-9]+m" $budget))) -}}
+{{- $secs := float64 (default "0" (trimSuffix "s" (regexFind "[0-9]+(\\.[0-9]+)?s" $budget))) -}}
+{{- $seconds := addf (mulf $hours 3600.0) (mulf $minutes 60.0) $secs -}}
+{{- $processDefault := 60.0 -}}
+{{- if le $seconds 0.0 -}}
+{{- $seconds = $processDefault -}}
+{{- end -}}
+{{- if gt $seconds (sub $killAt $margin | float64) -}}
+{{- fail (printf "%sdataplane.startupBudget %q (%v seconds; an empty or zero budget is the process default of 60s) is longer than the data plane's liveness probe allows: the pod is restarted %d seconds after start (initialDelaySeconds %d + periodSeconds %d x (failureThreshold %d - 1)), so the budget may be at most %d seconds" $at $budget $seconds $killAt (int $live.initialDelaySeconds) (int $live.periodSeconds) (int $live.failureThreshold) (sub $killAt $margin)) -}}
+{{- end -}}
+{{- $_ := required (printf "%sstorage.existingSecret is required" $at) .Values.storage.existingSecret -}}
+{{- $_ := required (printf "%slicense.existingSecret is required" $at) $s.license.existingSecret -}}
+{{- $_ := required (printf "%scontrolplane.image.tag is required" $at) .Values.controlplane.image.tag -}}
+{{- $_ := required (printf "%sdataplane.image.tag is required" $at) .Values.dataplane.image.tag -}}
+{{- /*
+  The connection to the Identity Service release. These guards check this
+  chart's own settings only: consistency with that release (credential
+  registration, validator, tenant) is the deployment automation's job. The data
+  plane always authenticates with agent keys, so the URL and the credential are
+  always required.
+*/ -}}
+{{- $fips := eq (include "redis-intent-router.securityProfile" .) "fips" -}}
+{{- $idsURL := required (printf "%sdataplane.identityServiceBaseURL is required: the URL of the Identity Service release the data plane introspects agent keys against" $at) $s.identityServiceBaseURL -}}
+{{- $_ := required (printf "%sidentityService.credential.existingSecret is required: the data plane's runtime credential registered on the Identity Service release" $at) $s.credential.existingSecret -}}
+{{- if and $fips $s.allowInsecureTransport -}}
+{{- fail "identityService.allowInsecureTransport=true is refused under the fips security profile: Identity Service URLs must be https://" -}}
+{{- end -}}
+{{- if and $idsURL (not (hasPrefix "https://" $idsURL)) (not $s.allowInsecureTransport) -}}
+{{- fail (printf "%sdataplane.identityServiceBaseURL %q must be https:// (an http:// URL is accepted only with identityService.allowInsecureTransport=true and no fips security profile)" $at $idsURL) -}}
+{{- end -}}
+{{- if not .Values.inference.models -}}
+{{- fail (printf "%sinference.models must explicitly configure at least one embedding model" $at) -}}
+{{- end -}}
+{{- if gt (len .Values.inference.models) 1 -}}
+{{- fail (printf "%sinference.models: a deployment serves one embedding model" $at) -}}
+{{- end -}}
+{{- $requiresInferenceSecret := false -}}
+{{- range .Values.inference.models -}}
+{{- if ne (lower (trim .provider)) "noop" -}}
+{{- $requiresInferenceSecret = true -}}
+{{- else if not $.Values.inference.allowLocalModels -}}
+{{- fail (printf "%sinference.models: the noop provider is for development and tests; set %sinference.allowLocalModels=true to offer it" $at $at) -}}
+{{- end -}}
+{{- end -}}
+{{- if and $requiresInferenceSecret (not .Values.inference.existingSecret) -}}
+{{- fail (printf "%sinference.existingSecret is required when a non-noop provider is configured" $at) -}}
+{{- end -}}
+{{- $dpo := $s.dataplaneOIDC -}}
+{{- if $dpo.enabled -}}
+{{- if not (trim $s.audience) -}}
+{{- fail "auth.oidc.audience is required when dataplane.oidc is enabled: set the audience the IdP issues for the Iris API" -}}
+{{- end -}}
+{{- if contains "*" $s.audience -}}
+{{- fail "auth.oidc.audience must not contain a wildcard" -}}
+{{- end -}}
+{{- $issuer := required "dataplane.oidc.issuer is required when OIDC is enabled" $dpo.issuer -}}
+{{- $jwksURI := required "dataplane.oidc.jwksURI is required when OIDC is enabled" $dpo.jwksURI -}}
+{{- $tenantIDClaim := trim $dpo.tenantIDClaim -}}
+{{- $staticTenantID := trim $dpo.staticTenantID -}}
+{{- if and (not $tenantIDClaim) (not $staticTenantID) -}}
+{{- fail "dataplane.oidc requires tenantIDClaim or staticTenantID" -}}
+{{- end -}}
+{{- if and $tenantIDClaim $staticTenantID -}}
+{{- fail "dataplane.oidc.tenantIDClaim and staticTenantID are mutually exclusive" -}}
+{{- end -}}
+{{- if and $staticTenantID (ne $staticTenantID (trim $s.tenantId)) -}}
+{{- fail (printf "dataplane.oidc.staticTenantID %q differs from tenantId %q: the data plane rejects tokens whose tenant differs from the deployment tenant" $staticTenantID (trim $s.tenantId)) -}}
+{{- end -}}
+{{- if not $dpo.roleMappings -}}
+{{- fail "dataplane.oidc.roleMappings is required: no operator is admitted without a trusted role mapping" -}}
+{{- end -}}
+{{- /*
+The issuer is an identifier compared with a token's iss and never fetched, so an http:// issuer (AD FS, an Iris IdP
+behind a plain-HTTP name) needs no transport opt-in, also under FIPS. Only the JWKS URI is fetched, so only it carries
+the HTTPS rule.
+*/ -}}
+{{- if and (not $dpo.allowInsecureTransport) (hasPrefix "http://" $jwksURI) -}}
+{{- fail "dataplane.oidc.jwksURI over HTTP requires allowInsecureTransport=true" -}}
+{{- end -}}
+{{- if and $fips (or $dpo.allowInsecureTransport (not (hasPrefix "https://" $jwksURI))) -}}
+{{- fail "FIPS requires an HTTPS dataplane.oidc.jwksURI and allowInsecureTransport=false" -}}
+{{- end -}}
+{{- end -}}
+{{- if and $s.controlplaneOIDC (not $dpo.enabled) -}}
+{{- fail "controlplane.oidc requires dataplane.oidc.enabled: the control plane validates operator tokens against the same issuer" -}}
+{{- end -}}
+{{- $credentials := list "controlplane.adminToken" "controlplane.internalToken" -}}
+{{- range $path := $credentials -}}
+{{- $cred := $.Values -}}
+{{- range $part := splitList "." $path -}}{{- $cred = index $cred $part -}}{{- end -}}
+{{- if and (not $cred.existingSecret) (not $cred.autoGenerate) (not (and (eq $path "controlplane.internalToken") $s.internalToken.suite)) -}}
+{{- fail (printf "%s%s: set existingSecret or autoGenerate=true" $at $path) -}}
+{{- end -}}
+{{- end -}}
+{{- /* The credentials guard different surfaces, so none may alias another. */ -}}
+{{- $adminRef := printf "%s/%s" (include "redis-intent-router.controlplaneAdminTokenSecretName" .) .Values.controlplane.adminToken.secretKey -}}
+{{- $internalRef := printf "%s/%s" (include "redis-intent-router.controlplaneInternalTokenSecretName" .) $s.internalToken.secretKey -}}
+{{- $credentialRef := printf "%s/%s" $s.credential.existingSecret $s.credential.secretKey -}}
+{{- if or (eq $adminRef $internalRef) (eq $adminRef $credentialRef) (eq $internalRef $credentialRef) -}}
+{{- fail "control-plane admin, product-validation (internal), and data-plane Identity Service credentials must reference three different Secret keys" -}}
+{{- end -}}

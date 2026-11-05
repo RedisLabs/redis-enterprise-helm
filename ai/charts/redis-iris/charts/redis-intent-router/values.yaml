@@ -1,0 +1,261 @@
+nameOverride: ""
+fullnameOverride: ""
+
+# The one tenant this installation serves. Required.
+tenantId: ""
+
+# Audience of IdP access tokens, shared by every Iris service. Set it to the
+# value the IdP puts in the token's aud: the Iris API identifier on most IdPs, or
+# the API's Application (client) ID GUID on Entra ID v2. Use the same value in
+# every Iris chart. Used only when dataplane.oidc or controlplane.oidc is enabled.
+auth:
+  oidc:
+    audience: ""  # default api://redis-iris; redis-iris sets global.iris.auth.oidc.audience
+
+# The control plane and data plane send spans to a deployment-owned OTLP
+# collector. The shared exporter uses plaintext gRPC; use a trusted local hop.
+tracing:
+  enabled: false
+  otlpGRPCEndpoint: ""
+
+# Falls back to global.imagePullSecrets when empty.
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+security:
+  # Empty selects the default Go crypto runtime (or global.security.profile when
+  # set). Set fips only with rediss:// storage URLs and an https://
+  # dataplane.identityServiceBaseURL.
+  profile: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+
+tls:
+  # Optional Secret containing additional CA certificates (falls back to
+  # global.tls.caCertSecret). Every container receives it at /etc/ssl/custom
+  # and SSL_CERT_DIR points at that directory; the data plane trusts it for an
+  # https:// dataplane.identityServiceBaseURL.
+  caCertSecret: ""
+  caCertSecretChecksum: ""
+
+license:
+  existingSecret: ""
+  secretKey: ""  # default license; redis-iris sets global.iris.license.secretKey
+  existingSecretChecksum: ""
+
+storage:
+  # This Secret must already exist. It holds one key per service, each a YAML
+  # overlay merged over the rendered config:
+  #   controlplaneKey     storage.metadata.urls   (Router records)
+  #                       databases               (customer databases; see below)
+  #   dataplaneKey        storage.redis.urls      (runtime records, and the default database)
+  #                       runtime.redis.urls      (the mailbox Redis, normally the control plane's metadata Redis)
+  #                       databases               (customer databases; see below)
+  #
+  # The Identity Service's metadata Redis belongs to the Identity Service
+  # release, not to this Secret.
+  #
+  # Customer databases. A Router keeps its intents, examples and search index in
+  # the Redis it names with `databaseId` when it is created; one that names none
+  # uses the data plane's storage.redis. Register the databases in BOTH overlays,
+  # with the same IDs (1-32 letters, digits or hyphens, case-insensitive):
+  #   databases:
+  #     customer-a: {urls: ["rediss://:password@redis-a.example:6379"]}
+  # The control plane only checks that an ID is registered and never connects;
+  # the data plane connects. URLs can carry a login, which is why they live in
+  # this Secret and not in values. A database must be a Redis with RediSearch
+  # and must not be the mailbox Redis. Changing a URL or a login needs a
+  # restart (a changed Secret checksum rolls the pods). Routers cannot move.
+  # Each plane keeps its own data in its own Redis. The planes never call each
+  # other: the control plane writes each Router's spec into a mailbox in its
+  # metadata Redis, which the data plane polls and answers through, so the
+  # data-plane overlay also names that Redis.
+  existingSecret: ""
+  controlplaneKey: intent-controlplane-storage.yaml
+  dataplaneKey: intent-dataplane-storage.yaml
+  existingSecretChecksum: ""
+  keyPrefix: iris:intent
+  # Maximum Routers in this installation's tenant inventory.
+  maxRoutersPerTenant: 128
+
+inference:
+  # Optional Secret containing `embedders_connection_details` for the data
+  # plane. It is required when any configured provider is not `noop`.
+  existingSecret: ""
+  secretKey: inference.yaml
+  existingSecretChecksum: ""
+  # Required at install time. One embedding model per deployment. Public,
+  # immutable vector-space identities; provider names select private
+  # connection entries in the Secret above. The control plane also serves this
+  # list, as EMBEDDING models that need no caller credential, from
+  # GET /iris/v1/intent/models, so the API and the deployment cannot disagree.
+  models: []
+  # The `noop` provider matches by shared words, not meaning, and exists for
+  # development and tests. The chart refuses it unless this is true, and the
+  # services refuse it in the production profile (which the chart always sets).
+  allowLocalModels: false
+
+# PodDisruptionBudget (maxUnavailable: 1) for each Deployment that keeps more than one Pod
+# (minReplicas under autoscaling). Off by default; redis-iris turns it on.
+podDisruptionBudget:
+  enabled: false
+
+controlplane:
+  replicaCount: 1
+  image:
+    repository: redislabs/iris-intent-router-control
+    # The image release this chart version ships; override to run another.
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 9400
+  reconcile:
+    interval: 5s
+    provisioningDeadline: 10m
+  # Operator bearer tokens validated locally against the dataplane.oidc issuer,
+  # JWKS, tenant source and roleMappings. The audience is auth.oidc.audience, the
+  # same value as the data plane. The admin token keeps working.
+  oidc:
+    enabled: null  # false when unset; redis-iris derives it
+  # Make naming a registered database mandatory when a Router is created. Needs
+  # at least one entry under `databases` in the storage Secret's control-plane key.
+  requireDatabase: false
+  # Bring-your-own control-plane config. When existingSecret is set the chart
+  # renders no control-plane ConfigMap and mounts that Secret instead.
+  config:
+    existingSecret: ""
+    secretKey: intent-controlplane.yaml
+    existingSecretChecksum: ""
+  adminToken:
+    # BYO existingSecret takes precedence. Otherwise the chart creates a
+    # stable random token Secret and preserves it across Helm upgrades.
+    existingSecret: ""
+    secretKey: token
+    autoGenerate: true
+    existingSecretChecksum: ""
+  # Guards the grant-validation callback the Identity Service release makes.
+  # Register the same Secret key as productValidation.products.intent.credential
+  # on that release.
+  internalToken:
+    existingSecret: ""
+    secretKey: token
+    autoGenerate: true
+    existingSecretChecksum: ""
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+dataplane:
+  replicaCount: 1
+  # Deployment spec.strategy, rendered verbatim when set. redis-iris fixes it to
+  # RollingUpdate with maxUnavailable 0 and maxSurge 1.
+  strategy: {}
+  image:
+    repository: redislabs/iris-intent-router-data
+    # The image release this chart version ships; override to run another.
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 9401
+  # URL of the Identity Service release the data plane introspects agent keys
+  # against (required). Must be https:// unless
+  # identityService.allowInsecureTransport=true.
+  identityServiceBaseURL: ""
+  # Console operators sign in through your IdP, and the console sends their access
+  # token to the data plane. Agent keys stay enabled. The token's tenant must equal
+  # tenantId. A mapped product_admin or suite_admin has full access to every Router
+  # of that tenant; a mapped operator or viewer is admitted but holds no Router,
+  # exactly as in the Playbook chart. The control plane validates the same tokens
+  # against the same issuer (controlplane.oidc).
+  oidc:
+    enabled: null  # false when unset; redis-iris derives it
+    issuer: ""
+    jwksURI: ""
+    # Set exactly one tenant source; chart validation rejects configurations with both.
+    tenantIDClaim: ""
+    staticTenantID: ""
+    # Empty uses the shared defaults: roles and groups.
+    roleClaims: []
+    # Trusted human IdP group -> Iris role, also used by controlplane.oidc. Empty
+    # admits no operator; raw role names are never accepted implicitly.
+    roleMappings: {}
+    allowInsecureTransport: null  # false when unset
+  # Optional overrides, copied verbatim (snake_case keys) into the data-plane
+  # config. Empty keeps the service defaults.
+  # How often the data plane reads the mailbox.
+  pollInterval: 2s
+  # How long the pass that converges Routers before the listener opens may take. The
+  # liveness probe restarts the pod 50s after start (first probe at 30s, then every 10s,
+  # the third failure at 50s), so the chart refuses a budget over 40s (an empty or zero
+  # one is the process default of 60s, also refused). The Routers the pass does not
+  # reach are picked up by the passes that follow. Use hours, minutes and seconds, such
+  # as 20s.
+  startupBudget: 20s
+  limits: {}
+  match: {}
+  # Vector index tuning, for example {hnsw: {m: 16, ef_construction: 200, ef_runtime: 100}, query_timeout: 1s}.
+  # Each Router has its own HNSW index; the values shape recall and memory, not correctness.
+  # `verify_interval` (default 60s, at least 5s) is how often an idle Router's index is
+  # inspected, spread by +/-20% per Router; the query path finds a lost index on its own.
+  search: {}
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# The Identity Service release this chart connects to. The chart deploys no
+# Identity Service; install it first as its own release.
+identityService:
+  # Accept http:// Identity Service URLs (dataplane.identityServiceBaseURL), for
+  # example the in-cluster Service. Refused under the fips security profile.
+  # False when unset; redis-iris turns it on for its in-cluster Identity Service.
+  allowInsecureTransport: null
+  # The data plane's runtime credential (subject intent-dp, operation
+  # api-key-introspect, product intent). Deployment automation provisions the
+  # Secret and registers it on the Identity Service release. Mounted at
+  # /etc/identity-service/runtime/intent-dp/token. Required.
+  credential:
+    existingSecret: ""
+    secretKey: token
+    # Set to roll the data plane when the Secret's content changes.
+    existingSecretChecksum: ""
+
+tests:
+  # Enable the health checks and shared security-profile assertions for
+  # `helm test`. The default omits all test Pods and their read-only RBAC.
+  enabled: false
+  securityProfileImage:
+    repository: alpine/k8s
+    tag: "1.35.4"
+    pullPolicy: IfNotPresent
+
+# Umbrella-chart fallbacks, read when the local value is empty:
+# security.profile, imagePullSecrets, tls.caCertSecret. Under redis-iris, global.iris
+# supplies the suite-wide settings (README "Running under redis-iris").
+global: {}
