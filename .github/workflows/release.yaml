@@ -24,11 +24,35 @@ jobs:
       chart_version: ${{ steps.chart-releaser.outputs.chart_version }}
 
     steps:
-      - name: Get PR details and check approval
+      - name: Authorize release and check approval
         id: pr
         uses: actions/github-script@v9
         with:
           script: |
+            const allowedPermissions = new Set(['write', 'maintain', 'admin']);
+
+            const getRepositoryPermission = async (username) => {
+              const response = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username
+              });
+              return response.data.permission;
+            };
+
+            // An approved PR can intentionally wait for tests or the final
+            // release decision. Only a trusted repository user may publish it.
+            const commenter = context.payload.comment.user.login;
+            const commenterPermission = await getRepositoryPermission(commenter);
+
+            if (!allowedPermissions.has(commenterPermission)) {
+              core.setFailed(
+                `User ${commenter} cannot trigger a release: repository permission ` +
+                `${commenterPermission} is below write.`
+              );
+              return;
+            }
+
             const pr = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -41,21 +65,52 @@ jobs:
               return;
             }
 
-            // Check if PR is approved
-            const reviews = await github.rest.pulls.listReviews({
+            // Keep the latest decisive review state for each reviewer. A later
+            // CHANGES_REQUESTED or DISMISSED review must not leave an older
+            // approval eligible for release.
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: context.issue.number
+              pull_number: context.issue.number,
+              per_page: 100
             });
 
-            const approvedReviews = reviews.data.filter(review => review.state === 'APPROVED');
+            const decisiveStates = new Set(['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED']);
+            const latestReviewByUser = new Map();
 
-            if (approvedReviews.length === 0) {
-              core.setFailed('PR must be approved before release. Please get an approval first.');
+            for (const review of reviews) {
+              const reviewer = review.user?.login;
+              if (reviewer && decisiveStates.has(review.state)) {
+                latestReviewByUser.set(reviewer, review);
+              }
+            }
+
+            const approvedReviews = [...latestReviewByUser.values()]
+              .filter(review => review.state === 'APPROVED');
+
+            const approvedReviewersWithPermission = await Promise.all(
+              approvedReviews.map(async review => ({
+                review,
+                permission: await getRepositoryPermission(review.user.login)
+              }))
+            );
+
+            const authorizedApprovals = approvedReviewersWithPermission
+              .filter(({ permission }) => allowedPermissions.has(permission));
+
+            if (authorizedApprovals.length === 0) {
+              core.setFailed(
+                'PR must be approved by a reviewer with write, maintain, or admin permission.'
+              );
               return;
             }
 
-            core.info(`PR is approved by: ${approvedReviews.map(r => r.user.login).join(', ')}`);
+            core.info(
+              `Release triggered by ${commenter} (${commenterPermission}); ` +
+              `authorized approval from: ${authorizedApprovals
+                .map(({ review, permission }) => `${review.user.login} (${permission})`)
+                .join(', ')}`
+            );
 
             core.setOutput('base_ref', pr.data.base.ref);
             core.setOutput('head_ref', pr.data.head.ref);
