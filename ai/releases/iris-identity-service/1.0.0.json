@@ -22,6 +22,13 @@
   "publication": {
     "status": "published",
     "sourceRun": "https://github.com/redislabsdev/iris/actions/runs/41891133030",
-    "chartSha256": "sha256:a76814eb1aca602494d44a7f24a719e0f1983d8635344f8ef32b6b2cdd91eddd"
+    "chartSha256": "sha256:a76814eb1aca602494d44a7f24a719e0f1983d8635344f8ef32b6b2cdd91eddd",
+    "contentsDigest": "sha256:c184ea3c6961778a6f4a400f35596ff074d5e83bf2b9a1da2194da0518261197",
+    "evidenceRecovery": {
+      "method": "Retained original workflow artifact matched existing chartSha256; normalized contents matched published release asset.",
+      "artifact": "https://api.github.com/repos/redislabsdev/iris/actions/artifacts/13354167303",
+      "artifactDigest": "sha256:fd5ddab72a105fec7344ab7de28006a459644d496aefd402253ad8cdb4cc6bcd",
+      "digestImplementation": "https://github.com/redislabsdev/iris/blob/1118d570331b35007f9e95b9c145deab4bec2a58/.github/scripts/chart-contents.js"
+    }
   }
 }
