@@ -467,6 +467,59 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-intent-router-1.0.0/redis-intent-router-1.0.0.tgz
     version: 1.0.0
+  redis-iris:
+  - apiVersion: v2
+    appVersion: 1.0.0
+    created: "2026-11-05T12:24:54.831392431Z"
+    dependencies:
+    - alias: identityService
+      name: iris-identity-service
+      repository: https://helm.redis.io/ai
+      version: 1.0.0
+    - alias: ui
+      name: redis-iris-ui
+      repository: https://helm.redis.io/ai
+      version: 1.0.0
+    - alias: memory
+      condition: global.iris.products.memory.enabled
+      name: redis-agent-memory
+      repository: https://helm.redis.io/ai
+      version: 1.0.0
+    - alias: playbook
+      condition: global.iris.products.playbook.enabled
+      name: redis-agent-playbook
+      repository: https://helm.redis.io/ai
+      version: 1.0.0
+    - alias: lens
+      condition: global.iris.products.lens.enabled
+      name: redis-lens
+      repository: https://helm.redis.io/ai
+      version: 1.0.0
+    - alias: contextGateway
+      condition: global.iris.products.contextGateway.enabled
+      name: redis-context-gateway
+      repository: https://helm.redis.io/ai
+      version: 1.0.0
+    - alias: intent
+      condition: global.iris.products.intent.enabled
+      name: redis-intent-router
+      repository: https://helm.redis.io/ai
+      version: 1.0.0
+    description: 'Redis Iris on-prem suite: the Identity Service, Agent Memory, Agent
+      Playbook, Lens, Context Gateway, Intent Router, and the on-prem UI installed
+      as one release.'
+    digest: b261890421cab434b8a442afa2c434708b9bdc585b47b46a28b45be22dcfb2c1
+    home: https://github.com/Redislabsdev/iris
+    keywords:
+    - redis
+    - ai
+    - on-prem
+    kubeVersion: '>=1.28.0-0'
+    name: redis-iris
+    type: application
+    urls:
+    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-iris-1.0.0/redis-iris-1.0.0.tgz
+    version: 1.0.0
   redis-iris-onprem-lib:
   - apiVersion: v2
     created: "2026-11-03T09:08:37.484356909Z"
@@ -625,4 +678,4 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-lens-0.10.2/redis-lens-0.10.2.tgz
     version: 0.10.2
-generated: "2026-11-04T21:03:02.255818662Z"
+generated: "2026-11-05T12:24:54.831430328Z"
