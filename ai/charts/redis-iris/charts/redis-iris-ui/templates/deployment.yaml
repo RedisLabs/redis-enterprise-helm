@@ -1,0 +1,93 @@
+{{- define "ui.annotations" -}}
+checksum/nginx-config: {{ include "ui.nginxConfig" . | sha256sum | quote }}
+checksum/runtime-config: {{ include "ui.runtimeConfig" . | sha256sum | quote }}
+{{- end }}
+
+{{- define "ui.args" -}}
+- nginx
+- -g
+- daemon off;
+{{- end }}
+
+{{- define "ui.env" -}}
+# Makes the base image's docker-entrypoint.d scripts export
+# NGINX_LOCAL_RESOLVERS (parsed from this pod's own /etc/resolv.conf) and
+# envsubst it into the nginx-config template below -- see that ConfigMap's
+# "resolver ${NGINX_LOCAL_RESOLVERS}" for why.
+- name: NGINX_ENTRYPOINT_LOCAL_RESOLVERS
+  value: "1"
+{{- end }}
+
+{{- define "ui.volumeMounts" -}}
+- name: nginx-config
+  mountPath: /etc/nginx/templates/default.conf.template
+  subPath: default.conf.template
+  readOnly: true
+- name: runtime-config
+  mountPath: /etc/ui/runtime-config
+  readOnly: true
+{{- range (include "ui.resolved" $ | fromJson).products }}
+{{- if .upstream.caSecretName }}
+- name: {{ include "ui.caSecretVolumeName" .key }}
+  mountPath: /etc/nginx/ca/{{ .key }}
+  readOnly: true
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- define "ui.volumes" -}}
+- name: nginx-config
+  configMap:
+    name: {{ include "ui.nginxConfigName" . }}
+- name: runtime-config
+  configMap:
+    name: {{ include "ui.runtimeConfigName" . }}
+{{- range (include "ui.resolved" $ | fromJson).products }}
+{{- if .upstream.caSecretName }}
+- name: {{ include "ui.caSecretVolumeName" .key }}
+  secret:
+    secretName: {{ .upstream.caSecretName }}
+    items:
+      - key: ca.crt
+        path: ca.crt
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+"port" is always 8080, independent of .Values.service.port (the Service's
+own, freely configurable exposed port -- see service.yaml/values.schema.json):
+nginx runs as uid 101 with every capability dropped, so it can never bind a
+privileged port (<1024) inside the container regardless of what the Service
+exposes externally. The shared lib's Service always targets this port by
+name ("http"), not by number, so the two stay correctly decoupled.
+*/}}
+{{- include "redis-onprem.deployment" (dict
+  "root" .
+  "name" (include "ui.fullname" .)
+  "component" "gateway"
+  "labelsTemplate" "ui.labels"
+  "selectorLabelsTemplate" "ui.selectorLabels"
+  "replicas" .Values.replicaCount
+  "annotationsTemplate" "ui.annotations"
+  "podAnnotations" .Values.podAnnotations
+  "podLabels" .Values.podLabels
+  "imagePullSecrets" (include "redis-onprem.suite.imagePullSecrets" . | fromJsonArray)
+  "serviceAccountName" (include "ui.serviceAccountName" .)
+  "automountServiceAccountToken" false
+  "podSecurityContext" .Values.podSecurityContext
+  "containerName" "gateway"
+  "argsTemplate" "ui.args"
+  "envTemplate" "ui.env"
+  "containerSecurityContext" .Values.securityContext
+  "image" .Values.image
+  "port" 8080
+  "livenessProbe" .Values.livenessProbe
+  "readinessProbe" .Values.readinessProbe
+  "resources" .Values.resources
+  "volumeMountsTemplate" "ui.volumeMounts"
+  "volumesTemplate" "ui.volumes"
+  "nodeSelector" .Values.nodeSelector
+  "affinity" .Values.affinity
+  "tolerations" .Values.tolerations
+) }}

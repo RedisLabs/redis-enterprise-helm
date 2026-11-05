@@ -1,0 +1,551 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "tenantId",
+    "instance",
+    "ingest",
+    "license",
+    "storage",
+    "dataplane",
+    "controlplane",
+    "identityService",
+    "tests"
+  ],
+  "properties": {
+    "nameOverride": {
+      "type": "string"
+    },
+    "fullnameOverride": {
+      "type": "string"
+    },
+    "tenantId": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "auth": {
+      "type": "object",
+      "required": ["oidc"],
+      "properties": {
+        "oidc": {
+          "type": "object",
+          "description": "Settings shared by every Iris service that validates IdP access tokens.",
+          "required": ["audience"],
+          "properties": {
+            "audience": {
+              "type": "string",
+              "description": "Audience accepted on IdP access tokens. Empty means api://redis-iris; redis-iris sets global.iris.auth.oidc.audience."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "instance": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+        },
+        "retention": {
+          "type": "object",
+          "properties": {
+            "streamTrim": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$"
+            },
+            "contentTTL": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$"
+            },
+            "indexRetention": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$"
+            }
+          },
+          "required": [
+            "streamTrim",
+            "contentTTL",
+            "indexRetention"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "retention"
+      ],
+      "additionalProperties": false
+    },
+    "ingest": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "region": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        }
+      },
+      "required": [
+        "enabled",
+        "region"
+      ],
+      "additionalProperties": false
+    },
+    "imagePullSecrets": {
+      "type": "array"
+    },
+    "security": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "type": "string",
+          "enum": ["", "fips"],
+          "description": "Empty falls back to global.security.profile, else standard."
+        }
+      },
+      "additionalProperties": false
+    },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "create": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "annotations": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "description": "PodDisruptionBudgets (maxUnavailable: 1) for every Deployment that keeps more than one Pod. Off by default; redis-iris turns it on.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "podSecurityContext": {
+      "type": "object"
+    },
+    "securityContext": {
+      "type": "object"
+    },
+    "tls": {
+      "type": "object",
+      "properties": {
+        "caCertSecret": {
+          "type": "string"
+        },
+        "caCertSecretChecksum": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "license": {
+      "type": "object",
+      "properties": {
+        "existingSecret": {
+          "type": "string"
+        },
+        "secretKey": {
+          "type": "string",
+          "description": "Empty means license; redis-iris sets global.iris.license.secretKey."
+        },
+        "existingSecretChecksum": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "existingSecret",
+        "secretKey",
+        "existingSecretChecksum"
+      ],
+      "additionalProperties": false
+    },
+    "storage": {
+      "type": "object",
+      "properties": {
+        "existingSecret": {
+          "type": "string"
+        },
+        "dataplaneKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "controlplaneKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "identityServiceKey": {
+          "not": {},
+          "description": "Removed: the Identity Service metadata Secret belongs to the Identity Service release."
+        },
+        "existingSecretChecksum": {
+          "type": "string"
+        },
+        "keyPrefix": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^*?\\[\\]{}[:space:]]+$"
+        }
+      },
+      "required": [
+        "existingSecret",
+        "dataplaneKey",
+        "controlplaneKey",
+        "existingSecretChecksum",
+        "keyPrefix"
+      ],
+      "additionalProperties": false
+    },
+    "dataplane": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tag": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
+            }
+          },
+          "required": [
+            "repository",
+            "tag",
+            "pullPolicy"
+          ],
+          "additionalProperties": false
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "ClusterIP",
+                "NodePort",
+                "LoadBalancer"
+              ]
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          },
+          "required": [
+            "type",
+            "port"
+          ],
+          "additionalProperties": false
+        },
+        "identityServiceBaseURL": {
+          "type": "string",
+          "pattern": "^(|https?://[^[:space:]]+)$",
+          "description": "URL of the Identity Service release the data plane introspects agent keys against. Required; must be https:// unless identityService.allowInsecureTransport=true."
+        },
+        "server": {
+          "type": "object",
+          "properties": {
+            "replicaCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "strategy": {
+              "type": "object",
+              "description": "Deployment spec.strategy, rendered verbatim when set. redis-iris fixes it to RollingUpdate with maxUnavailable 0 and maxSurge 1."
+            },
+            "resources": {
+              "type": "object"
+            },
+            "podAnnotations": {
+              "type": "object"
+            },
+            "podLabels": {
+              "type": "object"
+            },
+            "nodeSelector": {
+              "type": "object"
+            },
+            "tolerations": {
+              "type": "array"
+            },
+            "affinity": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "replicaCount"
+          ],
+          "additionalProperties": false
+        },
+        "worker": {
+          "type": "object",
+          "properties": {
+            "replicaCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "resources": {
+              "type": "object"
+            },
+            "podAnnotations": {
+              "type": "object"
+            },
+            "podLabels": {
+              "type": "object"
+            },
+            "nodeSelector": {
+              "type": "object"
+            },
+            "tolerations": {
+              "type": "array"
+            },
+            "affinity": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "replicaCount"
+          ],
+          "additionalProperties": false
+        },
+        "oidc": {
+          "type": "object",
+          "description": "Operator IdP access tokens validated locally by the data plane for reads, with the audience auth.oidc.audience.",
+          "properties": {
+            "enabled": { "type": ["boolean", "null"], "description": "Null means false; redis-iris derives it." },
+            "issuer": { "type": "string", "pattern": "^(|https?://[^[:space:]]+)$" },
+            "jwksURI": { "type": "string", "pattern": "^(|https?://[^[:space:]]+)$" },
+            "tenantIDClaim": { "type": "string" },
+            "roleClaims": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "roleMappings": { "type": "object", "additionalProperties": { "type": "string", "enum": ["viewer", "operator", "product_admin", "suite_admin"] } },
+            "allowInsecureTransport": { "type": ["boolean", "null"], "description": "Null means false; redis-iris derives it." }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "image",
+        "service",
+        "server",
+        "worker"
+      ],
+      "additionalProperties": false
+    },
+    "controlplane": {
+      "type": "object",
+      "properties": {
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tag": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
+            }
+          },
+          "required": [
+            "repository",
+            "tag",
+            "pullPolicy"
+          ],
+          "additionalProperties": false
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "ClusterIP",
+                "NodePort",
+                "LoadBalancer"
+              ]
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          },
+          "required": [
+            "type",
+            "port"
+          ],
+          "additionalProperties": false
+        },
+        "adminToken": {
+          "type": "object",
+          "properties": {
+            "existingSecret": {
+              "type": "string"
+            },
+            "secretKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "autoGenerate": {
+              "type": "boolean"
+            },
+            "existingSecretChecksum": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "existingSecret",
+            "secretKey",
+            "autoGenerate",
+            "existingSecretChecksum"
+          ],
+          "additionalProperties": false
+        },
+        "internalToken": {
+          "type": "object",
+          "properties": {
+            "existingSecret": {
+              "type": "string"
+            },
+            "secretKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "autoGenerate": {
+              "type": "boolean"
+            },
+            "existingSecretChecksum": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "existingSecret",
+            "secretKey",
+            "autoGenerate",
+            "existingSecretChecksum"
+          ],
+          "additionalProperties": false
+        },
+        "resources": {
+          "type": "object"
+        },
+        "podAnnotations": {
+          "type": "object"
+        },
+        "podLabels": {
+          "type": "object"
+        },
+        "nodeSelector": {
+          "type": "object"
+        },
+        "tolerations": {
+          "type": "array"
+        },
+        "affinity": {
+          "type": "object"
+        },
+        "oidc": {
+          "type": "object",
+          "description": "Operator IdP access tokens validated locally by the control plane against the dataplane.oidc settings. Requires dataplane.oidc.enabled.",
+          "properties": {
+            "enabled": { "type": ["boolean", "null"], "description": "Null means false; redis-iris derives it." }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "replicaCount",
+        "image",
+        "service",
+        "adminToken",
+        "internalToken"
+      ],
+      "additionalProperties": false
+    },
+    "identityService": {
+      "type": "object",
+      "description": "Connection to the Identity Service release this chart does not deploy.",
+      "properties": {
+        "allowInsecureTransport": {
+          "type": ["boolean", "null"],
+          "description": "Accept an http:// dataplane.identityServiceBaseURL. Null means false; redis-iris enables it for its in-cluster Identity Service."
+        },
+        "credential": {
+          "type": "object",
+          "description": "The data plane's runtime credential, provisioned by deployment automation and registered on the Identity Service release.",
+          "properties": {
+            "existingSecret": {
+              "type": "string"
+            },
+            "secretKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "existingSecretChecksum": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "tests": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "additionalProperties": false
+    },
+    "redis-iris-onprem-lib": {
+      "type": "object"
+    },
+    "global": {
+      "type": "object",
+      "description": "Umbrella-chart fallbacks read when the local value is empty (tls.caCertSecret, security.profile, imagePullSecrets), and global.iris under redis-iris."
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,51 @@
+{{- $names := include "redis-onprem.overlaySecretNames" .Values.secrets -}}
+{{- $options := dict "names" $names "volumePrefix" "fixture-overlay" "mountBase" "/etc/fixture/overlays" "key" (.Values.key | default "config.yaml") "path" (.Values.path | default "overlay.yaml") -}}
+{{- $delegatedValues := default (dict) .Values.delegatedAuth -}}
+{{- $delegated := dict "root" . "values" $delegatedValues "product" "fixture" "subject" "fixture-controlplane" "baseURL" (default "" $delegatedValues.baseURL) "defaultSecretName" "fixture-auth-introspect" "labelsTemplate" "fixture.labels" "external" (default false $delegatedValues.external) "reservedSecretRefs" (default (list) $delegatedValues.reservedSecretRefs) -}}
+{{- define "fixture.labels" -}}
+app.kubernetes.io/name: fixture
+{{- end -}}
+{{- with (include "redis-onprem.delegatedAuth.secret" $delegated | trim) }}
+{{ . }}
+---
+{{- end }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: overlay-fixture
+  annotations:
+    checksum/overlays: {{ include "redis-onprem.overlayChecksum" $names | quote }}
+spec:
+  containers:
+    - name: fixture
+      image: fixture:latest
+      args:
+        - serve
+        {{- include "redis-onprem.overlayConfigArgs" $options | nindent 8 }}
+      {{- if or (ne $names "[]") $delegatedValues.enabled }}
+      volumeMounts:
+        {{- if ne $names "[]" }}
+        {{- include "redis-onprem.overlayVolumeMounts" $options | nindent 8 }}
+        {{- end }}
+        {{- if $delegatedValues.enabled }}
+        {{- include "redis-onprem.delegatedAuth.volumeMount" $delegated | nindent 8 }}
+        {{- end }}
+      {{- end }}
+  {{- if or (ne $names "[]") $delegatedValues.enabled }}
+  volumes:
+    {{- include "redis-onprem.overlayVolumes" $options | nindent 4 }}
+    {{- include "redis-onprem.delegatedAuth.volume" $delegated | nindent 4 }}
+  {{- end }}
+{{- if $delegatedValues.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fixture-delegated-auth
+data:
+  delegated-auth.yaml: |
+    delegated_auth:
+      {{- include "redis-onprem.delegatedAuth.config" $delegated | fromJson | toYaml | nindent 6 }}
+    service_credential:
+      {{- include "redis-onprem.delegatedAuth.runtimeCredential" $delegated | fromJson | toYaml | nindent 6 }}
+{{- end }}

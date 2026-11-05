@@ -1,0 +1,15 @@
+name: Release Redis Iris Chart
+
+# Copied into RedisLabs/redis-enterprise-helm by iris-onprem-release.yml (MOD-20422). Publishes
+# ai/charts/redis-iris after its Enterprise Helm PR merges; MOD-20423 adds post-publish verification.
+on:
+  workflow_dispatch:
+
+jobs:
+  call-release-workflow:
+    uses: ./.github/workflows/release-chart-reusable.yaml
+    with:
+      chart_name: redis-iris
+      chart_path: ai/charts/redis-iris
+      tag_prefix: redis-iris
+    secrets: inherit

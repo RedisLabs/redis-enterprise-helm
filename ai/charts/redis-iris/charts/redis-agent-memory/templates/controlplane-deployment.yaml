@@ -1,0 +1,122 @@
+{{- define "redis-agent-memory.controlplaneAnnotations" -}}
+{{- if .Values.controlplane.config.existingSecretChecksum }}
+checksum/config: {{ .Values.controlplane.config.existingSecretChecksum | quote }}
+{{- else if .Values.controlplane.config.render }}
+checksum/config: {{ include "redis-agent-memory.controlplaneConfig" . | sha256sum | quote }}
+{{- end }}
+{{- if include "redis-agent-memory.overlaySecretNames" . | fromJsonArray }}
+checksum/overlay: {{ include "redis-agent-memory.overlayChecksum" . | quote }}
+{{- end }}
+{{- if .Values.controlplane.adminToken.existingSecretChecksum }}
+checksum/admin-token: {{ .Values.controlplane.adminToken.existingSecretChecksum | quote }}
+{{- end }}
+{{- if .Values.controlplane.internalToken.existingSecretChecksum }}
+checksum/internal-token: {{ .Values.controlplane.internalToken.existingSecretChecksum | quote }}
+{{- end }}
+{{- if .Values.license.existingSecretChecksum }}
+checksum/license: {{ .Values.license.existingSecretChecksum | quote }}
+{{- end }}
+{{- end }}
+
+{{- define "redis-agent-memory.controlplaneArgs" -}}
+- "--config"
+- "/etc/ai/controlplane-onprem.config.yaml"
+{{- include "redis-agent-memory.overlayConfigArgs" . }}
+{{- end }}
+
+{{- define "redis-agent-memory.controlplaneEnv" -}}
+- name: MEM_SERVER_PORT
+  value: {{ .Values.controlplane.service.port | quote }}
+{{- with (include "redis-agent-memory.env" . | trim) }}
+{{ . }}
+{{- end }}
+{{- end }}
+
+{{- define "redis-agent-memory.controlplaneVolumeMounts" -}}
+- name: config-volume
+  mountPath: /etc/ai
+  readOnly: true
+- name: admin-token-volume
+  mountPath: /etc/controlplane-onprem/admin
+  readOnly: true
+- name: internal-token-volume
+  mountPath: /etc/controlplane-onprem/internal
+  readOnly: true
+- name: license-volume
+  mountPath: {{ .Values.license.mountDir }}
+  readOnly: true
+{{ include "redis-agent-memory.overlayVolumeMounts" . }}
+{{ include "redis-agent-memory.tlsVolumeMount" . }}
+{{- with .Values.controlplane.volumeMounts }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "redis-agent-memory.controlplaneVolumes" -}}
+- name: config-volume
+  {{- if .Values.controlplane.config.existingSecret }}
+  secret:
+    secretName: {{ include "redis-agent-memory.controlplaneConfigName" . }}
+    items:
+      - key: {{ .Values.controlplane.config.secretKey }}
+        path: controlplane-onprem.config.yaml
+  {{- else }}
+  configMap:
+    name: {{ include "redis-agent-memory.controlplaneConfigName" . }}
+    items:
+      - key: {{ .Values.controlplane.config.secretKey }}
+        path: controlplane-onprem.config.yaml
+  {{- end }}
+- name: admin-token-volume
+  secret:
+    secretName: {{ include "redis-agent-memory.controlplaneAdminTokenSecretName" . }}
+    items:
+      - key: {{ .Values.controlplane.adminToken.secretKey }}
+        path: token
+- name: internal-token-volume
+  secret:
+    secretName: {{ include "redis-agent-memory.controlplaneInternalTokenSecretName" . }}
+    items:
+      - key: {{ include "redis-agent-memory.controlplaneInternalTokenSecretKey" . }}
+        path: token
+- name: license-volume
+  secret:
+    secretName: {{ include "redis-agent-memory.licenseSecretName" . }}
+    items:
+      - key: {{ include "redis-agent-memory.licenseSecretKey" . }}
+        path: {{ .Values.license.fileName }}
+{{ include "redis-agent-memory.overlayVolumes" . }}
+{{ include "redis-agent-memory.tlsVolume" . }}
+{{- with .Values.controlplane.volumes }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- include "redis-onprem.controlplane.deployment" (dict
+  "root" .
+  "name" (include "redis-agent-memory.controlplaneFullname" .)
+  "component" "controlplane"
+  "labelsTemplate" "redis-agent-memory.labels"
+  "selectorLabelsTemplate" "redis-agent-memory.selectorLabels"
+  "replicas" .Values.controlplane.replicaCount
+  "annotationsTemplate" "redis-agent-memory.controlplaneAnnotations"
+  "podAnnotations" .Values.controlplane.podAnnotations
+  "podLabels" .Values.controlplane.podLabels
+  "imagePullSecrets" (include "redis-agent-memory.imagePullSecrets" . | fromJsonArray)
+  "serviceAccountName" (include "redis-agent-memory.serviceAccountName" .)
+  "podSecurityContext" .Values.podSecurityContext
+  "containerName" "controlplane"
+  "argsTemplate" "redis-agent-memory.controlplaneArgs"
+  "containerSecurityContext" .Values.securityContext
+  "image" .Values.controlplane.image
+  "envTemplate" "redis-agent-memory.controlplaneEnv"
+  "port" .Values.controlplane.service.port
+  "livenessProbe" (dict "httpGet" (dict "path" "/health/liveness" "port" "http"))
+  "readinessProbe" (dict "httpGet" (dict "path" "/health/readiness" "port" "http"))
+  "resources" .Values.controlplane.resources
+  "volumeMountsTemplate" "redis-agent-memory.controlplaneVolumeMounts"
+  "volumesTemplate" "redis-agent-memory.controlplaneVolumes"
+  "nodeSelector" .Values.controlplane.nodeSelector
+  "affinity" .Values.controlplane.affinity
+  "tolerations" .Values.controlplane.tolerations
+) }}

@@ -1,0 +1,9 @@
+{{- include "redis-onprem.securityProfileTest" (dict
+  "root" .
+  "enabled" .Values.tests.enabled
+  "name" (include "redis-agent-memory.fullname" .)
+  "labelsTemplate" "redis-agent-memory.labels"
+  "serviceAccountName" (include "redis-agent-memory.serviceAccountName" .)
+  "deploymentName" (include "redis-agent-memory.fullname" .)
+  "securityProfile" (include "redis-agent-memory.securityProfile" .)
+) }}

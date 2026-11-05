@@ -1,0 +1,375 @@
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: redislabs/iris-ui-gateway
+  pullPolicy: IfNotPresent
+  # The image release this chart version ships; override to run another.
+  tag: "1.0.0"
+
+imagePullSecrets: []
+
+replicaCount: 1
+
+# PodDisruptionBudget (maxUnavailable: 1) for each Deployment that keeps more than one Pod
+# (minReplicas under autoscaling). Off by default; redis-iris turns it on.
+podDisruptionBudget:
+  enabled: false
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# nginxinc/nginx-unprivileged (the image this chart deploys) runs as the
+# built-in "nginx" user, uid/gid 101 — not the 65532 distroless convention
+# used by this repo's Go services, which this image does not contain.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 101
+  runAsGroup: 101
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  runAsNonRoot: true
+  runAsUser: 101
+  runAsGroup: 101
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# Public HTTPS URL operators use to reach the UI (the IdP redirect base when SSO is on).
+# Empty by default. When set it must be https://, except http://localhost[:port] for local
+# development, and it names a dedicated hostname: no path, query or fragment.
+publicURL: ""
+
+# Optional Ingress: a single host rule forwarding to the UI nginx Service. The customer owns
+# the ingress controller, DNS and certificate; the chart hard-codes no controller annotations.
+# All path routing (/api/<key>/*, later /auth/*) stays in the UI nginx.
+ingress:
+  enabled: false
+  className: ""
+  host: ""                      # required when enabled, e.g. iris.corp.example
+  annotations: {}               # passed through as given, e.g. controller-specific settings
+  tls:
+    secretName: ""              # existing TLS Secret for ingress.host; no tls block when empty
+
+# Declares which products this gateway reverse-proxies to, and drives the
+# /config.json the SPA fetches on boot (iris/ui/src/types/config.ts). Each
+# entry's upstream is used only server-side by nginx -- it
+# is never exposed to the SPA, which only ever sees key/label/authScheme/
+# healthPath/product/instanceId, plus whether SSO is on.
+products: []
+# To enable the examples below, change products: [] to products: and uncomment the desired entries.
+# - key: memory                 # matches /api/<key>/*; must be a valid nginx location segment
+#   label: "Agent Memory"       # display name in the SPA's product nav
+#   product: agent_memory       # agent_memory | playbook | lens | identity | context_gateway | intent -- the product this route belongs to
+#   authScheme: bearer          # bearer | apiKey -- which header the SPA prompts for and sends
+#   healthPath: /health/readiness # readiness route at the upstream's root; also drives an
+#                                 exact-match proxy location bypassing basePath below
+#   showInNavigation: true      # false keeps a same-origin API route out of product navigation
+#   upstream:
+#     service: redis-agent-memory-controlplane  # a Service in this release's namespace: <fullnameOverride>-controlplane
+#                                 (redis-agent-memory-controlplane unless you override fullnameOverride); the host becomes
+#                                 <service>.<release namespace>.svc.<clusterDomain>
+#     # host: redis-agent-memory-controlplane.<namespace>.svc.cluster.local  # instead of service, for another namespace; wins
+#                                 when set and must be fully-qualified -- nginx's own resolver never applies Kubernetes'
+#                                 DNS search-domain suffixing, unlike the OS resolver
+#     port: 9100
+#     basePath: ""               # empty or "/<path>" with no trailing slash; the Agent Memory SDK paths carry /iris/v1/agent-memory
+#     scheme: http               # http | https
+#     caSecretName: ""           # https only: Secret with a "ca.crt" key to trust. Mutually exclusive with insecureSkipVerify -- exactly one is required for scheme: https.
+#     insecureSkipVerify: false  # https only: skip upstream cert verification entirely (documented escape hatch, never a silent default)
+# - key: api-keys               # the Identity Service control API, behind the SPA's /api-keys page
+#   label: "Access & Identity"
+#   product: identity
+#   authScheme: bearer          # Admin Token mode: the standalone IdS chart's control token (its control.existingSecret,
+#                                 or the generated <ids-fullname>-control-token Secret). With SSO, the IdS release needs
+#                                 controlAuth.oidc (audience sso.audience, issuer sso.accessTokenIssuer or else sso.issuer)
+#                                 plus controlAuth.roleBindings;
+#                                 sso.roleMappings needs no identity entry (see README, api-keys).
+#   healthPath: /health/readiness
+#   upstream:
+#     service: iris-identity-service  # the IdS release's actual Service name in this namespace (its
+#                                 fullnameOverride/nameOverride change it; see README, api-keys); use
+#                                 host: <service>.<namespace>.svc.<clusterDomain> for another namespace
+#     port: 9200
+#     basePath: ""               # the Identity Service SDK paths carry /v1/api-keys
+#     scheme: http
+# - key: lens
+#   label: "Lens"
+#   product: lens
+#   authScheme: bearer
+#   healthPath: /health/readiness
+#   instanceId: default         # the Lens chart's instance.id; the SPA reads this instance (default "default")
+#   upstream:
+#     host: lens-dataplane.<namespace>.svc.cluster.local
+#     port: 9000
+#     basePath: ""               # the Lens SDK paths carry /iris/data/v1beta1/lens/instances/<instanceId>
+#     scheme: http
+
+# Playbook browser routes: CP for inventory/settings, DP for content/proposals.
+# Both receive one access token; DP grants mapped human admins tenant-wide access.
+# Data-plane routes take their product's value, so both routes below are product: playbook.
+# - key: playbook
+#   label: "Agent Playbooks"
+#   product: playbook
+#   authScheme: bearer
+#   healthPath: /health/readiness
+#   upstream:
+#     scheme: http
+#     host: playbook-redis-agent-playbook-controlplane.redis-ai.svc.cluster.local
+#     port: 9200
+#     basePath: ""             # the Playbook SDK paths carry /iris/v1/agent-playbooks
+# - key: playbook-dp
+#   label: "Agent Playbooks DP"
+#   product: playbook
+#   authScheme: bearer
+#   healthPath: /health/readiness
+#   showInNavigation: false
+#   maxRequestBodyBytes: 8388608
+#   upstream:
+#     scheme: http
+#     host: playbook-redis-agent-playbook-dataplane.redis-ai.svc.cluster.local
+#     port: 9201
+#     basePath: ""
+
+# Intent Router browser routes: CP for routers and settings, DP for intents and matching.
+# With SSO on, the gateway adds the operator's access token to both, so the console
+# asks for no data-plane credential; the data plane needs dataplane.oidc (intent chart)
+# and maps the admin groups to product_admin or suite_admin. The DP route is hidden from
+# navigation. Data-plane routes take their product's value, so both are product: intent.
+# - key: intent
+#   label: Intent Router
+#   product: intent
+#   authScheme: bearer
+#   healthPath: /health/readiness
+#   upstream:
+#     scheme: http
+#     host: redis-intent-router-controlplane.redis-ai.svc.cluster.local
+#     port: 9400
+#     basePath: ""             # the Intent API paths carry /iris/v1/intent (control plane) or /iris/data/v1/intent (data plane)
+# - key: intent-data
+#   label: Intent Router DP
+#   product: intent
+#   authScheme: bearer
+#   healthPath: /health/readiness
+#   showInNavigation: false
+#   upstream:
+#     scheme: http
+#     host: redis-intent-router-dataplane.redis-ai.svc.cluster.local
+#     port: 9401
+#     basePath: ""
+
+# Context Gateway browser routes: CP for every console page, DP only for the Connect modal's
+# sign-in status. Both upstreams take the console's paths as they are, so basePath stays empty.
+# The console reads the sign-in status only when /api/context-gateway-dp/health/liveness answers.
+# - key: context-gateway
+#   label: Context Gateway
+#   product: context_gateway
+#   authScheme: bearer          # the control plane's auth.admin_token
+#   healthPath: /health/readiness
+#   upstream:
+#     scheme: http
+#     host: context-gateway-controlplane.redis-ai.svc.cluster.local
+#     port: 9100
+#     basePath: ""
+# - key: context-gateway-dp
+#   label: Context Gateway DP
+#   product: context_gateway
+#   authScheme: bearer          # the sign-in metadata read sends no credential
+#   healthPath: /health/liveness
+#   showInNavigation: false
+#   protectedResourceMetadata: true    # only the sign-in metadata skips the session check
+#   upstream:
+#     scheme: http
+#     host: context-gateway-dataplane.redis-ai.svc.cluster.local
+#     port: 8083
+#     basePath: ""
+
+# The cluster's DNS domain. The gateway's nginx resolves the UI auth Service through its own resolver,
+# which does not apply the pod's DNS search domains, so it needs the full name
+# <service>.<namespace>.svc.<clusterDomain>. It also completes product upstream.service names.
+clusterDomain: ""  # default cluster.local; redis-iris sets global.iris.clusterDomain
+
+# On-prem IdP login (SSO) for the UI. With sso.enabled: false (the default) the UI works as
+# before: operators paste each product's admin token, and none of the objects below render.
+# With sso.enabled: true the chart also deploys the UI auth service; every other value in
+# this block is read only then. The gateway checks every product call with the UI auth service, and
+# the shell signs operators in through it. See docs/iris-onprem-ui-sso-guide.md for the setup.
+sso:
+  enabled: false
+  # The IdP's issuer URL (https://). Must match the `iss` claim the IdP puts in its tokens.
+  issuer: ""
+  # DEVELOPMENT ONLY: allow an http:// issuer, as the self-hosted test IdP (development/test-idp) uses.
+  # Never set this for a real IdP: the sign-in redirect and token exchange would be unencrypted.
+  allowInsecureTransport: null  # false when unset; redis-iris derives it from the issuer
+  # The OIDC client registered for the UI. The redirect URI to register is
+  # <publicURL>/auth/callback, so publicURL must be set.
+  clientId: ""
+  # The IdP client credential. Always supplied by the operator: it cannot be generated.
+  # Entra ID client secrets expire after at most 2 years, and then every sign-in fails: prefer a
+  # certificate credential (privateKeyKey), or track the secret's expiry and rotate it before then.
+  clientCredential:
+    existingSecret: ""          # required when SSO is on
+    clientSecretKey: client-secret  # key holding the client secret (used unless privateKeyKey is set)
+    privateKeyKey: ""           # key holding a PEM private key: client authentication then uses private_key_jwt
+    privateKeyID: ""            # optional `kid` for private_key_jwt
+  # Scopes requested at the IdP. Add the Iris API scope your IdP needs to issue an access token
+  # for the shared audience. Setting this replaces the whole list, and openid is required.
+  scopes:
+    - openid
+    - offline_access
+  # ID-token claims shown to the user.
+  claims:
+    user: name
+    email: email
+  # Token claims the role mapping reads. Empty means the shared defaults, [roles, groups];
+  # redis-iris sets global.iris.auth.oidc.roleClaims.
+  roleClaims: null
+  # The audience every Iris backend checks. Same default as every product chart. Which value goes
+  # where depends on the IdP (summarised from the design's per-IdP table):
+  #   Microsoft Entra ID  One API app registration with app roles and access-token version 2. `aud` is
+  #                       the API's Application (client) ID GUID, so set `audience` to that GUID and add
+  #                       the scope api://<api>/.default (plus offline_access) to `scopes`. Map roles by
+  #                       app roles (`roles`), not groups.
+  #   Okta                Only a custom authorization server (needs API Access Management): its Audience
+  #                       is `audience`, with a groups claim in the access token. The org authorization
+  #                       server is not supported.
+  #   Auth0               A registered API; audienceParameter: audience; roles from a post-login Action
+  #                       under a namespaced claim named in `roleClaims`; Allow Offline Access on the API.
+  #   Amazon Cognito      A resource server; audienceParameter: resource with a URL-form audience;
+  #                       roles from `cognito:groups`.
+  #   Keycloak 26         An audience mapper with this audience, and a mapper that writes the roles as a
+  #                       flat top-level claim (not the nested realm_access.roles).
+  #   AD FS 2019+         The Web API identifier is the audience; set accessTokenIssuer.
+  #   Others (PingFederate, Zitadel, ...) follow the same shape: this audience in `aud` of a JWT
+  #   access token, and the roles or groups in a flat claim named in `roleClaims`.
+  audience: ""  # default api://redis-iris; redis-iris sets global.iris.auth.oidc.audience
+  # How the IdP is told which audience to issue: none (the scope decides, as on Entra ID, Okta and
+  # Keycloak), audience (Auth0) or resource (Amazon Cognito).
+  audienceParameter: none
+  # Issuer in the access token, when it differs from `issuer`: AD FS issues tokens with
+  # http://<host>/adfs/services/trust while discovery says otherwise. http:// or https://.
+  accessTokenIssuer: ""
+  session:
+    # Secret holding the session encryption key. Empty: the chart generates and keeps one named
+    # <release>-redis-iris-ui-auth-session-key. Required whenever the chart is rendered outside `helm install` /
+    # `helm upgrade`: `helm template`, `--dry-run`, Argo CD, Flux and Helmfile. Generation uses Helm
+    # `lookup`, which returns nothing there, so a new key (and a sign-out of every user) would follow
+    # every render or sync.
+    existingSecret: ""
+    secretKey: key
+    # Last request to expiry, and sign-in to expiry. The service refuses idle >= absolute,
+    # idle > 8h and absolute > 24h at start-up.
+    idleTimeout: 30m
+    absoluteLifetime: 8h
+  # Session store. The URL carries credentials, so it comes from a Secret key, never a ConfigMap.
+  # Use rediss:// under FIPS. Persistence and backups are not needed: losing it only signs users out.
+  redis:
+    existingSecret: ""          # required when SSO is on
+    urlsKey: urls               # comma-separated URLs, as in the product charts
+  # CA bundle for a private CA behind the IdP or the session Redis. Added to the system roots.
+  tls:
+    caCertSecret: ""
+    caCertKey: ca.crt
+  # Group-to-role mapping, keyed by product (agent_memory | playbook | lens | identity | context_gateway | intent). Read by the UI auth
+  # service to give each signed-in user permissions per product; validated here against the products
+  # you declare. Keep it identical to the roleMappings of the product charts (see the README).
+  # Shape: <product>: {<IdP group or app role>: <iris role>}, where the Iris role is suite_admin,
+  # product_admin, operator or viewer, for example:
+  #   agent_memory: {iris-admins: product_admin, memory-ops: operator}
+  roleMappings: null  # unset; redis-iris derives it from global.iris.auth.roleBindings
+
+# Limits on the UI nginx's calls to the UI auth service when sso.enabled is true. Product
+# upload limits stay on each product's maxRequestBodyBytes. Your ingress controller enforces its own
+# limits first, so raise those to match (see the chart README).
+nginx:
+  limits:
+    authClientMaxBodySize: 64k   # request bodies on /auth/*
+    authProxyBufferSize: 16k     # response headers from the auth service: a large X-Auth-Token must fit
+    authProxyBuffers: 4 16k
+    authProxyConnectTimeout: 5s
+    authProxyReadTimeout: 30s
+
+# The UI auth service workload (only rendered when sso.enabled is true).
+uiAuth:
+  image:
+    repository: redislabs/iris-ui-auth
+    tag: ""                     # defaults to image.tag, so both images ship under one version
+    pullPolicy: IfNotPresent
+  replicas: 1                   # every replica shares the Redis and the session key
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+  networkPolicy:
+    # Ingress to the UI auth service is allowed only from the UI nginx pods.
+    enabled: true
+    # CIDRs of the IdP and the session Redis. Empty: egress is not restricted. When set, egress is
+    # limited to these CIDRs plus DNS. Network policy sees the pod IP after a Service's address is
+    # translated, so for an in-cluster Redis list its pod CIDR, not the Service's ClusterIP.
+    egress: []
+  # The service waits for the session Redis before it listens (up to 15 seconds, then it exits), so
+  # liveness must not start probing before that wait can end. The shared on-prem library renders no
+  # startupProbe, hence the initial delay; readiness still gates traffic.
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    initialDelaySeconds: 30
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# /healthz is a static nginx location independent of the SPA's index.html,
+# so liveness/readiness never depend on the build output being intact.
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+tests:
+  # Enable the `helm test` health-check hook (curls the gateway's own
+  # /healthz through its Service). The default omits the test Pod.
+  enabled: false
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -1,0 +1,10 @@
+{{- /* One PodDisruptionBudget per Deployment that keeps more than one Pod; redis-onprem.pdb skips the rest. */ -}}
+{{- range list
+  (dict "name" (include "redis-intent-router.dataplaneName" .) "component" "dataplane" "replicas" .Values.dataplane.replicaCount)
+  (dict "name" (include "redis-intent-router.controlplaneName" .) "component" "controlplane" "replicas" .Values.controlplane.replicaCount) }}
+{{- with (include "redis-onprem.pdb" (merge (dict "root" $ "enabled" $.Values.podDisruptionBudget.enabled
+  "labelsTemplate" "redis-intent-router.labels" "selectorLabelsTemplate" "redis-intent-router.selectorLabels") .) | trim) }}
+---
+{{ . }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,106 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-upstream
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: ts-upstream}
+  template:
+    metadata:
+      labels: {app: ts-upstream}
+    spec:
+      containers:
+        - name: upstream
+          image: context-gateway-ts-upstream:helm-test
+          imagePullPolicy: Never
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 2
+          env:
+            - name: UPSTREAM_TOKEN
+              valueFrom:
+                secretKeyRef: {name: context-gateway-secrets, key: upstream-token}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-upstream
+spec:
+  selector: {app: ts-upstream}
+  ports: [{name: http, port: 8080, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: context-gateway-storage
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: context-gateway-storage}
+  template:
+    metadata:
+      labels: {app: context-gateway-storage}
+    spec:
+      containers:
+        - name: metadata
+          image: redis:8
+          args: [redis-server, --save, "", --appendonly, "no"]
+          ports: [{name: metadata, containerPort: 6379}]
+          readinessProbe:
+            tcpSocket: {port: metadata}
+        - name: credentials
+          image: redis:8
+          args: [redis-server, --port, "6380", --save, "", --appendonly, "no"]
+          ports: [{name: credentials, containerPort: 6380}]
+          readinessProbe:
+            tcpSocket: {port: credentials}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: context-gateway-storage
+spec:
+  selector: {app: context-gateway-storage}
+  ports:
+    - {name: metadata, port: 6379, targetPort: metadata}
+    - {name: credentials, port: 6380, targetPort: credentials}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: context-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: context-gateway}
+  template:
+    metadata:
+      labels: {app: context-gateway}
+    spec:
+      containers:
+        - name: controlplane
+          image: iris-context-gateway-controlplane-onprem:local
+          imagePullPolicy: Never
+          args: [--config, /etc/context-gateway/config/config.yaml]
+          ports: [{name: http, containerPort: 9100}]
+          readinessProbe:
+            httpGet: {path: /health/readiness, port: http}
+            periodSeconds: 2
+          volumeMounts:
+            - {name: config, mountPath: /etc/context-gateway/config, readOnly: true}
+            - {name: secrets, mountPath: /etc/context-gateway/secrets, readOnly: true}
+      volumes:
+        - name: config
+          configMap: {name: context-gateway-config}
+        - name: secrets
+          secret: {secretName: context-gateway-secrets}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: context-gateway
+spec:
+  selector: {app: context-gateway}
+  ports: [{name: http, port: 9100, targetPort: http}]

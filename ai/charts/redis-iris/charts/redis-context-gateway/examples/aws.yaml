@@ -1,0 +1,13 @@
+credentialStorage:
+  provider: aws_secrets_manager
+  basePath: context-gateway
+  aws:
+    region: eu-west-1
+controlplane:
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/gateway-credential-writer
+dataplane:
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/gateway-credential-reader

@@ -1,0 +1,66 @@
+# Example only. Do not commit real Redis URLs, credentials, tokens, or licenses.
+#
+# streams and index live on the customer RAM database (not Flex): streams needs
+# maxmemory-policy noeviction, index needs RediSearch and RedisJSON.
+# content lives on a customer Flex or RAM database, or the same one as records.
+# metadata is a separate small Redis that holds the instance record; it never
+# shares a database with telemetry. The Identity Service release keeps its own
+# metadata.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: lens-storage
+type: Opaque
+stringData:
+  lens-dataplane-storage.yaml: |
+    storage:
+      streams:
+        urls:
+          - rediss://<dram-user>:<dram-password>@<dram-host>:6379
+      index:
+        urls:
+          - rediss://<dram-user>:<dram-password>@<dram-host>:6379
+      content:
+        urls:
+          - rediss://<content-user>:<content-password>@<content-host>:6379
+      metadata:
+        urls:
+          - rediss://<metadata-user>:<metadata-password>@<metadata-host>:6379
+  lens-controlplane-storage.yaml: |
+    storage:
+      metadata:
+        urls:
+          - rediss://<metadata-user>:<metadata-password>@<metadata-host>:6379
+    # Optional. The control plane checks the DRAM for RediSearch, RedisJSON,
+    # and noeviction at startup and on PATCH, naming what is missing.
+    dram:
+      urls:
+        - rediss://<dram-user>:<dram-password>@<dram-host>:6379
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: lens-license
+type: Opaque
+stringData:
+  license: <redis-lens-license>
+---
+# The data plane's Identity Service runtime credential (subject lens-dataplane),
+# also registered on the Identity Service release.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: lens-dp-credential
+type: Opaque
+stringData:
+  token: <random-token>
+---
+# The token the Identity Service presents to the Lens control plane when it
+# validates a grant; also its productValidation.products.lens.credential.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: lens-internal-token
+type: Opaque
+stringData:
+  token: <random-token>

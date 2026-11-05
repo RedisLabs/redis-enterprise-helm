@@ -1,0 +1,14 @@
+{{- $ingress := .Values.dataplane.ingress -}}
+{{- $name := printf "%s-dataplane" (include "gateway.fullname" .) -}}
+{{ include "redis-onprem.dataplane.ingress" (dict
+  "root" .
+  "enabled" $ingress.enabled
+  "name" $name
+  "labelsTemplate" "gateway.rootLabels"
+  "annotations" $ingress.annotations
+  "className" $ingress.className
+  "tls" $ingress.tls
+  "hosts" $ingress.hosts
+  "serviceName" $name
+  "servicePort" .Values.dataplane.service.port
+) }}

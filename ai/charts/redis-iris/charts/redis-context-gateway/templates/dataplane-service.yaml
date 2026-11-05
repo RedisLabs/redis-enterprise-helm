@@ -1,0 +1,4 @@
+{{- $settings := .Values.dataplane -}}
+{{- $context := dict "root" . "role" "dataplane" "settings" $settings -}}
+{{- $name := printf "%s-dataplane" (include "gateway.fullname" .) -}}
+{{ include "redis-onprem.service" (dict "root" $context "name" $name "component" "dataplane" "labelsTemplate" "gateway.labels" "selectorLabelsTemplate" "gateway.labels" "type" "ClusterIP" "port" $settings.service.port) }}

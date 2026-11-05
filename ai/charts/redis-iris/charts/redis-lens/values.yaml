@@ -1,0 +1,207 @@
+nameOverride: ""
+fullnameOverride: ""
+
+# Required. The tenant the single Lens instance belongs to. The control plane
+# records it on the instance, and the Identity Service stamps it on every
+# agent-key grant that omits a tenant.
+tenantId: ""
+
+# Audience of IdP access tokens, shared by every Iris service. Set it to the
+# value the IdP puts in the token's aud: the Iris API identifier on most IdPs, or
+# the API's Application (client) ID GUID on Entra ID v2. Use the same value in
+# every Iris chart. Used only when dataplane.oidc is enabled.
+auth:
+  oidc:
+    audience: ""  # default api://redis-iris; redis-iris sets global.iris.auth.oidc.audience
+
+instance:
+  # The one Lens instance this installation serves. The control plane creates
+  # it at startup, the worker consumes its stream, and the UI gateway's lens
+  # entry must set the same value as its instanceId.
+  id: default
+  # Initial retention recorded on the instance. An operator PATCH /iris/v1beta1/lens/instance
+  # wins after the first start for what the instance record reports, but the
+  # data plane stamps content expiry from contentTTL as rendered here: change it
+  # with helm upgrade.
+  retention:
+    streamTrim: 24h
+    contentTTL: 168h
+    indexRetention: 720h
+
+ingest:
+  # Nothing trims the span streams yet, and the streams database must be
+  # noeviction, so enabled ingest grows the streams without bound. Enable it
+  # deliberately; see the README.
+  enabled: false
+  # Scopes the stream keys. One value per installation.
+  region: onprem
+
+# Falls back to global.imagePullSecrets when empty.
+imagePullSecrets: []
+
+security:
+  # "" (standard) or fips. Empty falls back to global.security.profile.
+  profile: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+
+tls:
+  # Optional Secret with additional CA certificates. Every container receives it
+  # at /etc/ssl/custom and SSL_CERT_DIR points at that directory. The workloads
+  # trust these CAs on top of the system CAs, for an https://
+  # dataplane.identityServiceBaseURL and rediss:// endpoints alike.
+  caCertSecret: ""
+  # Set to roll every workload when the Secret's content changes.
+  caCertSecretChecksum: ""
+
+license:
+  existingSecret: ""
+  secretKey: ""  # default license; redis-iris sets global.iris.license.secretKey
+  existingSecretChecksum: ""
+
+storage:
+  # Required. This Secret must already exist and hold one config overlay per
+  # process; see examples/basic/prerequisites.example.yaml.
+  #   dataplaneKey:    storage.{streams,content,index,metadata}.urls
+  #   controlplaneKey: storage.metadata.urls, optional dram.urls
+  existingSecret: ""
+  dataplaneKey: lens-dataplane-storage.yaml
+  controlplaneKey: lens-controlplane-storage.yaml
+  existingSecretChecksum: ""
+  keyPrefix: iris:lens
+
+dataplane:
+  image:
+    repository: redislabs/iris-lens-data
+    # The image release this chart version ships; override to run another.
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 9000
+  # Required. URL of the Identity Service release the data plane introspects
+  # agent keys against, for example
+  # http://<ids-release>-iris-identity-service.<namespace>:9200. Must be https://
+  # unless identityService.allowInsecureTransport=true.
+  identityServiceBaseURL: ""
+  server:
+    replicaCount: 1
+    # Deployment spec.strategy, rendered verbatim when set. redis-iris fixes it to
+    # RollingUpdate with maxUnavailable 0 and maxSurge 1.
+    strategy: {}
+    resources: {}
+    podAnnotations: {}
+    podLabels: {}
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+  worker:
+    replicaCount: 1
+    resources: {}
+    podAnnotations: {}
+    podLabels: {}
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+  # Operator IdP access tokens validated locally by the data plane, with the
+  # audience auth.oidc.audience. Reads accept them; ingest stays agent-key only,
+  # and agent keys keep working beside them. The resolved tenant must equal
+  # tenantId: set tenantIDClaim to read it from a claim, or leave it empty to
+  # treat every token as tenantId's. The control plane reuses this block when
+  # controlplane.oidc.enabled is set.
+  oidc:
+    enabled: null  # false when unset; redis-iris derives it
+    # An identifier compared with a token's iss, never fetched, so it may be http://
+    # without allowInsecureTransport. On AD FS it is the discovery document's
+    # access_token_issuer (http://<host>/adfs/services/trust).
+    issuer: ""
+    # Fetched for signing keys: must be https:// unless allowInsecureTransport.
+    jwksURI: ""
+    tenantIDClaim: ""
+    # Empty uses the shared defaults: roles and groups.
+    roleClaims: []
+    # IdP group -> Iris role (viewer, operator, product_admin, suite_admin).
+    # Empty is refused: unmapped values are never accepted implicitly.
+    roleMappings: {}
+    allowInsecureTransport: null  # false when unset
+
+# PodDisruptionBudget (maxUnavailable: 1) for each Deployment that keeps more than one Pod
+# (minReplicas under autoscaling). Off by default; redis-iris turns it on.
+podDisruptionBudget:
+  enabled: false
+
+controlplane:
+  replicaCount: 1
+  image:
+    repository: redislabs/iris-lens-control
+    # The image release this chart version ships; override to run another.
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 9300
+  adminToken:
+    # BYO existingSecret takes precedence. Otherwise the chart creates a
+    # stable random token Secret and preserves it across Helm upgrades.
+    existingSecret: ""
+    secretKey: token
+    autoGenerate: true
+    existingSecretChecksum: ""
+  internalToken:
+    existingSecret: ""
+    secretKey: token
+    autoGenerate: true
+    existingSecretChecksum: ""
+  # Operator IdP access tokens validated locally by the control plane, with the
+  # audience auth.oidc.audience. The admin token keeps working beside it. It
+  # reuses the dataplane.oidc issuer, JWKS, tenant source and roleMappings, so it
+  # requires dataplane.oidc.enabled.
+  oidc:
+    enabled: null  # false when unset; redis-iris derives it
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# The Identity Service release this chart connects to. The chart deploys no
+# Identity Service; install it first as its own release.
+identityService:
+  # Accept an http:// dataplane.identityServiceBaseURL, for example the
+  # in-cluster Service. False when unset; redis-iris turns it on for its
+  # in-cluster Identity Service.
+  allowInsecureTransport: null
+  # The data plane's runtime credential (subject lens-dataplane, operation
+  # api-key-introspect, product lens). Deployment automation provisions the
+  # Secret and registers it on the Identity Service release. Mounted at
+  # /etc/identity-service/runtime/lens-dataplane/token. Required.
+  credential:
+    existingSecret: ""
+    secretKey: token
+    # Set to roll the data plane when the Secret's content changes.
+    existingSecretChecksum: ""
+
+tests:
+  # Enable the readiness checks for `helm test`.
+  enabled: false

@@ -1,0 +1,8 @@
+{{- include "redis-onprem.tests.rbac" (dict
+  "root" .
+  "enabled" .Values.tests.enabled
+  "name" (include "redis-agent-memory.fullname" .)
+  "labelsTemplate" "redis-agent-memory.labels"
+  "serviceAccountName" (include "redis-agent-memory.serviceAccountName" .)
+  "resourceNames" (list (include "redis-agent-memory.fullname" .) (include "redis-agent-memory.workerFullname" .))
+) }}

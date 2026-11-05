@@ -1,0 +1,191 @@
+{{- /*
+`helm test` suite verification (MOD-20394): files/suite-verify.py exercises the installed suite
+end to end for each enabled product. It mounts only the Identity Service Control token and the
+enabled products' admin tokens, each by its own key, and sends no credential to the UI gateway.
+With global.iris.extraction it also checks the Playbook -> Memory trust (MOD-20409).
+*/ -}}
+{{- $products := .Values.global.iris.products }}
+{{- $memory := $products.memory.enabled }}
+{{- $playbook := $products.playbook.enabled }}
+{{- /* Lens, Context Gateway and Intent Router (MOD-20415): env prefix, URLs, and the admin token mount. */}}
+{{- $more := list
+  (dict "enabled" $products.lens.enabled "env" "LENS" "alias" "lens" "mount" "lens-admin"
+    "cp" "redis-lens-controlplane:9300" "dp" "redis-lens-dataplane:9000")
+  (dict "enabled" $products.contextGateway.enabled "env" "CONTEXT_GATEWAY" "alias" "contextGateway" "mount" "context-gateway-admin"
+    "cp" "redis-context-gateway-controlplane:9100" "dp" "redis-context-gateway-dataplane:8083")
+  (dict "enabled" $products.intent.enabled "env" "INTENT" "alias" "intent" "mount" "intent-admin"
+    "cp" "redis-intent-router-controlplane:9400" "dp" "redis-intent-router-dataplane:9401") }}
+{{- /* Extraction: the Pod runs as the Playbook worker to present its projected token (a Pod can only project its own). */}}
+{{- $extraction := and $memory $playbook .Values.global.iris.extraction.enabled }}
+{{- $control := .Values.identityService.control }}
+{{- $domain := .Values.global.iris.clusterDomain }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: iris-suite-verify
+  labels:
+    app.kubernetes.io/name: redis-iris
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  restartPolicy: Never
+  {{- if $extraction }}
+  serviceAccountName: redis-agent-playbook-worker
+  {{- end }}
+  automountServiceAccountToken: false
+  activeDeadlineSeconds: 300
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  {{- with .Values.global.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  containers:
+    - name: suite-verify
+      image: "{{ .Values.tests.suiteVerify.image.repository }}:{{ .Values.tests.suiteVerify.image.tag }}"
+      imagePullPolicy: {{ .Values.tests.suiteVerify.image.pullPolicy }}
+      command: ["python3", "-c", {{ .Files.Get "files/suite-verify.py" | toJson }}]
+      env:
+        - name: IDS_URL
+          value: "http://iris-identity-service.{{ .Release.Namespace }}.svc.{{ $domain }}:9200"
+        - name: MEMORY_ENABLED
+          value: {{ $memory | toString | quote }}
+        - name: PLAYBOOK_ENABLED
+          value: {{ $playbook | toString | quote }}
+        - name: EXTRACTION_ENABLED
+          value: {{ $extraction | toString | quote }}
+        {{- if $memory }}
+        - name: MEMORY_CP_URL
+          value: "http://redis-agent-memory-controlplane.{{ .Release.Namespace }}.svc.{{ $domain }}:9100"
+        - name: MEMORY_DP_URL
+          value: "http://redis-agent-memory.{{ .Release.Namespace }}.svc.{{ $domain }}:9000"
+        {{- end }}
+        {{- if $playbook }}
+        - name: PLAYBOOK_CP_URL
+          value: "http://redis-agent-playbook-controlplane.{{ .Release.Namespace }}.svc.{{ $domain }}:9200"
+        - name: PLAYBOOK_DP_URL
+          value: "http://redis-agent-playbook-dataplane.{{ .Release.Namespace }}.svc.{{ $domain }}:9201"
+        # The control plane accepts only an embedding it is configured with, so the test Playbook uses the first.
+        {{- with index .Values.playbook.inference.models 0 }}
+        - name: PLAYBOOK_EMBEDDING
+          value: {{ dict "provider" .provider "model" .model "dimensions" .dimensions | toJson | quote }}
+        {{- end }}
+        {{- end }}
+        {{- range $more }}
+        - name: {{ .env }}_ENABLED
+          value: {{ .enabled | toString | quote }}
+        {{- if .enabled }}
+        - name: {{ .env }}_CP_URL
+          value: "http://{{ (splitList ":" .cp) | first }}.{{ $.Release.Namespace }}.svc.{{ $domain }}:{{ (splitList ":" .cp) | last }}"
+        - name: {{ .env }}_DP_URL
+          value: "http://{{ (splitList ":" .dp) | first }}.{{ $.Release.Namespace }}.svc.{{ $domain }}:{{ (splitList ":" .dp) | last }}"
+        {{- end }}
+        {{- end }}
+        {{- if $products.contextGateway.enabled }}
+        # A Gateway must advertise its MCP endpoint under this URL.
+        - name: CONTEXT_GATEWAY_PUBLIC_BASE_URL
+          value: {{ .Values.contextGateway.publicBaseURL | quote }}
+        {{- end }}
+        {{- if $products.intent.enabled }}
+        # A Router's vector space must be the one configured embedding model.
+        {{- with index .Values.intent.inference.models 0 }}
+        - name: INTENT_EMBEDDING
+          value: {{ dict "provider" .provider "model" .model "dimensions" .dimensions | toJson | quote }}
+        {{- end }}
+        {{- end }}
+        - name: UI_URL
+          value: "http://iris-ui.{{ .Release.Namespace }}.svc.{{ $domain }}:8080"
+        - name: MEMORY_DATABASE_ID
+          value: {{ .Values.tests.suiteVerify.databaseId | quote }}
+        {{- with .Values.tests.suiteVerify.failAfterMint }}
+        - name: SUITE_VERIFY_FAIL_AFTER_MINT
+          value: "1"
+        {{- end }}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      volumeMounts:
+        {{- if $memory }}
+        - name: admin-token
+          mountPath: /etc/suite-verify/admin
+          readOnly: true
+        {{- end }}
+        {{- if $playbook }}
+        - name: playbook-admin-token
+          mountPath: /etc/suite-verify/playbook-admin
+          readOnly: true
+        {{- end }}
+        {{- range $more }}
+        {{- if .enabled }}
+        - name: {{ .mount }}-token
+          mountPath: /etc/suite-verify/{{ .mount }}
+          readOnly: true
+        {{- end }}
+        {{- end }}
+        - name: control-token
+          mountPath: /etc/suite-verify/control
+          readOnly: true
+        {{- if $extraction }}
+        - name: worker-token
+          mountPath: /etc/suite-verify/worker
+          readOnly: true
+        {{- end }}
+  volumes:
+    {{- if $extraction }}
+    - name: worker-token
+      projected:
+        sources:
+          - serviceAccountToken:
+              audience: api://memory-dp
+              expirationSeconds: 600
+              path: token
+    {{- end }}
+    {{- if $memory }}
+    {{- with .Values.memory.controlplane.adminToken }}
+    - name: admin-token
+      secret:
+        secretName: {{ .existingSecret }}
+        items:
+          - key: {{ .secretKey | default "token" }}
+            path: token
+    {{- end }}
+    {{- end }}
+    {{- if $playbook }}
+    {{- with .Values.playbook.controlplane.adminToken }}
+    - name: playbook-admin-token
+      secret:
+        secretName: {{ .existingSecret }}
+        items:
+          - key: {{ .secretKey | default "token" }}
+            path: token
+    {{- end }}
+    {{- end }}
+    {{- range $more }}
+    {{- if .enabled }}
+    {{- $mount := .mount }}
+    {{- with (index $.Values .alias).controlplane.adminToken }}
+    - name: {{ $mount }}-token
+      secret:
+        secretName: {{ .existingSecret }}
+        items:
+          - key: {{ .secretKey | default "token" }}
+            path: token
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    - name: control-token
+      secret:
+        secretName: {{ $control.existingSecret }}
+        items:
+          - key: {{ $control.secretKey | default "token" }}
+            path: token

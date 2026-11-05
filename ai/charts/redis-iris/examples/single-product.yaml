@@ -1,0 +1,53 @@
+# Agent Memory alone, with IdP login in the UI (TDD MOD-19479, "Example values").
+# Pass it after examples/memory-only.yaml, which holds the Memory configuration:
+#   helm install iris redis-ai/redis-iris -n redis-ai \
+#     -f examples/memory-only.yaml -f examples/single-product.yaml
+#
+# Create these first in the release namespace, besides memory-only.yaml's Secrets
+# (tests/kind.sh SINGLE_PRODUCT=1 shows each one):
+#   cluster-ca        key ca.crt         the cluster CA, from the kube-root-ca.crt ConfigMap:
+#     kubectl get configmap kube-root-ca.crt -o 'jsonpath={.data.ca\.crt}' > cluster-ca.crt
+#     kubectl create secret generic cluster-ca --from-file=ca.crt=cluster-ca.crt
+#   iris-ui-oidc      key client-secret  the UI's confidential client at the IdP; register the
+#                                        redirect URI <publicURL>/auth/callback
+#   ui-session-redis  key urls           the UI session Redis URL
+# On a cluster whose ServiceAccount issuer is the in-cluster API server, also bind
+# system:service-account-issuer-discovery to system:unauthenticated (the chart creates no
+# cluster-scoped permissions). If Redis or the IdP uses a private CA, add it to cluster-ca.
+
+global:
+  tls:
+    caCertSecret: cluster-ca
+  iris:
+    products:
+      playbook:
+        enabled: false
+      lens:
+        enabled: false
+      contextGateway:
+        enabled: false
+      intent:
+        enabled: false
+    publicURL: https://iris.example.com
+    ingress:
+      className: traefik
+      tls:
+        secretName: iris-tls
+    auth:
+      oidc:
+        issuer: https://idp.example.com/realms/acme
+        jwksURI: https://idp.example.com/realms/acme/protocol/openid-connect/certs
+      roleBindings:
+        - { group: iris-admins, role: suite_admin }
+        - { group: memory-ops, role: operator, product: agent_memory }
+
+ui:
+  sso:
+    enabled: true
+    clientId: iris-ui
+    clientCredential:
+      existingSecret: iris-ui-oidc
+    redis:
+      existingSecret: ui-session-redis
+  ingress:
+    enabled: true

@@ -1,0 +1,29 @@
+{{/*
+Renders the exact { products: [{ key, label, authScheme, healthPath, product, instanceId? }], sso: { enabled } }
+contract iris/ui/src/types/config.ts expects at /config.json, built from the same products[] list
+nginx's reverse-proxy blocks use. The *upstream* fields never appear here -- they stay
+server-side. The shell reads this shape and still reads the bare array an older chart renders.
+*/}}
+{{- define "ui.runtimeConfig" -}}
+{{- $products := list -}}
+{{- range (include "ui.resolved" $ | fromJson).products -}}
+{{- if ne .showInNavigation false -}}
+{{- $product := dict "key" .key "label" .label "authScheme" .authScheme "healthPath" .healthPath "product" .product -}}
+{{- with .instanceId -}}
+{{- $_ := set $product "instanceId" . -}}
+{{- end -}}
+{{- $products = append $products $product -}}
+{{- end -}}
+{{- end -}}
+{{ dict "products" $products "sso" (dict "enabled" .Values.sso.enabled) | toPrettyJson }}
+{{- end }}
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ui.runtimeConfigName" . }}
+  labels:
+    {{- include "ui.labels" . | nindent 4 }}
+data:
+  config.json: |
+    {{- include "ui.runtimeConfig" . | nindent 4 }}

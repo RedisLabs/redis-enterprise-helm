@@ -1,0 +1,103 @@
+# The full suite, rendered offline (helm template, Argo CD, Flux): every product, IdP login, the
+# Playbook -> Memory extraction, and supplied credentials. Nothing is generated and no lookup runs,
+# so every render is the same. Layer it on examples/memory-only.yaml, which carries Agent Memory's
+# configuration body:
+#   helm template iris redis-ai/redis-iris -n redis-ai \
+#     -f examples/memory-only.yaml -f examples/full-suite-gitops.yaml
+# Create these Secrets in the release namespace first:
+#
+#   iris-dp-credentials   keys memory-dp, playbook-dp, lens-dp, context-gateway-dp, intent-dp
+#   iris-cp-internal      keys memory, playbook, lens, context-gateway, intent
+#   memory-cp-admin, playbook-cp-admin, lens-cp-admin, cg-cp-admin, intent-cp-admin, ids-control
+#                         key token: each product's admin token, and the Identity Service Control token
+#   ui-session-key        key key: the UI session key
+#   iris-license          key license (memory-only.yaml's global.iris.license.secretKey)
+#   memory-redis, playbook-redis, playbook-worker, llm-keys, lens-redis, cg-redis,
+#   cg-vault-cp, cg-vault-dp, intent-storage, intent-inference, ids-redis, iris-ui-oidc,
+#   ui-session-redis      the product inputs; see each product example (memory-only.yaml,
+#                         playbook.yaml, lens.yaml, context-gateway.yaml, intent.yaml)
+#   corp-ca, iris-tls, cg-dataplane-tls, dockerhub-mirror  the CA bundle, TLS Secrets, pull Secret
+#
+# Each product mounts only its own key of the two aggregates. A missing key is not caught at render
+# time (gitops evaluates no lookup): that Pod fails to start.
+
+global:
+  tls: { caCertSecret: corp-ca }
+  imagePullSecrets: [{ name: dockerhub-mirror }]
+  iris:
+    renderMode: gitops
+    tenantId: default
+    license: { existingSecret: iris-license }
+    publicURL: https://iris.example.com
+    ingress: { className: traefik, tls: { secretName: iris-tls } }
+    secrets:
+      generate: false
+      dataplaneServiceCredentials: { existingSecret: iris-dp-credentials }
+      controlplaneInternalTokens: { existingSecret: iris-cp-internal }
+    extraction: { enabled: true }                  # needs playbook.worker below
+    workloadIdentity:                              # EKS: the cluster's OIDC issuer
+      issuer: https://oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE
+      jwksURI: https://oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE/keys
+    auth:
+      oidc:
+        issuer: https://login.example.com
+        jwksURI: https://login.example.com/.well-known/jwks.json
+      roleBindings:
+        - { group: iris-admins,  role: suite_admin }
+        - { group: memory-ops,   role: operator, product: agent_memory }
+        - { group: iris-readers, role: viewer,   product: playbook }
+        - { group: iris-readers, role: viewer,   product: lens }
+        - { group: iris-readers, role: viewer,   product: intent }
+memory:
+  secrets: { secretName: memory-redis }
+  tls: { caCertSecret: "" }                        # global.tls.caCertSecret, not memory-only.yaml's
+  controlplane: { adminToken: { existingSecret: memory-cp-admin } }
+playbook:
+  storage: { existingSecret: playbook-redis }
+  inference:
+    existingSecret: llm-keys
+    models: [{ provider: openai, model: text-embedding-3-small, dimensions: 1536 }]
+  controlplane: { adminToken: { existingSecret: playbook-cp-admin } }
+  worker: { existingSecret: playbook-worker, region: us-east-1 }   # extraction worker overlay (Redis, LLM, inference)
+lens:
+  storage: { existingSecret: lens-redis }
+  controlplane: { adminToken: { existingSecret: lens-cp-admin } }
+contextGateway:
+  publicBaseURL: https://mcp.example.com
+  dataplane:
+    ingress:
+      enabled: true
+      className: traefik
+      hosts:
+        - host: mcp.example.com
+          paths: [{ path: /, pathType: Prefix }]
+      tls:
+        - hosts: [mcp.example.com]
+          secretName: cg-dataplane-tls
+  metadataDB: { existingSecret: cg-redis }
+  controlplane: { adminToken: { existingSecret: cg-cp-admin, secretKey: token } }
+  credentialStorage:
+    provider: vault
+    vault:
+      address: https://vault.example.com
+      mount: iris-cg
+      credentials:                                 # files carrying credential_storage.vault.token
+        controlplane: { existingSecret: cg-vault-cp, secretKey: config.yaml }  # write access
+        dataplane: { existingSecret: cg-vault-dp, secretKey: config.yaml }     # read access
+intent:
+  storage: { existingSecret: intent-storage }      # control-plane and data-plane overlays (intent.yaml)
+  inference:
+    existingSecret: intent-inference
+    models: [{ provider: openai, model: text-embedding-3-small, dimensions: 1536 }]  # exactly one
+  controlplane: { adminToken: { existingSecret: intent-cp-admin } }
+identityService:
+  metadata: { existingSecret: ids-redis }
+  control: { existingSecret: ids-control }
+ui:
+  ingress: { enabled: true }                       # host from global.iris.publicURL
+  sso:
+    enabled: true
+    clientId: iris-ui
+    clientCredential: { existingSecret: iris-ui-oidc }
+    redis: { existingSecret: ui-session-redis }
+    session: { existingSecret: ui-session-key }

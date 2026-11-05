@@ -119,7 +119,13 @@ jobs:
 
       - name: Package chart
         run: |
-          cr package ".release-charts/${{ inputs.tag_prefix }}" --config cr.yaml
+          if [ "${{ inputs.tag_prefix }}" = "redis-iris" ]; then
+            # Preserve the dependencies verified and tested by the Iris release train.
+            mkdir -p .cr-release-packages
+            helm package ".release-charts/${{ inputs.tag_prefix }}" --destination .cr-release-packages
+          else
+            cr package ".release-charts/${{ inputs.tag_prefix }}" --config cr.yaml
+          fi
         env:
           CR_TOKEN: "${{ github.token }}"
 

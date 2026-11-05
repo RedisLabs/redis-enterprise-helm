@@ -1,0 +1,338 @@
+{{- /*
+The suite preflight (MOD-20409, MOD-20761), a troubleshoot.sh Preflight spec. Run it before installing
+(README.md, Install-time checks) or afterwards with `kubectl preflight secret/<ns>/iris-preflight`.
+Cluster checks, from troubleshoot.sh's default collectors: Kubernetes >= 1.28 (fails; it replaces
+Memory's own 1.23 preflight, which the umbrella turns off), the TDD baseline sizing (warns: the
+figures await load tests), the metrics API (warns, as Memory's did), and, with ui.ingress.enabled,
+the IngressClass global.iris.ingress.className (fails). With global.iris.secrets.generate: false, a
+collector Pod mounts the two supplied aggregates with items limited to the enabled products' keys and
+prints whether each key is present, empty, or missing; it reads no value and prints none.
+Workload identity: a collector Pod in the release namespace reads the cluster's ServiceAccount issuer from in-cluster
+discovery with its own token (allowed by the default system:service-account-issuer-discovery binding),
+then fetches the configured JWKS anonymously, as the Memory and Playbook planes do, once per plane
+with the CAs that plane trusts (system CAs plus its tls.caCertSecret). It creates no RBAC: the
+grant anonymous discovery needs is printed, never applied. Those checks render only when a plane fetches
+the JWKS: a Playbook-only install without extraction verifies no workload identity.
+*/ -}}
+{{- $wi := default (dict) .Values.global.iris.workloadIdentity }}
+{{- $issuer := default (printf "https://kubernetes.default.svc.%s" .Values.global.iris.clusterDomain) $wi.issuer }}
+{{- $jwks := default (printf "%s/openid/v1/jwks" $issuer) $wi.jwksURI }}
+{{- $grant := printf "kubectl create clusterrolebinding %s-issuer-discovery --clusterrole=system:service-account-issuer-discovery --group=system:unauthenticated" .Release.Namespace }}
+{{- /* The planes that fetch the JWKS, each with the CA it trusts: the image's system CAs plus its
+tls.caCertSecret (or global.tls.caCertSecret), mounted as the product chart mounts it. Agent Memory
+verifies its own worker; Agent Playbook verifies its worker only with extraction. */}}
+{{- $globalCA := dig "tls" "caCertSecret" "" .Values.global }}
+{{- $consumers := list }}
+{{- if .Values.global.iris.products.memory.enabled }}
+{{- $consumers = append $consumers (dict "name" "memory" "label" "Agent Memory" "secret" (default $globalCA (dig "tls" "caCertSecret" "" .Values.memory)) "key" (default "ca.crt" (dig "tls" "caCertKey" "" .Values.memory))) }}
+{{- end }}
+{{- if and .Values.global.iris.products.playbook.enabled .Values.global.iris.extraction.enabled }}
+{{- $consumers = append $consumers (dict "name" "playbook" "label" "Agent Playbook" "secret" (default $globalCA (dig "tls" "caCertSecret" "" .Values.playbook)) "key" "") }}
+{{- end }}
+{{- /* The supplied credential keys (global.iris.secrets.generate: false): one item per enabled product
+in each aggregate, mounted optional so a missing Secret or key reads as missing. */}}
+{{- $secrets := .Values.global.iris.secrets }}
+{{- $keys := list }}
+{{- if not $secrets.generate }}
+{{- range $p := list (list "memory" "memory" "Agent Memory") (list "playbook" "playbook" "Agent Playbook") (list "lens" "lens" "Lens") (list "contextGateway" "context-gateway" "Context Gateway") (list "intent" "intent" "Intent Router") }}
+{{- if (index $.Values.global.iris.products (index $p 0)).enabled }}
+{{- $keys = append $keys (dict "volume" "dataplane" "key" (printf "%s-dp" (index $p 1)) "label" (index $p 2) "secret" $secrets.dataplaneServiceCredentials.existingSecret "path" "dataplaneServiceCredentials" "what" "data-plane service credential") }}
+{{- $keys = append $keys (dict "volume" "controlplane" "key" (index $p 1) "label" (index $p 2) "secret" $secrets.controlplaneInternalTokens.existingSecret "path" "controlplaneInternalTokens" "what" "control-plane internal token") }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- $ingressClass := "" }}
+{{- if dig "ingress" "enabled" false .Values.ui }}
+{{- $ingressClass = dig "ingress" "className" "" .Values.global.iris }}
+{{- end }}
+{{- if .Values.preflight.enabled }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: iris-preflight
+  labels:
+    app.kubernetes.io/name: redis-iris
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: preflight
+    troubleshoot.sh/kind: preflight
+type: Opaque
+stringData:
+  preflight.yaml: |
+    apiVersion: troubleshoot.sh/v1beta2
+    kind: Preflight
+    metadata:
+      name: iris-preflight
+    spec:
+      collectors:
+        {{- if $consumers }}
+        - runPod:
+            collectorName: iris-workload-identity
+            name: iris-workload-identity
+            namespace: {{ .Release.Namespace }}
+            timeout: 60s
+            podSpec:
+              restartPolicy: Never
+              automountServiceAccountToken: false
+              {{- with .Values.global.imagePullSecrets }}
+              imagePullSecrets:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 65534
+                seccompProfile:
+                  type: RuntimeDefault
+              containers:
+                - name: check
+                  image: "{{ .Values.preflight.image.repository }}:{{ .Values.preflight.image.tag }}"
+                  env:
+                    - name: ISSUER
+                      value: {{ $issuer | quote }}
+                    - name: JWKS
+                      value: {{ $jwks | quote }}
+                    - name: CONSUMERS
+                      value: {{ $names := list }}{{ range $consumers }}{{ $names = append $names .name }}{{ end }}{{ join " " $names | quote }}
+                  command: ["sh", "-c"]
+                  args:
+                    - |
+                      # The cluster CA verifies the API server (kubernetes.default.svc) only.
+                      cluster="$(curl -sS --cacert /var/run/iris/ca.crt -H "Authorization: Bearer $(cat /var/run/iris/token)" \
+                        https://kubernetes.default.svc/.well-known/openid-configuration | sed -n 's/.*"issuer":"\([^"]*\)".*/\1/p')"
+                      echo "cluster-issuer=$cluster"
+                      echo "configured-issuer=$ISSUER"
+                      [ "$cluster" = "$ISSUER" ] && echo "issuer-match=true" || echo "issuer-match=false"
+                      # Each plane fetches the JWKS trusting the system CAs plus its own CA Secret (000: TLS or connection failure).
+                      for p in $CONSUMERS; do
+                        cat /etc/ssl/certs/ca-certificates.crt /var/run/iris-ca/"$p"/* > /tmp/"$p".crt 2>/dev/null
+                        echo "jwks-status-$p=$(curl -s -o /dev/null -w '%{http_code}' --cacert /tmp/"$p".crt "$JWKS")"
+                      done
+                  securityContext:
+                    allowPrivilegeEscalation: false
+                    readOnlyRootFilesystem: true
+                    capabilities:
+                      drop: ["ALL"]
+                  volumeMounts:
+                    - name: identity
+                      mountPath: /var/run/iris
+                      readOnly: true
+                    - name: tmp
+                      mountPath: /tmp
+                    {{- range $consumers }}
+                    {{- if .secret }}
+                    - name: ca-{{ .name }}
+                      mountPath: /var/run/iris-ca/{{ .name }}
+                      readOnly: true
+                    {{- end }}
+                    {{- end }}
+              volumes:
+                - name: identity
+                  projected:
+                    sources:
+                      - serviceAccountToken:
+                          path: token
+                          expirationSeconds: 600
+                      - configMap:
+                          name: kube-root-ca.crt
+                          items:
+                            - key: ca.crt
+                              path: ca.crt
+                - name: tmp
+                  emptyDir: {}
+                {{- range $consumers }}
+                {{- if .secret }}
+                - name: ca-{{ .name }}
+                  secret:
+                    secretName: {{ .secret }}
+                    {{- if .key }}
+                    items:
+                      - key: {{ .key }}
+                        path: {{ .key }}
+                    {{- end }}
+                {{- end }}
+                {{- end }}
+        {{- end }}
+        {{- if $keys }}
+        - runPod:
+            collectorName: iris-credentials
+            name: iris-credentials
+            namespace: {{ .Release.Namespace }}
+            timeout: 60s
+            podSpec:
+              restartPolicy: Never
+              automountServiceAccountToken: false
+              {{- with .Values.global.imagePullSecrets }}
+              imagePullSecrets:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 65534
+                seccompProfile:
+                  type: RuntimeDefault
+              containers:
+                - name: check
+                  image: "{{ .Values.preflight.image.repository }}:{{ .Values.preflight.image.tag }}"
+                  env:
+                    - name: KEYS
+                      value: {{ $names := list }}{{ range $keys }}{{ $names = append $names (printf "%s/%s" .volume .key) }}{{ end }}{{ join " " $names | quote }}
+                  command: ["sh", "-c"]
+                  args:
+                    - |
+                      # Only sizes are tested and only key names printed: no value is read.
+                      for k in $KEYS; do
+                        f=/var/run/iris-keys/"$k"
+                        if [ -s "$f" ]; then s=present; elif [ -e "$f" ]; then s=empty; else s=missing; fi
+                        echo "key-${k#*/}=$s"
+                      done
+                  securityContext:
+                    allowPrivilegeEscalation: false
+                    readOnlyRootFilesystem: true
+                    capabilities:
+                      drop: ["ALL"]
+                  volumeMounts:
+                    {{- range $volume := list "dataplane" "controlplane" }}
+                    - name: {{ $volume }}
+                      mountPath: /var/run/iris-keys/{{ $volume }}
+                      readOnly: true
+                    {{- end }}
+              volumes:
+                {{- range $volume := list "dataplane" "controlplane" }}
+                - name: {{ $volume }}
+                  secret:
+                    secretName: {{ ternary $secrets.dataplaneServiceCredentials.existingSecret $secrets.controlplaneInternalTokens.existingSecret (eq $volume "dataplane") }}
+                    items:
+                      {{- range $keys }}
+                      {{- if eq .volume $volume }}
+                      - key: {{ .key }}
+                        path: {{ .key }}
+                      {{- end }}
+                      {{- end }}
+                    optional: true
+                {{- end }}
+        {{- end }}
+        {{- if not (or $consumers $keys) }} []{{ end }}
+      analyzers:
+        - clusterVersion:
+            checkName: Kubernetes version
+            outcomes:
+              - fail:
+                  when: "< 1.28.0"
+                  message: redis-iris requires Kubernetes 1.28 or newer.
+              - pass:
+                  message: The Kubernetes version is 1.28 or newer.
+        {{- /* Sizing counts worker nodes only: troubleshoot filters by label, not by taint or cordon. */}}
+        - nodeResources:
+            checkName: Baseline sizing (nodes)
+            filters:
+              selector:
+                matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: DoesNotExist
+            outcomes:
+              - warn:
+                  when: "count() < 3"
+                  message: The baseline production cluster has at least 3 worker nodes (nodes without the node-role.kubernetes.io/control-plane label; cordoned nodes still count), so draining one node keeps every replicated component serving. Replicas are not spread across nodes, so losing a node can still stop a component. Fewer can run the suite, without that redundancy.
+              - pass:
+                  message: The cluster has at least 3 worker nodes (cordoned nodes count).
+        - nodeResources:
+            checkName: Baseline sizing (CPU)
+            filters:
+              selector:
+                matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: DoesNotExist
+            outcomes:
+              - warn:
+                  when: "sum(cpuAllocatable) < 12"
+                  message: The baseline production cluster has at least 12 vCPU allocatable for Iris workloads, excluding Redis Enterprise (provisional until load tests).
+              - pass:
+                  message: The cluster has at least 12 vCPU allocatable.
+        - nodeResources:
+            checkName: Baseline sizing (memory)
+            filters:
+              selector:
+                matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: DoesNotExist
+            outcomes:
+              - warn:
+                  when: "sum(memoryAllocatable) < 24Gi"
+                  message: The baseline production cluster has at least 24 GiB allocatable for Iris workloads, excluding Redis Enterprise (provisional until load tests).
+              - pass:
+                  message: The cluster has at least 24 GiB allocatable.
+        - textAnalyze:
+            checkName: Metrics API for autoscaling
+            fileName: cluster-resources/groups.json
+            regex: '"groupVersion": "metrics.k8s.io/v1beta1"'
+            outcomes:
+              - warn:
+                  when: "false"
+                  message: metrics.k8s.io/v1beta1 was not discovered. The suite installs, but the CPU-based HorizontalPodAutoscalers (Agent Memory's by default) cannot scale without Kubernetes metrics, for example metrics-server.
+              - pass:
+                  when: "true"
+                  message: metrics.k8s.io/v1beta1 is available for the HorizontalPodAutoscalers.
+        {{- with $ingressClass }}
+        - textAnalyze:
+            checkName: Ingress class {{ . }}
+            fileName: cluster-resources/ingress-classes.json
+            regex: '"name": "{{ regexQuoteMeta . }}"'
+            outcomes:
+              - fail:
+                  when: "false"
+                  message: "IngressClass {{ . }} (global.iris.ingress.className) does not exist, so no controller serves the UI Ingress. Install the controller or set the class it registers (kubectl get ingressclass)."
+              - pass:
+                  when: "true"
+                  message: IngressClass {{ . }} exists.
+        {{- end }}
+        {{- range $keys }}
+        - textAnalyze:
+            checkName: Credential key {{ .key }}
+            fileName: iris-credentials/iris-credentials.log
+            regex: '(?m)^key-{{ .key }}=present$'
+            outcomes:
+              - fail:
+                  when: "false"
+                  message: "Secret {{ .secret }} (global.iris.secrets.{{ .path }}.existingSecret) has no non-empty key {{ .key }}, the {{ .label }} {{ .what }}. The collected key-{{ .key }}= line says whether it is empty or missing."
+              - pass:
+                  when: "true"
+                  message: "Secret {{ .secret }} has a non-empty key {{ .key }}."
+        {{- end }}
+        {{- if $consumers }}
+        - textAnalyze:
+            checkName: Workload identity issuer
+            fileName: iris-workload-identity/iris-workload-identity.log
+            regex: issuer-match=true
+            outcomes:
+              - fail:
+                  when: "false"
+                  message: "global.iris.workloadIdentity.issuer resolves to {{ $issuer }}, which is not the cluster's ServiceAccount issuer (the collected cluster-issuer= line), so the Memory data plane and control plane reject the Playbook and Memory workers' tokens. Set global.iris.workloadIdentity.issuer and jwksURI to the cluster's (on EKS: aws eks describe-cluster --query cluster.identity.oidc.issuer)."
+              - pass:
+                  when: "true"
+                  message: "global.iris.workloadIdentity.issuer equals the cluster's ServiceAccount issuer ({{ $issuer }})."
+        - textAnalyze:
+            checkName: Anonymous issuer discovery
+            fileName: iris-workload-identity/iris-workload-identity.log
+            regex: jwks-status-[a-z]+=40[13]
+            outcomes:
+              - fail:
+                  when: "true"
+                  message: "The cluster refuses anonymous access to {{ $jwks }}, which the Memory and Playbook planes fetch without a credential. Grant anonymous issuer discovery: {{ $grant }}"
+              - pass:
+                  when: "false"
+                  message: "{{ $jwks }} does not refuse anonymous access."
+        {{- range $consumers }}
+        - textAnalyze:
+            checkName: Workload identity JWKS ({{ .label }})
+            fileName: iris-workload-identity/iris-workload-identity.log
+            regex: jwks-status-{{ .name }}=200
+            outcomes:
+              - fail:
+                  when: "false"
+                  message: "{{ $jwks }} (global.iris.workloadIdentity.jwksURI) is not reachable from namespace {{ $.Release.Namespace }} with the CAs {{ .label }} trusts: the system CAs plus {{ if .secret }}Secret {{ .secret }}{{ else }}no CA Secret{{ end }} ({{ .name }}.tls.caCertSecret or global.tls.caCertSecret). See the collected jwks-status-{{ .name }}= line; 000 is a TLS or connection failure. For the in-cluster issuer, put the cluster CA (ConfigMap kube-root-ca.crt) in that Secret."
+              - pass:
+                  when: "true"
+                  message: "{{ $jwks }} is reachable from namespace {{ $.Release.Namespace }} with the CAs {{ .label }} trusts."
+        {{- end }}
+        {{- end }}
+{{- end }}

@@ -1,0 +1,17 @@
+# Lens values for the redis-iris suite, release iris in namespace redis-ai.
+# Install it with examples/memory-only.yaml and examples/playbook.yaml:
+#   helm install iris redis-ai/redis-iris -n redis-ai \
+#     -f examples/memory-only.yaml -f examples/playbook.yaml \
+#     -f examples/lens.yaml -f examples/context-gateway.yaml -f examples/intent.yaml
+# Lens is on by default (global.iris.products.lens.enabled), so an upgrade from
+# 0.4.0 needs this file too, or global.iris.products.lens.enabled: false;
+# without either the render fails and names the missing lens.* field.
+#
+# Create this first in namespace redis-ai (tests/kind.sh shows it):
+#   lens-storage  key lens-dataplane-storage.yaml     storage.{streams,content,index,metadata}.urls
+#                 key lens-controlplane-storage.yaml  storage.metadata.urls
+# The license, tenant, Identity Service connection, and credentials are the suite's.
+
+lens:
+  storage:
+    existingSecret: lens-storage

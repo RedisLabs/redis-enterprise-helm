@@ -1,0 +1,22 @@
+{{- if .Values.tests.enabled }}
+{{ include "redis-onprem.serviceAccount" (dict
+  "root" .
+  "create" true
+  "name" (include "redis-intent-router.testServiceAccountName" .)
+  "labelsTemplate" "redis-intent-router.labels"
+  "annotations" (dict)
+  "automount" true
+) }}
+---
+{{ include "redis-onprem.tests.rbac" (dict
+  "root" .
+  "enabled" true
+  "name" (include "redis-intent-router.testRBACName" .)
+  "labelsTemplate" "redis-intent-router.labels"
+  "serviceAccountName" (include "redis-intent-router.testServiceAccountName" .)
+  "resourceNames" (list
+    (include "redis-intent-router.controlplaneName" .)
+    (include "redis-intent-router.dataplaneName" .)
+  )
+) }}
+{{- end }}

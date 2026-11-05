@@ -1,0 +1,28 @@
+tenantId: example-tenant
+publicBaseURL: https://gateway.example.com
+identityService:
+  baseURL: https://identity.example.com
+license:
+  secretProviderClass: gateway-license
+  fileName: license
+metadataDB:
+  secretProviderClass: gateway-metadata
+  fileName: config.yaml
+credentialStorage:
+  redis:
+    connection:
+      secretProviderClass: gateway-credential-redis
+      fileName: config.yaml
+    keyring:
+      secretProviderClass: gateway-keyring
+controlplane:
+  adminToken:
+    secretProviderClass: gateway-admin
+    fileName: token
+  internalToken:
+    secretProviderClass: gateway-grant-validation
+    fileName: token
+dataplane:
+  runtimeToken:
+    secretProviderClass: gateway-runtime
+    fileName: token

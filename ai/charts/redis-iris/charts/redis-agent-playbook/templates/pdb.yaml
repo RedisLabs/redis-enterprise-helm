@@ -1,0 +1,15 @@
+{{- /* One PodDisruptionBudget per Deployment that keeps more than one Pod; redis-onprem.pdb skips the rest. */ -}}
+{{- $suite := include "redis-agent-playbook.suite" . | fromJson -}}
+{{- $budgets := list
+  (dict "name" (include "redis-agent-playbook.dataplaneName" .) "component" "dataplane" "replicas" .Values.dataplane.replicaCount)
+  (dict "name" (include "redis-agent-playbook.controlplaneName" .) "component" "controlplane" "replicas" .Values.controlplane.replicaCount) -}}
+{{- if $suite.worker.enabled -}}
+{{- $budgets = append $budgets (dict "name" (include "redis-agent-playbook.workerName" .) "component" "worker" "replicas" $suite.worker.replicaCount) -}}
+{{- end -}}
+{{- range $budgets }}
+{{- with (include "redis-onprem.pdb" (merge (dict "root" $ "enabled" $.Values.podDisruptionBudget.enabled
+  "labelsTemplate" "redis-agent-playbook.labels" "selectorLabelsTemplate" "redis-agent-playbook.selectorLabels") .) | trim) }}
+---
+{{ . }}
+{{- end }}
+{{- end }}

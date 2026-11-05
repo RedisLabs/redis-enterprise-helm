@@ -1,0 +1,26 @@
+{{- if .Values.tests.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "redis-lens.fullname" . }}-health-test
+  labels:
+    {{- include "redis-lens.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    {{- toYaml .Values.podSecurityContext | nindent 4 }}
+  containers:
+    - name: health
+      image: curlimages/curl:8.17.0
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      command:
+        - sh
+        - -ec
+        - |
+          curl --fail --silent --show-error http://{{ include "redis-lens.dataplaneName" . }}:{{ .Values.dataplane.service.port }}/health/readiness
+          curl --fail --silent --show-error http://{{ include "redis-lens.controlplaneName" . }}:{{ .Values.controlplane.service.port }}/health/readiness
+{{- end }}
