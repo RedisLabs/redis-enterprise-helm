@@ -559,6 +559,31 @@ entries:
             - name: CHANGELOG
               url: https://redis.io/docs/latest/operate/kubernetes/release-notes/
     apiVersion: v2
+    appVersion: 7.22.2-50
+    created: "2026-11-10T11:09:31.458839699Z"
+    description: A Helm chart for Redis Enterprise Operator for Kubernetes
+    digest: 7ccfd54f64736dd1041e0a3b67ec643d0b75f9ae507f3da21e8ea35e55254acb
+    home: https://redis.com
+    icon: https://redis.io/wp-content/uploads/2024/04/Logotype.svg
+    keywords:
+    - redis
+    - database
+    maintainers:
+    - name: Redis
+      url: https://redis.com/company/contact/
+    name: redis-enterprise-operator
+    type: application
+    urls:
+    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-enterprise-operator-7.22.2-50/redis-enterprise-operator-7.22.2-50.tgz
+    version: 7.22.2-50
+  - annotations:
+      artifacthub.io/changes: |
+        - kind: changed
+          description: The full release notes are available here. Note that the chart versions match the software versions.
+          links:
+            - name: CHANGELOG
+              url: https://redis.io/docs/latest/operate/kubernetes/release-notes/
+    apiVersion: v2
     appVersion: 7.22.2-47
     created: "2026-10-16T06:03:16.665069987Z"
     description: A Helm chart for Redis Enterprise Operator for Kubernetes
@@ -1066,4 +1091,4 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-enterprise-operator-7.8.2-6/redis-enterprise-operator-7.8.2-6.tgz
     version: 7.8.2-6
-generated: "2026-10-28T13:10:01.527220651Z"
+generated: "2026-11-10T11:09:31.459185784Z"
