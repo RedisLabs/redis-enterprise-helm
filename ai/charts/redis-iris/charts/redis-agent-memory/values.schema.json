@@ -448,15 +448,15 @@
         },
         "queueMonitor": {
           "type": "object",
-          "description": "Optional Asynqmon UI for the on-prem regional Redis job queue backend. Disabled by default. When enabled, Redis credentials and Basic Auth htpasswd data must come from existing Secrets.",
+          "description": "Optional Asynqdash UI for the on-prem regional Redis job queue backend. Disabled by default. When enabled, Redis credentials and Basic Auth htpasswd data must come from existing Secrets.",
           "properties": {
             "enabled": {
               "type": "boolean",
-              "description": "When true, render a separate Asynqmon Deployment, Service, and optional dedicated-host Ingress."
+              "description": "When true, render a separate Asynqdash Deployment, Service, and optional dedicated-host Ingress."
             },
             "readOnly": {
               "type": "boolean",
-              "description": "When true, run Asynqmon in read-only mode. Defaults to true."
+              "description": "When true, run Asynqdash in read-only mode. Defaults to true."
             },
             "image": {
               "type": "object",
@@ -508,6 +508,9 @@
                 "urlKey": {
                   "type": "string",
                   "minLength": 1
+                },
+                "usernameKey": {
+                  "type": "string"
                 },
                 "tlsServerNameKey": {
                   "type": "string"

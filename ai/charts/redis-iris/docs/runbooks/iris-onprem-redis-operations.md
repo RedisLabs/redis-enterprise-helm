@@ -54,7 +54,7 @@ Nothing is unavailable during the rotation: both users work until step 5.
    restart iris-identity-service
    restart redis-agent-memory-controlplane redis-agent-playbook-controlplane redis-lens-controlplane \
      redis-context-gateway-controlplane redis-intent-router-controlplane
-   restart redis-agent-memory redis-agent-memory-worker redis-agent-memory-asynqmon redis-agent-playbook-dataplane \
+   restart redis-agent-memory redis-agent-memory-worker redis-agent-memory-asynqdash redis-agent-playbook-dataplane \
      redis-agent-playbook-worker redis-lens-dataplane redis-lens-worker redis-context-gateway-dataplane \
      redis-intent-router-dataplane
    restart iris-ui iris-ui-auth
@@ -62,8 +62,8 @@ Nothing is unavailable during the rotation: both users work until step 5.
 
    `restart` skips a Deployment that is not installed: a product you have not enabled, the Playbook
    worker without `global.iris.extraction.enabled`, `iris-ui-auth` without IdP login, and Memory's queue
-   monitor (`redis-agent-memory-asynqmon`) unless you enabled it. The queue monitor reads `REDIS_URL` from its
-   own Secret at startup, so it keeps the old user until it restarts.
+   monitor (`redis-agent-memory-asynqdash`) unless you enabled it. The queue monitor reads `REDIS_URL` and the optional
+   `REDIS_USERNAME` from its own Secret at startup, so it keeps the old user until it restarts.
    Jobs queued before the restart stay queued and run once the workers are back.
 
 4. Verify the suite: `helm test iris -n redis-ai --logs`.

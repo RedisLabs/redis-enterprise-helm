@@ -1,39 +1,39 @@
 apiVersion: v2
-appVersion: 1.0.0
+appVersion: 1.0.1
 dependencies:
 - alias: identityService
   name: iris-identity-service
   repository: https://helm.redis.io/ai
-  version: 1.0.0
+  version: 1.0.1
 - alias: ui
   name: redis-iris-ui
   repository: https://helm.redis.io/ai
-  version: 1.0.0
+  version: 1.0.1
 - alias: memory
   condition: global.iris.products.memory.enabled
   name: redis-agent-memory
   repository: https://helm.redis.io/ai
-  version: 1.0.0
+  version: 1.0.1
 - alias: playbook
   condition: global.iris.products.playbook.enabled
   name: redis-agent-playbook
   repository: https://helm.redis.io/ai
-  version: 1.0.0
+  version: 1.0.1
 - alias: lens
   condition: global.iris.products.lens.enabled
   name: redis-lens
   repository: https://helm.redis.io/ai
-  version: 1.0.0
+  version: 1.0.1
 - alias: contextGateway
   condition: global.iris.products.contextGateway.enabled
   name: redis-context-gateway
   repository: https://helm.redis.io/ai
-  version: 1.0.0
+  version: 1.0.1
 - alias: intent
   condition: global.iris.products.intent.enabled
   name: redis-intent-router
   repository: https://helm.redis.io/ai
-  version: 1.0.0
+  version: 1.0.1
 description: 'Redis Iris on-prem suite: the Identity Service, Agent Memory, Agent
   Playbook, Lens, Context Gateway, Intent Router, and the on-prem UI installed as
   one release.'
@@ -45,4 +45,4 @@ keywords:
 kubeVersion: '>=1.28.0-0'
 name: redis-iris
 type: application
-version: 1.0.0
+version: 1.0.1
