@@ -1089,9 +1089,11 @@ generated credential reuse across an upgrade and workload restart, then exercise
 the service lifecycle. These checks do not establish EKS, real-provider, TLS,
 backup/restore, or cross-version upgrade qualification.
 
-The validation bundle targets `linux/amd64`; each component's OS,
-architecture, config digest (`imageId`), frozen registry manifest digest, and versioned reference are recorded in
-`manifest.json`. The chart records intended public image names; the overlay
+The validation bundle holds one OCI archive per image, an index of `linux/amd64` and
+`linux/arm64`; each component's index digest (`registryDigest`), the per-platform
+manifest digest and config digest (`imageId`), and versioned reference are recorded in
+`manifest.json`. The KinD install and the license, FIPS and vulnerability checks run on the
+`linux/amd64` platform; a native ARM64 job starts the `linux/arm64` platform. The chart records intended public image names; the overlay
 selects the local names inside the unpublished archives. After verifying
 `SHA256SUMS`, load the images into the Kubernetes nodes and apply the overlay
 after your deployment values. For KinD, load into Docker and then into the
