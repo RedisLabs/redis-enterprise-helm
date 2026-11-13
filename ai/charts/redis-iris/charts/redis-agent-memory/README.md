@@ -54,7 +54,7 @@ Prerequisite matrix:
 | Content store Redis | Redis 7.2.0 through 8.4.x with RedisJSON and RediSearch / Query Engine, reachable from RAM | Configure endpoints in `databases.<id>.urls`. The content store holds session memory JSON documents and long-term memory hashes, so it must support JSON commands, hashes, TTLs, `FT.CREATE`, `FT.SEARCH`, JSON indexing, and vector `HNSW` fields. |
 | Job Redis | Redis 6.2+ reachable from RAM server and worker pods | Configure `background_jobs.redis.urls` to the regional job Redis endpoint, use a non-volatile / `noeviction` policy, and keep exactly one async backend enabled per process. The job Redis does not need RediSearch or RedisJSON unless the same Redis also serves as the content store. |
 | Metadata Redis | Redis 6.2+ reachable from the control plane, server, and worker | Configure `metadata.urls` and a shared `metadata.namespace`. It stores dynamic store records. Agent-key records live in the Identity Service release's own metadata Redis, which may be the same Redis. |
-| Architecture support | Treat RAM on-prem images as `linux/amd64` unless the release notes for your image version explicitly declare a multi-arch manifest | For ARM64 nodes, use a compatible image or schedule RAM pods onto AMD64 nodes. |
+| Architecture support | Releases built by `memory-onprem-release.yml` publish one multi-platform tag (`linux/amd64` and `linux/arm64`) for each RAM image; earlier releases are `linux/amd64` only | On a mixed or ARM64 cluster the node pulls its own platform from the same tag. A private-registry mirror must copy every platform (`skopeo copy --all` or `crane copy`); `docker pull`/`tag`/`push` mirrors only the host platform. The optional `ghcr.io/jpedrosouza/asynqdash` console image publishes both platforms. |
 
 Recommended deployment model:
 
@@ -1733,16 +1733,40 @@ for product and deployment coverage.
 
 ## Queue Monitor (optional)
 
-The chart can optionally deploy **Asynqmon** for low-frequency inspection of the
+The chart can optionally deploy **Asynqdash** for low-frequency inspection of the
 RAM async queues backed by `background_jobs.redis`. It is disabled by default
 (`controlplane.queueMonitor.enabled=false`) and is specific to the supported
 Redis queue backend.
 
 When enabled, the chart adds a separate low-resource Deployment,
-`redis-agent-memory-asynqmon`, plus a ClusterIP Service. If
+`redis-agent-memory-asynqdash`, plus a ClusterIP Service. If
 `controlplane.queueMonitor.ingress.enabled=true`, it also renders a dedicated
 host Ingress, for example `ram-jobs.example.com`, protected by ingress Basic
 Auth. The chart does not generate or transform Secrets for this monitor.
+
+Upgrading from a chart that shipped `hibiken/asynqmon` (1.0.0): the Deployment,
+Service and Ingress are renamed from `<fullname>-asynqmon` to `<fullname>-asynqdash`,
+and the container from `asynqmon` to `asynqdash`. `<fullname>` is the
+`fullnameOverride` value: `redis-agent-memory` by default and in the `redis-iris`
+umbrella chart, whatever the release name. `helm upgrade` replaces the
+Deployment and Service by itself. **With
+`controlplane.queueMonitor.ingress.enabled=true`, delete the old Ingress first.**
+Helm creates the renamed Ingress before it deletes the old one, and the
+ingress-nginx admission webhook rejects a second Ingress on the same host and
+path, so the upgrade fails. Select the Ingress by its labels, which both chart
+versions set, so you do not need its name:
+
+```bash
+kubectl -n <namespace-name> delete ingress \
+  -l app.kubernetes.io/instance=<release>,app.kubernetes.io/component=queue-monitor
+helm upgrade <release> ...
+```
+
+Before `helm rollback` to a revision that shipped `hibiken/asynqmon`, run the
+same `kubectl delete` to remove `<fullname>-asynqdash`. The queue monitor UI is
+unreachable from the delete until the upgrade or rollback completes; the RAM
+workloads are not affected. Your existing Secrets keep working. Update any NetworkPolicy,
+monitoring rule or script that matches the old names.
 
 ### Queue monitor Secrets
 
@@ -1751,20 +1775,23 @@ Create a Redis connection Secret that points at the same Redis endpoint used by
 
 ```sh
 kubectl -n <namespace-name> create secret generic ram-job-redis \
-  --from-literal=REDIS_URL='rediss://:<password>@<job-redis-host>:6379/0' \
-  --from-literal=REDIS_TLS='<job-redis-host>'
+  --from-literal=REDIS_URL='rediss://:<password>@<job-redis-host>:6379/0'
 ```
 
-Use `redis://` only when your environment does not require TLS. The optional
-`REDIS_TLS` key sets the TLS server name. If your environment intentionally
+A `rediss://` URL verifies the certificate against `<job-redis-host>`. The
+optional `REDIS_TLS` key sets the TLS server name: Asynqdash verifies that name
+instead of the URL host for a `rediss://` URL, and turns TLS on for a `redis://`
+URL. When the certificate does not cover the connect host (for example the Redis
+Enterprise default certificate), add `REDIS_TLS='<covered name>'` to either URL. A `redis://` URL without `REDIS_TLS` connects
+without TLS; use it only when your environment does not require TLS. If your environment intentionally
 skips hostname verification, provide `REDIS_INSECURE_TLS=true` as a third key
 and document that exception in your deployment record.
 
-Do not include a Redis ACL username in `REDIS_URL` when using the default
-`hibiken/asynqmon:0.7.2` image. Upstream Asynqmon accepts password-only Redis
-URLs and does not expose a username flag, so named-user ACL deployments must
-either provide a monitor credential on Redis' default user or set
-`controlplane.queueMonitor.image.repository` to a compatible wrapper image.
+For a named Redis ACL user, add a `REDIS_USERNAME` key to the same Secret
+(`--from-literal=REDIS_USERNAME='<acl-user>'`) and keep only the password in
+`REDIS_URL` (`rediss://:<password>@...`). Asynqdash reads only the password
+from the URL and ignores a username there. Change the key name with
+`controlplane.queueMonitor.redis.usernameKey`.
 
 Create the Basic Auth Secret separately. Ingress-nginx expects htpasswd content
 under the key `auth`. Use the same password value as the control-plane admin
@@ -1774,10 +1801,10 @@ ingress controller:
 ```sh
 read -rs RAM_ADMIN_PASSWORD
 printf '\n'
-htpasswd -Bbn admin "$RAM_ADMIN_PASSWORD" > asynqmon.htpasswd
-kubectl -n <namespace-name> create secret generic redis-agent-memory-asynqmon-basic-auth \
-  --from-file=auth=./asynqmon.htpasswd
-rm asynqmon.htpasswd
+htpasswd -Bbn admin "$RAM_ADMIN_PASSWORD" > asynqdash.htpasswd
+kubectl -n <namespace-name> create secret generic redis-agent-memory-asynqdash-basic-auth \
+  --from-file=auth=./asynqdash.htpasswd
+rm asynqdash.htpasswd
 unset RAM_ADMIN_PASSWORD
 ```
 
@@ -1796,16 +1823,17 @@ controlplane:
     enabled: true
     readOnly: true
     image:
-      repository: hibiken/asynqmon
-      tag: 0.7.2
+      repository: ghcr.io/jpedrosouza/asynqdash
+      tag: 1.2.0
     redis:
       existingSecret: ram-job-redis
       urlKey: REDIS_URL
+      usernameKey: REDIS_USERNAME
       tlsServerNameKey: REDIS_TLS
       insecureTLSKey: REDIS_INSECURE_TLS
     auth:
       type: basic
-      existingSecret: redis-agent-memory-asynqmon-basic-auth
+      existingSecret: redis-agent-memory-asynqdash-basic-auth
       secretKey: auth
     ingress:
       enabled: true
@@ -1819,29 +1847,30 @@ The rendered ingress uses the ingress-nginx Basic Auth annotations
 `auth-type=basic`, `auth-secret=<existingSecret>`, and
 `auth-secret-type=auth-file`. If your cluster cannot use ingress Basic Auth,
 leave the monitor ingress disabled and put your own auth proxy or service-mesh
-policy in front of the Asynqmon Service.
+policy in front of the queue monitor Service.
 
 ### Security posture
 
 - The monitor is opt-in and runs as an isolated Deployment, not inside the RAM
   worker.
-- It is read-only by default (`READ_ONLY=true`), so Asynqmon hides and rejects
-  mutating actions.
-- If you set `readOnly=false`, Asynqmon can mutate queues and tasks; Basic Auth
+- It is read-only by default (`READ_ONLY=true`), so Asynqdash hides and rejects
+  mutating actions. Read-only mode also sets `DISABLE_THROUGHPUT_COLLECTOR=true`,
+  so the monitor writes no `asynqdash:*` throughput keys to the job Redis.
+- If you set `readOnly=false`, Asynqdash can mutate queues and tasks and records
+  per-queue throughput in the job Redis; Basic Auth
   is then the only chart-managed access control.
 - The default Service is ClusterIP. Public access should go through the
   dedicated admin host ingress or an operator-managed auth proxy.
-- The default image is the latest upstream Asynqmon image tag available during
-  this change (`0.7.2`, corresponding to Git tag `v0.7.2`). Keep the image tag
-  pinned and validate it when changing the repository's Asynq version; use a
-  pinned wrapper image if upstream compatibility diverges.
-- The upstream image publishes amd64 manifests. Use
-  `controlplane.queueMonitor.image.repository` for a mirrored or multi-arch image
-  if your cluster needs another architecture.
+- The default image is [Asynqdash](https://github.com/jpedrosouza/asynqdash)
+  `1.2.0` (Git tag `v1.2.0`), a maintained fork of `hibiken/asynqmon` that keeps
+  its flags and reads the same Asynq data in Redis. Keep the image tag pinned and
+  validate it when changing the repository's Asynq version.
+- The image publishes `linux/amd64` and `linux/arm64` manifests from one tag. A
+  private-registry mirror must copy both (`skopeo copy --all` or `crane copy`).
 
 ### Local Docker Compose
 
-The local RAM on-prem compose stack includes Asynqmon in read-only mode against
+The local RAM on-prem compose stack includes Asynqdash in read-only mode against
 the same Redis queue backend:
 
 ```sh
@@ -1934,7 +1963,7 @@ Use these values to tune the deployment:
 | Control plane | `controlplane.image.*`, `controlplane.config.*`, `controlplane.adminToken.*`, `controlplane.internalToken.*` | configure the bundled admin store API (see [Bundled Control Plane](#bundled-control-plane)) |
 | Identity Service connection | `dataplane.identityServiceBaseURL`, `identityService.allowInsecureTransport`, `identityService.credential.*` | connect the data plane to the Identity Service release (see [Connecting to the Identity Service](#connecting-to-the-identity-service)) |
 | Umbrella fallbacks | `global.security.profile`, `global.imagePullSecrets`, `global.tls.caCertSecret` | read when the local value is empty |
-| Queue monitor | `controlplane.queueMonitor.*` | enable the optional Asynqmon UI for `background_jobs.redis` |
+| Queue monitor | `controlplane.queueMonitor.*` | enable the optional Asynqdash UI for `background_jobs.redis` |
 | Support package | `supportPackage.enabled`, `supportPackage.logLimits.*`, `supportPackage.healthChecks.*`, `supportPackage.healthCheckImage.*`, `supportPackage.healthCheckImagePullSecretName`, `supportPackage.healthCheckPodTimeout`, `supportPackage.registryImages.*`, `supportPackage.nodeMetrics` | render RAM Troubleshoot support-bundle/redactor specs and default diagnostics |
 | Preflight | `preflight.enabled` | render the static RAM Kubernetes preflight spec as a ConfigMap; the same spec is packaged under `support/` for pre-install checks |
 

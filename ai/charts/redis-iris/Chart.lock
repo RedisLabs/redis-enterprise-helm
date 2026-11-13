@@ -1,24 +1,24 @@
 dependencies:
 - name: iris-identity-service
   repository: https://helm.redis.io/ai
-  version: 1.0.0
+  version: 1.0.1
 - name: redis-iris-ui
   repository: https://helm.redis.io/ai
-  version: 1.0.0
+  version: 1.0.1
 - name: redis-agent-memory
   repository: https://helm.redis.io/ai
-  version: 1.0.0
+  version: 1.0.1
 - name: redis-agent-playbook
   repository: https://helm.redis.io/ai
-  version: 1.0.0
+  version: 1.0.1
 - name: redis-lens
   repository: https://helm.redis.io/ai
-  version: 1.0.0
+  version: 1.0.1
 - name: redis-context-gateway
   repository: https://helm.redis.io/ai
-  version: 1.0.0
+  version: 1.0.1
 - name: redis-intent-router
   repository: https://helm.redis.io/ai
-  version: 1.0.0
-digest: sha256:4532ba083b6e50d558321ba02a7a92fa79ea91f9f5db097adc972dc4903e3b0d
-generated: "2026-11-04T23:27:09.645096422+02:00"
+  version: 1.0.1
+digest: sha256:c67f0e64882a6f8588444469388ae3c5f0f644172b064edfaa422d5c021be31a
+generated: "2026-11-13T18:38:09.158141441+02:00"

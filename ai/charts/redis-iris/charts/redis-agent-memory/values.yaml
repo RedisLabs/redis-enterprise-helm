@@ -4,7 +4,7 @@ image:
   repository: 'redislabs/agent-memory'
   pullPolicy: IfNotPresent
   # The image release this chart version ships; override to run another.
-  tag: "1.0.0"
+  tag: "1.0.1"
 
 # Empty falls back to global.imagePullSecrets.
 imagePullSecrets: []
@@ -143,7 +143,7 @@ supportPackage:
   healthCheckImage:
     # Troubleshoot image used by healthChecks. Mirror this image for airgap.
     repository: replicated/troubleshoot
-    tag: 0.131.0
+    tag: 0.134.3
     pullPolicy: IfNotPresent
   healthCheckImagePullSecretName: ""
   healthCheckPodTimeout: 30s
@@ -218,6 +218,16 @@ config:
 #   databases:
 #     "1": { urls: [redis://user:pass@store-redis:6379] }
 #   background_jobs: { redis: { urls: [redis://user:pass@host:6379] } }
+#
+# For TLS, use rediss:// and trust the CA via tls.caCertSecret:
+#   - Recommended: give the Redis Enterprise cluster a proxy certificate
+#     (spec.certificates.proxyCertificateSecretName) whose SANs cover the
+#     database service host (e.g. *.<namespace>.svc.cluster.local) and use a
+#     plain URL: rediss://user:pass@db.ns.svc.cluster.local:12000
+#   - Default Redis Enterprise certificate (*.<rec>.<namespace>.svc.cluster.local):
+#     add tls_server_name with a name the certificate covers, e.g.
+#     rediss://user:pass@db.ns.svc.cluster.local:12000?tls_server_name=db.rec.ns.svc.cluster.local
+# See "TLS to Redis Enterprise on Kubernetes" in the on-prem guide.
 #
 # Create the Secret out of band, for example:
 #   kubectl create secret generic ram-secrets \
@@ -355,7 +365,9 @@ tls:
   # Name of a pre-created Secret containing a PEM-encoded CA certificate bundle.
   # Leave empty to just use the default CA bundle shipped in the container image
   # (or global.tls.caCertSecret when set). The data plane also trusts it for an
-  # https:// dataplane.identityServiceBaseURL.
+  # https:// dataplane.identityServiceBaseURL. For Redis Enterprise on
+  # Kubernetes, either issue a proxy certificate covering the service host or set
+  # tls_server_name on the rediss:// URLs for the default certificate (see secrets).
   caCertSecret: ""
   # Key inside the Secret that contains the PEM-encoded CA certificate(s).
   caCertKey: "ca.crt"
@@ -461,7 +473,7 @@ controlplane:
     repository: 'redislabs/agent-memory-control-plane'
     pullPolicy: IfNotPresent
     # The image release this chart version ships; override to run another.
-    tag: "1.0.0"
+    tag: "1.0.1"
 
   replicaCount: 1
 
@@ -543,8 +555,9 @@ controlplane:
   #   mountPath: /mnt/secrets-store
   #   readOnly: true
 
-  # Optional Asynqmon queue monitor for the regional Redis job queue backend
-  # (`background_jobs.redis`). Disabled by default. When enabled, Asynqmon runs
+  # Optional Asynqdash queue monitor (an Asynqmon fork that publishes
+  # linux/amd64 and linux/arm64) for the regional Redis job queue backend
+  # (`background_jobs.redis`). Disabled by default. When enabled, it runs
   # as a separate low-resource Deployment and connects to the same Redis queue
   # backend through an operator-provided Secret. The Ingress path is protected by
   # Basic Auth using a separate htpasswd-formatted Secret; Helm never derives it
@@ -554,9 +567,9 @@ controlplane:
     readOnly: true
 
     image:
-      repository: hibiken/asynqmon
+      repository: ghcr.io/jpedrosouza/asynqdash
       pullPolicy: IfNotPresent
-      tag: 0.7.2
+      tag: 1.2.0
 
     replicaCount: 1
 
@@ -566,13 +579,19 @@ controlplane:
 
     redis:
       # Pre-created Secret holding REDIS_URL for the same Redis used by
-      # background_jobs.redis.urls. Use rediss:// for TLS where required. The
-      # upstream Asynqmon image supports password-only Redis URLs; named ACL
-      # users require a compatible wrapper image.
+      # background_jobs.redis.urls. Use rediss:// for TLS where required.
       existingSecret: ""
       urlKey: REDIS_URL
-      # Optional keys in the same Secret. Asynqmon treats REDIS_TLS as the TLS
-      # server name and REDIS_INSECURE_TLS as a bool.
+      # Optional keys in the same Secret. Asynqdash uses REDIS_USERNAME as the
+      # Redis ACL user (it ignores a username in REDIS_URL), REDIS_TLS as the TLS
+      # server name and REDIS_INSECURE_TLS as a bool. REDIS_TLS turns TLS on for a
+      # redis:// REDIS_URL, and replaces the URL host as the verified name for a
+      # rediss:// one. For the Redis Enterprise default certificate, set REDIS_TLS
+      # to a name the certificate covers; asynqdash ignores tls_server_name in
+      # REDIS_URL. Without REDIS_TLS or REDIS_INSECURE_TLS, redis:// connects
+      # without TLS. The monitor trusts tls.caCertSecret (or
+      # global.tls.caCertSecret) like the other workloads.
+      usernameKey: REDIS_USERNAME
       tlsServerNameKey: REDIS_TLS
       insecureTLSKey: REDIS_INSECURE_TLS
 

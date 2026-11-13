@@ -1,16 +1,86 @@
 # redis-iris
 
 The Redis Iris on-prem suite as one Helm release: the Identity Service, Agent
-Memory, Agent Playbook, Lens, Context Gateway, Intent Router, and the on-prem UI. Design:
-[MOD-19479 TDD](../../docs/tdd/MOD-19479-iris-onprem-global-helm-chart.md).
+Memory, Agent Playbook, Lens, Context Gateway, Intent Router, and the on-prem UI.
 
-Status: 0.6.0 adds lifecycle and operations (M6, MOD-20385): data planes roll without dropping
-ready capacity, PodDisruptionBudgets keep node drains safe, the suite preflight checks the
-cluster, and the [Redis operations](../../docs/runbooks/iris-onprem-redis-operations.md),
-[disaster recovery](../../docs/runbooks/iris-onprem-disaster-recovery.md), and
-[uninstall](../../docs/runbooks/iris-onprem-uninstall.md) runbooks are tested on KinD. 0.5.0 (M5,
-MOD-20384) installs every product. The chart is not published yet; it installs from the
-repository's local product chart sources.
+Each release pins all seven product charts at its own version from
+`https://helm.redis.io/ai`; 1.0.0 was the first. What each release changes is in
+[`CHANGELOG.md`](CHANGELOG.md). The operations runbooks ship with the chart under
+[`docs/runbooks/`](docs/runbooks/).
+
+## Install
+
+```bash
+helm repo add redis-ai https://helm.redis.io/ai
+helm repo update redis-ai
+helm search repo redis-ai/redis-iris --versions          # pick the latest patch of a supported minor
+helm pull redis-ai/redis-iris --version <version> --untar   # the examples/ values files and docs/ runbooks
+```
+
+1. Check the cluster with the [suite preflight](#suite-preflight), and create the
+   Secrets each example's header lists (name, key, and contents). The examples
+   are starting points: replace their noop embedding and inference models and
+   example hosts with your own.
+2. Choose the products and values (see [Suite values](#suite-values) and
+   [Product selection](#product-selection)), then install:
+
+   ```bash
+   helm install iris redis-ai/redis-iris --version <version> --namespace redis-ai --create-namespace \
+     -f redis-iris/examples/memory-only.yaml -f redis-iris/examples/playbook.yaml \
+     -f redis-iris/examples/lens.yaml -f redis-iris/examples/context-gateway.yaml \
+     -f redis-iris/examples/intent.yaml
+   helm test iris --namespace redis-ai --logs
+   ```
+
+3. Keep this chart version and your values files: a rollback, and the
+   [Admin Token break-glass path](docs/runbooks/iris-onprem-admin-token-break-glass.md),
+   need both (`NOTES.txt` prints the `helm pull` command).
+
+## Supported environment
+
+| Item | Requirement |
+| --- | --- |
+| Kubernetes | 1.28 or later (`kubeVersion: ">=1.28.0-0"` on every chart); the suite preflight checks it. |
+| Helm | Helm 3, 3.10 or later, for install, upgrade, and rollback. The charts lint on Helm 4.3.1; full Helm 4 support arrives in 1.1. |
+| Distributions | Certified: kind and EKS. Best effort: GKE, AKS, and other conformant distributions. Unsupported until 1.1: OpenShift. |
+| Architecture | linux/amd64 and linux/arm64 from 1.0.1: every image tag is one multi-platform index. 1.0.0 is linux/amd64 only. |
+| Ingress | Your controller, with TLS. Traefik v3 is the qualified controller; community ingress-nginx is not supported (see [`CHANGELOG.md`](CHANGELOG.md), "Moving from ingress-nginx to Traefik"). |
+| FIPS | Not in 1.0: `global.security.profile: fips` fails the install. FIPS arrives in 1.1. |
+
+## Air-gapped installs
+
+Mirror these images by digest. Each release's digests are recorded in its
+[release notes](https://github.com/RedisLabs/redis-enterprise-helm/tree/master/ai/releases/redis-iris) (`<version>.md`, and `<version>.json` for tools),
+and every tag equals the product version:
+
+| Product | Images |
+| --- | --- |
+| Identity Service | `redislabs/iris-identity-service` |
+| Agent Memory | `redislabs/agent-memory`, `redislabs/agent-memory-control-plane` |
+| Agent Playbook | `redislabs/iris-agent-playbook-data`, `redislabs/iris-agent-playbook-control` |
+| Lens | `redislabs/iris-lens-data`, `redislabs/iris-lens-control` |
+| Context Gateway | `redislabs/iris-context-gateway-data`, `redislabs/iris-context-gateway-control` |
+| Intent Router | `redislabs/iris-intent-router-data`, `redislabs/iris-intent-router-control` |
+| UI | `redislabs/iris-ui-gateway`, `redislabs/iris-ui-auth` |
+
+The suite also runs two public helper images: `python` (`3.13-alpine`) for
+`helm test` (`tests.suiteVerify.image.repository`), and `curlimages/curl` for
+the preflight (`preflight.image.repository`) and the Identity Service's
+`helm test` Pod (`identityService.tests.image`, a full image reference such as
+`<mirror>/curlimages/curl:8.17.0`). The other products' own test hooks are off
+by default. Agent Memory's support package health checks run
+`replicated/troubleshoot` (`memory.supportPackage.healthCheckImage`), and its
+optional queue monitor runs `ghcr.io/jpedrosouza/asynqdash` from 1.0.1
+(`memory.controlplane.queueMonitor.image`; `hibiken/asynqmon` on Docker Hub in
+1.0.0). Point each product image's
+`repository` at your mirror under its product's alias (for example
+`memory.image.repository`). `helm template` with your values lists every image
+the release uses: mirror that list.
+
+From 1.0.1 every image is a multi-platform index (`linux/amd64` and
+`linux/arm64`). Copy the whole index, for example with `skopeo copy --all` or
+`crane copy`, so that nodes of both platforms can pull it; a single-platform
+copy fails on the other platform's nodes.
 
 ## Components
 
@@ -19,10 +89,10 @@ repository's local product chart sources.
 | `identityService` | `iris-identity-service` | `iris-identity-service` | always installed |
 | `memory` | `redis-agent-memory` | `redis-agent-memory` (`-controlplane`, `-worker`) | `global.iris.products.memory.enabled` |
 | `playbook` | `redis-agent-playbook` | `redis-agent-playbook-controlplane`, `-dataplane` | `global.iris.products.playbook.enabled` |
-| `lens` | `redis-lens` (`lens/helm` until published) | `redis-lens-dataplane` (9000), `-worker`, `-controlplane` (9300) | `global.iris.products.lens.enabled` |
+| `lens` | `redis-lens` | `redis-lens-dataplane` (9000), `-worker`, `-controlplane` (9300) | `global.iris.products.lens.enabled` |
 | `contextGateway` | `redis-context-gateway` | `redis-context-gateway-controlplane` (9100), `-dataplane` (8083) | `global.iris.products.contextGateway.enabled` |
-| `intent` | `redis-intent-router` (`intent/helm` until published) | `redis-intent-router-controlplane` (9400), `-dataplane` (9401) | `global.iris.products.intent.enabled` |
-| `ui` | `redis-iris-ui` (`iris/ui/helm`) | `iris-ui` | always installed |
+| `intent` | `redis-intent-router` | `redis-intent-router-controlplane` (9400), `-dataplane` (9401) | `global.iris.products.intent.enabled` |
+| `ui` | `redis-iris-ui` | `iris-ui` | always installed |
 
 Each product's values sit under its alias and keep the meaning the product's
 own README gives them. The names are fixed (`fullnameOverride`) so the products
@@ -43,13 +113,14 @@ points here. Every other value sits under its product's alias (see
 | `global.iris.products.lens.enabled` | `true` | `lens.storage.existingSecret` (the data-plane and control-plane storage overlays) | [`lens.yaml`](examples/lens.yaml) | Install Lens |
 | `global.iris.products.contextGateway.enabled` | `true` | `contextGateway.publicBaseURL` (an `https://` origin, never derived from `global.iris.publicURL`); `contextGateway.metadataDB.existingSecret`; the references of the selected `contextGateway.credentialStorage.provider`; and either `contextGateway.dataplane.ingress` or your own routing to `redis-context-gateway-dataplane:8083` | [`context-gateway.yaml`](examples/context-gateway.yaml) | Install Context Gateway |
 | `global.iris.products.intent.enabled` | `true` | `intent.storage.existingSecret` (the control-plane and data-plane storage overlays, the data plane's Redis with Search); exactly one `intent.inference.models` entry; `intent.inference.existingSecret` unless the model is `noop` | [`intent.yaml`](examples/intent.yaml) | Install Intent Router |
-| `ui.sso.enabled` | `true` | `global.iris.auth.oidc.{issuer,jwksURI}`, `global.iris.publicURL`, `ui.sso.{clientId,clientCredential.existingSecret,redis.existingSecret}` | [`single-product.yaml`](examples/single-product.yaml) | IdP login in the UI; `false` is Admin Token mode, the [break-glass path](../../docs/runbooks/iris-onprem-admin-token-break-glass.md) |
+| `ui.sso.enabled` | `true` | `global.iris.auth.oidc.{issuer,jwksURI}`, `global.iris.publicURL`, `ui.sso.{clientId,clientCredential.existingSecret,redis.existingSecret}` | [`single-product.yaml`](examples/single-product.yaml) | IdP login in the UI; `false` is Admin Token mode, the [break-glass path](docs/runbooks/iris-onprem-admin-token-break-glass.md) |
 | `ui.ingress.enabled` | `true` | `global.iris.publicURL` (the host); `global.iris.ingress.{className,tls.secretName}` | [`single-product.yaml`](examples/single-product.yaml) | The UI Ingress |
 | `global.iris.tenantId` | `default` | | | The release's one tenant, in every product and the Identity Service |
 | `global.iris.license.{existingSecret,secretKey}` | `iris-license`, `license.key` | The license Secret | [`memory-only.yaml`](examples/memory-only.yaml) | One suite license for every product |
 | `global.iris.clusterDomain` | `cluster.local` | | | Completes every in-cluster URL the suite derives and the default workload identity issuer |
 | `global.iris.auth.oidc.*` | issuer empty; audience `api://redis-iris`; roleClaims `[groups]` | | [`single-product.yaml`](examples/single-product.yaml) | The IdP, once, for the UI, the control planes, and Identity Service Control; `accessTokenIssuer` defaults to `issuer`. An `http://` `jwksURI` needs `identityService.configData.profile=dev` and makes every product fetch the IdP keys without TLS: development and test clusters only |
 | `global.iris.auth.roleBindings` | `[]` | Suite scope: `suite_admin` only; product scope: `product_admin`, `operator`, or `viewer` with `product` | [`single-product.yaml`](examples/single-product.yaml) | Operator policy, translated for every consumer; a disabled product's bindings are kept and emitted again on re-enable |
+| `memory.memory.auth.oidc.enabled` | `false` | `global.iris.auth.oidc.{issuer,jwksURI}` | | Memory's data plane validates IdP access tokens too (opt-in; the suite never turns it on). Its issuer, JWKS, role claims, and role mappings come from `global.iris.auth.oidc` and `global.iris.auth.roleBindings`; a differing local `issuer`, `jwks_uri`, `role_claims`, `role_mappings`, or `allow_insecure_transport: true` against an https JWKS fails the render |
 | `global.iris.workloadIdentity.{issuer,jwksURI}` | `https://kubernetes.default.svc.<clusterDomain>`, `<issuer>/openid/v1/jwks` | EKS must set both | | The issuer the Memory and Playbook workers' and the Playbook control plane's ServiceAccount tokens are verified against |
 | `global.iris.extraction.enabled` | `false` | Both products; `playbook.worker.{existingSecret,region}`; chart-rendered Memory configs and Playbook control-plane config (no `config.existingSecret`); anonymous issuer discovery on kubeadm/kind (see [Install-time checks](#install-time-checks)) | [`extraction.yaml`](tests/kind/products/extraction.yaml) | Playbook → Memory extraction: the Playbook worker and connection, and Memory's trust in the Playbook worker (reads) and control plane (source ownership). To turn it off, pause or delete the extraction bindings first, then set `false`; the bindings stay in Playbook's Redis |
 | `global.tls.caCertSecret` | `""` | | [`single-product.yaml`](examples/single-product.yaml) | CA trust for Redis, the IdP, and in-cluster TLS, in every product and ui-auth |
@@ -361,154 +432,91 @@ With `PLAYWRIGHT=1` it also runs the Admin Token browser flow
 `examples/memory-only.yaml` and `examples/playbook.yaml` install the suite with
 Agent Memory and Agent Playbook as release `iris` in namespace `redis-ai`, with
 generated credentials and the UI in Admin Token mode. Their headers list the
-Secrets to create first. With the product
-charts not yet published, install from local sources:
+Secrets to create first. The command below adds Lens, Context Gateway, and Intent Router
+to install all five products. From the repository root, fetch the published 1.0.0
+component charts using the committed dependency lock, then install:
 
 ```bash
-task iris:dev:on
+helm repo add redis-ai https://helm.redis.io/ai
+helm repo update redis-ai
+helm dependency build iris/helm
 helm install iris iris/helm --namespace redis-ai -f iris/helm/examples/memory-only.yaml -f iris/helm/examples/playbook.yaml \
-  -f iris/helm/examples/lens.yaml -f iris/helm/examples/context-gateway.yaml -f iris/helm/examples/intent.yaml \
-  --set memory.image.tag=<tag> --set memory.controlplane.image.tag=<tag> \
-  --set playbook.controlplane.image.tag=<tag> --set playbook.dataplane.image.tag=<tag> \
-  --set lens.dataplane.image.tag=<tag> --set lens.controlplane.image.tag=<tag> \
-  --set contextGateway.dataplane.image.tag=<tag> --set contextGateway.controlplane.image.tag=<tag> \
-  --set intent.dataplane.image.tag=<tag> --set intent.controlplane.image.tag=<tag> --set ui.image.tag=<tag>
+  -f iris/helm/examples/lens.yaml -f iris/helm/examples/context-gateway.yaml -f iris/helm/examples/intent.yaml
 helm test iris --namespace redis-ai --logs
-task iris:dev:off
 ```
 
 `helm test` creates its temporary store in Memory database `1`; if your Memory
 `databases` registry uses another key, set `tests.suiteVerify.databaseId`.
 
+## Releases and support
+
+- **Versions.** `redis-iris` and its seven product charts share one
+  `MAJOR.MINOR.PATCH`. Each product's `version`, `appVersion`, and image tags are
+  equal. Redis never republishes a released tag; to guarantee the exact image,
+  pull by digest (see [Air-gapped installs](#air-gapped-installs)). Every fix moves all seven
+  products and `redis-iris` to the next patch, changed or not. Only `redis-iris`
+  publishes release candidates (`X.Y.Z-rc.N`, installed with `--devel`); the
+  approved candidate is released as `X.Y.Z`.
+- **Cadence.** A new minor about monthly, after a 7-day freeze; patches when a
+  fix needs one. Each minor has its own release line, `release/iris-on-prem-vMAJOR.MINOR`,
+  which carries its candidates, its release, and its patches. A fix made there
+  is assessed for every supported minor and forward-ported to ongoing development.
+- **Support window.** The current minor receives all fixes; the previous minor
+  receives security fixes only; older minors leave support when the next minor
+  is generally available. For example, once 1.2.0 is released, 1.2.x receives all
+  fixes, 1.1.x security fixes only, and 1.0.x is unsupported. With monthly
+  minors a minor is supported for about two months, so plan to upgrade every
+  month or two.
+- **Upgrades and rollbacks.**
+  - Within a minor, every patch is compatible with every other in both
+    directions: patches never change a persisted or wire contract. 1.0.1 has
+    two exceptions, both in its [`CHANGELOG.md`](CHANGELOG.md) entry: it cannot
+    roll back to 1.0.0 on linux/arm64 nodes, and with the Agent Memory queue
+    monitor Ingress enabled, upgrading from or rolling back to 1.0.0 needs one
+    `kubectl delete ingress` step first.
+  - Across minors, upgrade and roll back only between the latest patch of N-1
+    and any patch of N. Skipping a minor is unsupported. From 1.1.0 the chart
+    refuses a skipped minor on `helm upgrade`; `helm template` and GitOps tools
+    cannot check it, so a GitOps install owns that order itself.
+  - A minor that changes a persisted contract lists each change, with its
+    rollback behavior, in its [`CHANGELOG.md`](CHANGELOG.md) entry.
+
+## Values compatibility
+
+- Removing a values key, or ceasing to accept its old name, needs a major
+  version.
+- A minor may introduce a new name for a key only if the old name stays accepted,
+  with the same behavior, for the rest of that major. `NOTES.txt` names the
+  replacement and the earliest major that may remove the old one.
+- The previous minor's values files upgrade unchanged, deprecated names included:
+  the old name alone and the new name alone behave the same, equal values under
+  both are accepted, and conflicting values under both fail with both paths in
+  the error.
+
 ## Upgrades, rotation, and recovery
 
-Runbooks: [metadata Redis credential rotation and planned outage](../../docs/runbooks/iris-onprem-redis-operations.md),
-[disaster recovery](../../docs/runbooks/iris-onprem-disaster-recovery.md),
-[uninstall](../../docs/runbooks/iris-onprem-uninstall.md), and
-[break glass](../../docs/runbooks/iris-onprem-admin-token-break-glass.md).
+Runbooks: [metadata Redis credential rotation and planned outage](docs/runbooks/iris-onprem-redis-operations.md),
+[disaster recovery](docs/runbooks/iris-onprem-disaster-recovery.md),
+[uninstall and cleanup](docs/runbooks/iris-onprem-uninstall.md), and
+[break glass](docs/runbooks/iris-onprem-admin-token-break-glass.md). They ship with the
+chart under `docs/runbooks/`.
 
-### Upgrading from 0.5.0
+### Upgrading
 
-0.6.0 changes no input; the 0.5.0 values upgrade unchanged. It fixes the data-plane rollout strategy
-and turns on PodDisruptionBudgets (see [Availability](#availability)); a values file that sets
-another `strategy` or turns a `podDisruptionBudget` off now fails the render. The Identity Service,
-the UI gateway and ui-auth, and the Playbook, Lens, Context Gateway, and Intent Router data planes
-move to two replicas, so the cluster runs more Pods: size it with the [suite preflight](#suite-preflight)
-first. The preflight now always renders. Memory's Ingress no longer defaults
-`nginx.ingress.kubernetes.io/rewrite-target: /`.
-
-### Upgrading from 0.4.0
-
-0.5.0 adds Lens, Context Gateway, and Intent Router, all on by default. With the 0.4.0 values alone
-the render fails and names the first missing input; either add their values files or switch them off:
+Read the target version's [`CHANGELOG.md`](CHANGELOG.md) entry first: it names
+any values to add or remove and, for a minor, each persisted contract change and
+its rollback behavior. Then upgrade with your values files:
 
 ```bash
-helm upgrade iris redis-ai/redis-iris -n redis-ai --version 0.5.0 \
-  -f examples/memory-only.yaml -f examples/playbook.yaml \
-  -f examples/lens.yaml -f examples/context-gateway.yaml -f examples/intent.yaml
+helm upgrade iris redis-ai/redis-iris --version <version> --namespace redis-ai -f <your values files>
+helm test iris --namespace redis-ai --logs
 ```
 
-With the new products switched off only the UI rolls (its routes are now in suite order). Turning
-them on creates their Deployments and their generated Secrets (`iris-<product>-dataplane-credential`,
-`-internal-token`, `-admin-token`, kept on rollback like the others), and rolls the Identity Service
-(their credentials and validators) and the UI (their routes). Memory's and Playbook's Secrets keep
-their values.
-
-### Upgrading from 0.3.0
-
-0.4.0 adds `global.iris.extraction.enabled` (default `false`) and the workload identity preflight
-(Secret `iris-preflight`). With the 0.3.0 values unchanged no Deployment rolls. Run the preflight
-(see [Install-time checks](#workload-identity-preflight)), then turn extraction on with its inputs:
-
-```bash
-helm upgrade iris redis-ai/redis-iris -n redis-ai --version 0.4.0 \
-  -f examples/memory-only.yaml -f examples/playbook.yaml \
-  --set global.iris.extraction.enabled=true \
-  --set playbook.worker.existingSecret=<worker Secret> --set playbook.worker.region=<region>
-```
-
-The Playbook worker is created, and the Memory data plane, control plane, and worker and the
-Playbook control plane and data plane roll once; the Identity Service and the UI do not. Remove any
-extraction values a 0.3.0 install set by hand under `playbook.extraction`, `playbook.worker.enabled`,
-`playbook.worker.sourceURL`, `memory.memory.auth.jwt_subjects`, or
-`memory.controlplane.configData.auth.workload_identity`: a differing value fails the render and
-names it.
-
-### Upgrading from 0.2.0
-
-In 0.3.0 `global.iris` is the only input for what the products share, and the
-UI signs operators in through the IdP by default. With the 0.2.0 values
-unchanged the render fails, names the first missing IdP input
-(`global.iris.auth.oidc.issuer`), and nothing is applied. Before upgrading:
-
-- Choose the UI mode: supply the IdP inputs (see
-  [`single-product.yaml`](examples/single-product.yaml)), or keep Admin Token
-  mode with `ui.sso.enabled: false` and `ui.ingress.enabled: false`, as
-  [`memory-only.yaml`](examples/memory-only.yaml) does.
-- Move the license to `global.iris.license` (one Secret for every product) and
-  remove `memory.license` and `playbook.license`.
-- Preserve the installed tenant when choosing `global.iris.tenantId`. Inspect
-  `helm get values iris -n redis-ai --all`, including `memory.tenantId`,
-  `playbook.tenantId`, and `identityService.runtime.apiKeyTenant.singleTenantID`.
-  Check the effective Memory `auth.admin_tenant_id` too, especially if a
-  custom configuration Secret or overlay supplies it.
-  The documented 0.2.0 install with `examples/memory-only.yaml` sets Memory
-  and Identity Service to `default`, and the umbrella sets Playbook to
-  `default`. Those installations keep the same tenant with the new
-  `global.iris.tenantId` default; do not switch them to `"1"`.
-  For an explicitly configured custom tenant, carry that same value into
-  `global.iris.tenantId`. Identity Service's `singleTenantID` and both
-  products' tenant settings are now derived from that one suite value.
-- The legacy Memory fallback `"1"` applies only when its effective
-  `auth.admin_tenant_id` was unset or empty. Only those installations would
-  move from `"1"` to `default` if the new suite default were accepted.
-  Existing stores stay in `"1"`; the upgrade does not migrate them.
-  Before selecting `global.iris.tenantId: "1"`, check the Identity Service
-  and Playbook tenants and data: Playbook defaults to `default`, so such an
-  installation can already have data in two tenants. Reconcile that data
-  before selecting one suite tenant. A configuration change does not merge
-  tenants or make their existing data accessible from another tenant.
-- Remove the values the suite now derives: `memory.tenantId`, `playbook.tenantId`,
-  `identityService.runtime.apiKeyTenant.singleTenantID`, the Identity Service
-  service credentials and validators, the Memory worker
-  identity, `dataplane.identityServiceBaseURL`, and `ui.products`. A differing
-  value fails the render and names it.
-
-Record the verified tenant in `tenant-upgrade.yaml` (shown for the documented
-0.2.0 installation; use your existing tenant if different):
-
-```yaml
-global:
-  iris:
-    tenantId: default
-```
-
-```bash
-helm upgrade iris redis-ai/redis-iris -n redis-ai --version 0.3.0 \
-  -f examples/memory-only.yaml -f examples/playbook.yaml -f tenant-upgrade.yaml
-```
-
-The Identity Service, Memory, and Playbook roll once: their in-cluster URLs are
-now fully qualified with `global.iris.clusterDomain`, and the Memory worker's
-issuer keys come from `<issuer>/openid/v1/jwks`. Credentials, Secrets, and data
-are kept, but data stays under its original tenant; preservation does not
-make it accessible from a different suite tenant.
-
-### Upgrading from 0.1.0
-
-Playbook is on by default in 0.2.0, so an upgrade needs its values next to the
-0.1.0 ones; without them the render fails, names
-`playbook.storage.existingSecret`, and nothing is applied:
-
-```bash
-helm upgrade iris redis-ai/redis-iris -n redis-ai --version 0.2.0 \
-  -f examples/memory-only.yaml -f examples/playbook.yaml
-```
-
-The upgrade creates Playbook's own Secrets and leaves Memory's, rotated or not,
-as they are. To stay on Memory alone, set
-`global.iris.products.playbook.enabled=false` instead of passing
-`playbook.yaml` (see [Product selection](#product-selection)).
+Within a minor any patch upgrades to any other. Across minors, first move to
+the latest patch of your minor, then upgrade to the next minor (see
+[Releases and support](#releases-and-support)). 1.0.0 is the first published
+release: the 0.x versions were internal milestones, and there is no upgrade from
+them.
 
 ### Rotating a credential
 
@@ -521,10 +529,10 @@ restart. An upgrade or a rollback keeps the rotated value.
 
 `helm rollback iris <revision>` restores the workloads and values of that
 revision, never a credential: the hook Secrets are not in the release manifest.
-Rolling back to 0.1.0 removes Playbook's workloads and keeps its Secrets, so a
-later upgrade reuses them. Keep the chart of each installed version for a
-rollback without the repository (`helm pull redis-ai/redis-iris --version <v>`,
-which `NOTES.txt` prints).
+Rolling back to a revision without a product removes that product's workloads
+and keeps its Secrets, so a later upgrade reuses them. Keep the chart of each
+installed version for a rollback without the repository
+(`helm pull redis-ai/redis-iris --version <v>`, which `NOTES.txt` prints).
 
 ### A failed or interrupted upgrade
 
@@ -537,30 +545,18 @@ which `NOTES.txt` prints).
 
 ### Tested baselines
 
-After the KinD run passes, the nightly `iris-onprem-helm-test.yml` uploads the
-release it tested (kept 90 days) as `redis-iris-baseline-<chart version>`, so
-the next release upgrades from exactly that runtime: `redis-iris-baseline`
-from M1 (0.1.0), `redis-iris-baseline-0.2.0` from M2, `redis-iris-baseline-0.3.0`
-from M3, `redis-iris-baseline-0.4.0` from M4, `redis-iris-baseline-0.5.0` from M5, and
-`redis-iris-baseline-0.6.0` from this chart.
-
-| File | Contents |
-| --- | --- |
-| `redis-iris-<version>.tgz` | The chart, packaged with the product charts from that commit |
-| `oci-*.tar.gz` | The tested images (`docker load`, then `kind load docker-image`): four in 0.1.0, six from 0.2.0, twelve from 0.5.0 |
-| `memory-only.yaml`, `playbook.yaml` (from 0.2.0), `lens.yaml`, `context-gateway.yaml`, `kind-context-gateway.yaml`, `intent.yaml` (from 0.5.0), `kind-values.yaml`, `images.yaml` | The values the install used; `images.yaml` holds the image overrides |
-| `baseline.json` | The source commit, the run, and each image ID |
-
-The `upgrade-e2e` job installs the `UPGRADE_FROM_VERSION` (0.6.0) baseline from
-one pinned run, never the latest: its run ID is in
-[`tests/kind/baseline-run`](tests/kind/baseline-run). The job fails when the
-file is empty (MOD-20811); keep it on a run that uploaded `redis-iris-baseline-0.6.0`
-(the artifact expires after 90 days). The populated upgrade it runs is described
-in `tests/kind.sh` (`UPGRADE_FROM`). Locally:
+The `upgrade-e2e` job of `iris-onprem-helm-test.yml` upgrades from the previous
+stable release as customers have it (MOD-20425): `UPGRADE_FROM`
+(`redis-ai/redis-iris@1.0.0`) is pulled from `https://helm.redis.io/ai`, installed
+with its own `examples/` and the KinD fixtures in `tests/kind/`, and runs its
+published images (each product at its chart's `appVersion`). Raise `UPGRADE_FROM`
+in the workflow when a newer stable release is published. The populated upgrade it
+runs is described in `tests/kind.sh` (`UPGRADE_FROM`). The release images enforce
+the license, so the job signs a temporary one with `LICENSE_PRIVATE_KEY` on every
+path. Locally:
 
 ```bash
-gh run download <run-id> --name redis-iris-baseline-0.6.0 --dir /tmp/baseline
-UPGRADE_FROM=/tmp/baseline BASELINE_RUN=<run-id> EXTRACTION=1 task iris:test:kind
+UPGRADE_FROM=redis-ai/redis-iris@1.0.0 EXTRACTION=1 LICENSE_PRIVATE_KEY="$(cat signing.pem)" task iris:test:kind
 ```
 
 The release train runs the same suite (`workflow_call`) on the packaged chart it
@@ -573,11 +569,5 @@ CHART=/tmp/redis-iris-1.0.0-rc.1.tgz IMAGES=published LICENSE_PRIVATE_KEY="$(cat
 ## Limitations
 
 - FIPS is not supported yet; see [Not yet supported](#not-yet-supported).
-- The Identity Service, Memory, Playbook, and Context Gateway pins (0.10.2) are not the product
-  charts the umbrella needs (the published Context Gateway and Identity Service charts lack the
-  suite values, the Lens and Context Gateway wiring, and the rollout strategy and PodDisruptionBudget
-  inputs); they move once those are published (M7). Lens
-  and Intent Router are not published at all, so they are local sources (`file://`). Until then
-  install from local sources (`task iris:dev:on`).
-- There is no support bundle, air-gapped image list, or release inventory yet (M7, M8); when they
-  land they include both Intent Router images.
+- There is no support bundle yet; it arrives in 1.1 and includes both Intent Router images. The
+  [air-gapped image list](#air-gapped-installs) and each release's evidence name every image.

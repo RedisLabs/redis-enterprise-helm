@@ -20,7 +20,7 @@
 {{- $registryImagePullSecretType := default "kubernetes.io/dockerconfigjson" $registryImagesConfig.imagePullSecretType -}}
 {{- $healthCheckImage := default (dict) $supportPackage.healthCheckImage -}}
 {{- $healthCheckImageRepository := default "replicated/troubleshoot" $healthCheckImage.repository -}}
-{{- $healthCheckImageTag := default "0.131.0" $healthCheckImage.tag -}}
+{{- $healthCheckImageTag := default "0.134.3" $healthCheckImage.tag -}}
 {{- $healthCheckImagePullPolicy := default "IfNotPresent" $healthCheckImage.pullPolicy -}}
 {{- $healthCheckImagePullSecretName := default "" $supportPackage.healthCheckImagePullSecretName -}}
 {{- $healthCheckPodTimeout := default "30s" $supportPackage.healthCheckPodTimeout -}}
