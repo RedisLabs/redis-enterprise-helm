@@ -1,0 +1,65 @@
+{
+  "product": "redis-iris-ui",
+  "deployment": "on-prem",
+  "version": "1.0.1",
+  "release": true,
+  "commit": "69f024e73451f059979615d79c44fbb6c704a854",
+  "components": {
+    "gateway": {
+      "candidateImage": "docker.io/redislabs/iris-ui-gateway:1.0.1",
+      "registryDigest": "sha256:675b61f198efeee0c3ad643f726a2226f9f0575935b5638ad4be0c5ee441d6ce",
+      "platforms": [
+        {
+          "os": "linux",
+          "architecture": "amd64",
+          "digest": "sha256:b9ad1507829802f0f98350b72329b8ff972360204e7512047976b9c77c8c5cb8"
+        },
+        {
+          "os": "linux",
+          "architecture": "arm64",
+          "digest": "sha256:8466b0e0d9bc602b9fe35d12b06509131ab58ff7fa551acfa1b6b9ba8117e6b1"
+        }
+      ],
+      "publication": {
+        "status": "published",
+        "component": "gateway",
+        "commit": "69f024e73451f059979615d79c44fbb6c704a854",
+        "image": "docker.io/redislabs/iris-ui-gateway:1.0.1",
+        "digest": "sha256:675b61f198efeee0c3ad643f726a2226f9f0575935b5638ad4be0c5ee441d6ce",
+        "reference": "docker.io/redislabs/iris-ui-gateway@sha256:675b61f198efeee0c3ad643f726a2226f9f0575935b5638ad4be0c5ee441d6ce"
+      }
+    },
+    "auth": {
+      "candidateImage": "docker.io/redislabs/iris-ui-auth:1.0.1",
+      "registryDigest": "sha256:a7ca68b8e39791bb41bfec4d06f12d8807165d03a24fca79e889ec726bbaee41",
+      "platforms": [
+        {
+          "os": "linux",
+          "architecture": "amd64",
+          "digest": "sha256:2f8d10ed8bcacc9bc180bf09ec987b9e934a3e3739cdd47022ea933dedaa658a"
+        },
+        {
+          "os": "linux",
+          "architecture": "arm64",
+          "digest": "sha256:8a7efb2a3ee6cd26f2641daab4d7327cfd02afd72ef5f4c5d9a6960b8dbb23bc"
+        }
+      ],
+      "publication": {
+        "status": "published",
+        "component": "auth",
+        "commit": "69f024e73451f059979615d79c44fbb6c704a854",
+        "image": "docker.io/redislabs/iris-ui-auth:1.0.1",
+        "digest": "sha256:a7ca68b8e39791bb41bfec4d06f12d8807165d03a24fca79e889ec726bbaee41",
+        "reference": "docker.io/redislabs/iris-ui-auth@sha256:a7ca68b8e39791bb41bfec4d06f12d8807165d03a24fca79e889ec726bbaee41"
+      }
+    }
+  },
+  "chart": "chart/redis-iris-ui-1.0.1.tgz",
+  "irisultra": "0.0.112",
+  "publication": {
+    "status": "published",
+    "sourceRun": "https://github.com/redislabsdev/iris/actions/runs/43454459160",
+    "chartSha256": "sha256:6c21d4bc6e5ac23c591b7bec5a3e68907d858b13b55cf0f399bb4f138ae3297d",
+    "contentsDigest": "sha256:dde9f16a38273a70e4800c6a1deef018e0f3ddaf21fb6b5e36f2fb6984306eef"
+  }
+}
