@@ -124,7 +124,7 @@ controlplane:
   image:
     repository: redislabs/iris-intent-router-control
     # The image release this chart version ships; override to run another.
-    tag: "1.0.0"
+    tag: "1.0.1"
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
@@ -176,7 +176,7 @@ dataplane:
   image:
     repository: redislabs/iris-intent-router-data
     # The image release this chart version ships; override to run another.
-    tag: "1.0.0"
+    tag: "1.0.1"
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
