@@ -3,4 +3,4 @@ dependencies:
   repository: https://helm.redis.io/ai
   version: 0.5.0
 digest: sha256:769afbc5f35b7a0bf99cb71d82fbb766a1bf30ded76ca53861ebc522d70eb550
-generated: "2026-11-03T12:00:00.000000000+02:00"
+generated: "2026-11-03T12:00:00+02:00"

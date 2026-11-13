@@ -45,10 +45,10 @@ Fully qualified name for the control-plane Deployment and its resources.
 {{- end }}
 
 {{/*
-Fully qualified name for the optional Asynqmon queue monitor.
+Fully qualified name for the optional Asynqdash queue monitor.
 */}}
 {{- define "redis-agent-memory.queueMonitorFullname" -}}
-{{- printf "%s-asynqmon" (include "redis-agent-memory.fullname" . | trunc 54 | trimSuffix "-") }}
+{{- printf "%s-asynqdash" (include "redis-agent-memory.fullname" . | trunc 53 | trimSuffix "-") }}
 {{- end }}
 
 {{/*
@@ -490,7 +490,7 @@ Validate required enterprise inputs.
 {{- if not $queueMonitor.image.tag -}}
 {{- fail "controlplane.queueMonitor.image.tag is required when controlplane.queueMonitor.enabled=true" -}}
 {{- end -}}
-{{- if and .Values.airgap.enabled (eq $queueMonitor.image.repository "hibiken/asynqmon") -}}
+{{- if and .Values.airgap.enabled (eq $queueMonitor.image.repository "ghcr.io/jpedrosouza/asynqdash") -}}
 {{- fail "airgap.enabled=true requires controlplane.queueMonitor.image.repository to point to a mirrored registry reachable from the cluster" -}}
 {{- end -}}
 {{- if not $queueMonitor.redis.existingSecret -}}
