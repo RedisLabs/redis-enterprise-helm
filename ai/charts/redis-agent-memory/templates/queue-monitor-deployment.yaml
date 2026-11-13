@@ -39,7 +39,7 @@ spec:
       {{- end }}
 
       containers:
-        - name: asynqmon
+        - name: asynqdash
           {{- with $queueMonitor.securityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
@@ -51,11 +51,22 @@ spec:
               value: {{ $queueMonitor.service.port | quote }}
             - name: READ_ONLY
               value: {{ $queueMonitor.readOnly | quote }}
+            # The throughput collector writes asynqdash:* keys even in read-only mode.
+            - name: DISABLE_THROUGHPUT_COLLECTOR
+              value: {{ $queueMonitor.readOnly | quote }}
             - name: REDIS_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ $queueMonitor.redis.existingSecret }}
                   key: {{ $queueMonitor.redis.urlKey }}
+            {{- if $queueMonitor.redis.usernameKey }}
+            - name: REDIS_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $queueMonitor.redis.existingSecret }}
+                  key: {{ $queueMonitor.redis.usernameKey }}
+                  optional: true
+            {{- end }}
             {{- if $queueMonitor.redis.tlsServerNameKey }}
             - name: REDIS_TLS
               valueFrom:
@@ -71,6 +82,12 @@ spec:
                   name: {{ $queueMonitor.redis.existingSecret }}
                   key: {{ $queueMonitor.redis.insecureTLSKey }}
                   optional: true
+            {{- end }}
+            {{- if include "redis-agent-memory.tlsCaCertSecret" . }}
+            # Go reads the tls.caCertSecret CA from here, so rediss:// to a
+            # private-CA Redis verifies the same way as the other workloads.
+            - name: SSL_CERT_DIR
+              value: "/etc/ssl/custom"
             {{- end }}
           ports:
             - name: http
@@ -88,6 +105,14 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- with include "redis-agent-memory.tlsVolumeMount" . | trim }}
+          volumeMounts:
+            {{- . | nindent 12 }}
+          {{- end }}
+      {{- with include "redis-agent-memory.tlsVolume" . | trim }}
+      volumes:
+        {{- . | nindent 8 }}
+      {{- end }}
 
       {{- with $queueMonitor.nodeSelector }}
       nodeSelector:

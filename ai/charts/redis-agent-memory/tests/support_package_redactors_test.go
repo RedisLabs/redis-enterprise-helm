@@ -64,7 +64,7 @@ func TestSupportPackageSpecsRenderRedactorsWhenEnabled(t *testing.T) {
 	requireSecretCollector(t, supportBundle, "config-test", "config.yaml", true)
 	requireSecretCollector(t, supportBundle, "license-test", "license", false)
 	registryImages := findCollector(t, supportBundle, "registryImages")
-	requireContainsValue(t, registryImages["images"], "replicated/troubleshoot:0.131.0")
+	requireContainsValue(t, registryImages["images"], "replicated/troubleshoot:0.134.3")
 	requireNamedEntry(t, supportBundle.Spec.Analyzers, "textAnalyze", "checkName", "RAM node metrics collection")
 	requireNamedEntry(t, supportBundle.Spec.Analyzers, "nodeMetrics", "checkName", "RAM PVC usage")
 	requireNamedEntry(t, supportBundle.Spec.Analyzers, "nodeResources", "checkName", "RAM default minimum cluster CPU")
@@ -273,7 +273,7 @@ func TestSupportPackageDeepDiagnosticsRenderFromDefaults(t *testing.T) {
 	require.Equal(t, "registry-pull", nestedString(t, registryImages, "imagePullSecret", "name"))
 	requireContainsValue(t, registryImages["images"], "redislabs/agent-memory:0.0.0-test")
 	requireContainsValue(t, registryImages["images"], "redislabs/agent-memory-control-plane:0.0.0-test")
-	requireContainsValue(t, registryImages["images"], "hibiken/asynqmon:0.7.2")
+	requireContainsValue(t, registryImages["images"], "ghcr.io/jpedrosouza/asynqdash:1.2.0")
 	requireContainsValue(t, registryImages["images"], "registry.example.com/troubleshoot:0.131.0")
 
 	requireNamedEntry(t, spec.Spec.Analyzers, "textAnalyze", "checkName", "RAM node metrics collection")

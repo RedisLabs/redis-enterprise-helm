@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # template-queue-monitor.sh
 #
-# Offline chart test (no cluster required) for the optional Asynqmon queue
+# Offline chart test (no cluster required) for the optional Asynqdash queue
 # monitor. Asserts disabled-by-default rendering, enabled Deployment/Service,
 # Redis Secret env wiring, dedicated-host Ingress, ingress-nginx Basic Auth
 # wiring, TLS env keys, and read-only defaults.
@@ -17,7 +17,7 @@ set -euo pipefail
 
 CHART_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 RELEASE="ram-test"
-QM_NAME="redis-agent-memory-asynqmon"
+QM_NAME="redis-agent-memory-asynqdash"
 
 COMMON_ARGS=(
   --set image.tag=0.0.0-test
@@ -37,7 +37,7 @@ INGRESS_ARGS=(
   --set controlplane.queueMonitor.ingress.enabled=true
   --set controlplane.queueMonitor.ingress.host=ram-jobs.example.com
   --set controlplane.queueMonitor.ingress.tls.secretName=ram-jobs-tls
-  --set controlplane.queueMonitor.auth.existingSecret=redis-agent-memory-asynqmon-basic-auth
+  --set controlplane.queueMonitor.auth.existingSecret=redis-agent-memory-asynqdash-basic-auth
 )
 
 fail() {
@@ -55,7 +55,7 @@ count_kind() {
     | awk -v k="kind: $kind" '$0 == k { c++ } END { print c+0 }'
 }
 
-echo "=== Case 1: default queue monitor disabled -> no Asynqmon resources ==="
+echo "=== Case 1: default queue monitor disabled -> no Asynqdash resources ==="
 OUT="$(render)"
 if grep -q 'app.kubernetes.io/component: queue-monitor' <<<"$OUT"; then
   fail "queue-monitor resources rendered with controlplane.queueMonitor.enabled=false"
@@ -85,6 +85,10 @@ grep -q 'name: ram-job-redis' <<<"$OUT" \
   || fail "Redis Secret name not wired"
 grep -q 'key: REDIS_URL' <<<"$OUT" \
   || fail "Redis URL key not wired"
+grep -q 'name: REDIS_USERNAME' <<<"$OUT" \
+  || fail "optional REDIS_USERNAME env var missing"
+grep -q 'key: REDIS_USERNAME' <<<"$OUT" \
+  || fail "Redis ACL username key not wired"
 grep -q 'name: REDIS_TLS' <<<"$OUT" \
   || fail "optional REDIS_TLS env var missing"
 grep -q 'key: REDIS_TLS' <<<"$OUT" \
@@ -95,7 +99,23 @@ grep -q 'key: REDIS_INSECURE_TLS' <<<"$OUT" \
   || fail "Redis insecure TLS key not wired"
 grep -A1 'name: READ_ONLY' <<<"$OUT" | grep -q 'value: "true"' \
   || fail "READ_ONLY=true did not render by default"
+grep -A1 'name: DISABLE_THROUGHPUT_COLLECTOR' <<<"$OUT" | grep -q 'value: "true"' \
+  || fail "read-only default did not disable the Redis-writing throughput collector"
+if grep -qE 'SSL_CERT_DIR|tls-ca-cert' <<<"$OUT"; then
+  fail "queue monitor mounts a CA although tls.caCertSecret is unset"
+fi
 echo "OK: Redis Secret env wiring and read-only default render"
+
+echo "=== Case 3b: tls.caCertSecret reaches the queue monitor ==="
+OUT="$(render "${QM_ARGS[@]}" --set global.tls.caCertSecret=re-ca --set tls.caCertKey=bundle.pem \
+  --show-only templates/queue-monitor-deployment.yaml)"
+grep -A1 'name: SSL_CERT_DIR' <<<"$OUT" | grep -q 'value: "/etc/ssl/custom"' \
+  || fail "SSL_CERT_DIR does not point at the mounted CA"
+grep -A1 'name: tls-ca-cert' <<<"$OUT" | grep -q 'mountPath: /etc/ssl/custom' \
+  || fail "CA volume is not mounted at /etc/ssl/custom"
+grep -A3 'secretName: re-ca' <<<"$OUT" | grep -q 'key: bundle.pem' \
+  || fail "CA volume does not use global.tls.caCertSecret with tls.caCertKey"
+echo "OK: the queue monitor trusts the tls.caCertSecret CA"
 
 echo "=== Case 4: dedicated-host ingress renders with Basic Auth Secret ==="
 OUT="$(render "${QM_ARGS[@]}" "${INGRESS_ARGS[@]}")"
@@ -107,7 +127,7 @@ grep -q 'secretName: ram-jobs-tls' <<<"$OUT" \
   || fail "queue monitor TLS Secret did not render"
 grep -q 'nginx.ingress.kubernetes.io/auth-type: basic' <<<"$OUT" \
   || fail "Basic Auth type annotation missing"
-grep -q 'nginx.ingress.kubernetes.io/auth-secret: redis-agent-memory-asynqmon-basic-auth' <<<"$OUT" \
+grep -q 'nginx.ingress.kubernetes.io/auth-secret: redis-agent-memory-asynqdash-basic-auth' <<<"$OUT" \
   || fail "Basic Auth Secret annotation missing"
 grep -q 'nginx.ingress.kubernetes.io/auth-secret-type: auth-file' <<<"$OUT" \
   || fail "htpasswd auth-file annotation missing"
@@ -129,6 +149,8 @@ echo "=== Case 5: readOnly=false is explicit when operator opts into mutations =
 OUT="$(render "${QM_ARGS[@]}" --set controlplane.queueMonitor.readOnly=false)"
 grep -A1 'name: READ_ONLY' <<<"$OUT" | grep -q 'value: "false"' \
   || fail "READ_ONLY=false did not render when requested"
+grep -A1 'name: DISABLE_THROUGHPUT_COLLECTOR' <<<"$OUT" | grep -q 'value: "false"' \
+  || fail "readOnly=false did not re-enable the throughput collector"
 echo "OK: read-only mode is configurable"
 
 echo "=== Case 6: enabled without Redis Secret must fail closed ==="
@@ -149,7 +171,7 @@ echo "=== Case 8: ingress-nginx htpasswd key must be auth ==="
 if render "${QM_ARGS[@]}" \
     --set controlplane.queueMonitor.ingress.enabled=true \
     --set controlplane.queueMonitor.ingress.host=ram-jobs.example.com \
-    --set controlplane.queueMonitor.auth.existingSecret=redis-agent-memory-asynqmon-basic-auth \
+    --set controlplane.queueMonitor.auth.existingSecret=redis-agent-memory-asynqdash-basic-auth \
     --set controlplane.queueMonitor.auth.secretKey=custom >/dev/null 2>&1; then
   fail "chart rendered queue monitor Ingress with unsupported htpasswd key"
 fi
