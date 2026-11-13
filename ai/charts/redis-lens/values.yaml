@@ -94,7 +94,7 @@ dataplane:
   image:
     repository: redislabs/iris-lens-data
     # The image release this chart version ships; override to run another.
-    tag: "1.0.0"
+    tag: "1.0.1"
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
@@ -155,7 +155,7 @@ controlplane:
   image:
     repository: redislabs/iris-lens-control
     # The image release this chart version ships; override to run another.
-    tag: "1.0.0"
+    tag: "1.0.1"
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
