@@ -1,0 +1,108 @@
+{
+  "product": "redis-lens",
+  "deployment": "on-prem",
+  "version": "1.0.1",
+  "release": true,
+  "commit": "69f024e73451f059979615d79c44fbb6c704a854",
+  "components": {
+    "controlplane": {
+      "candidateImage": "docker.io/redislabs/iris-lens-control:1.0.1",
+      "localImage": "lens-controlplane-onprem:1.0.1",
+      "artifact": "images/oci-lens-cp-onprem.tar",
+      "registryDigest": "sha256:1f25be00bda07768e5bb5736339ac6017f18d579675bee407d44a444f8043743",
+      "platforms": [
+        {
+          "os": "linux",
+          "architecture": "amd64",
+          "digest": "sha256:b2052877a767c1b9acb2e1929a68185264a45de3976713e3eb114d47fa090ae4",
+          "imageId": "sha256:bb865aa87cb99cc5684d44f9e4bfbe141dd6219c60667489f7f663017b28ac5e"
+        },
+        {
+          "os": "linux",
+          "architecture": "arm64",
+          "digest": "sha256:6f8cdee39649c31f79f683847425cb677147b0114e2eea260b16b1ffe5fd44f9",
+          "imageId": "sha256:2246c69e77ce701b6b1b5d8e9b3f31e40afa54d2501b00f4cf18e627277c7c1d"
+        }
+      ],
+      "archiveSha256": "sha256:b57fafb6f51f8d322cd46cadf9d9c165604833c0002737d0291d650f63bcba6c",
+      "publication": {
+        "status": "published",
+        "component": "controlplane",
+        "commit": "69f024e73451f059979615d79c44fbb6c704a854",
+        "image": "docker.io/redislabs/iris-lens-control:1.0.1",
+        "digest": "sha256:1f25be00bda07768e5bb5736339ac6017f18d579675bee407d44a444f8043743",
+        "reference": "docker.io/redislabs/iris-lens-control@sha256:1f25be00bda07768e5bb5736339ac6017f18d579675bee407d44a444f8043743",
+        "platforms": [
+          {
+            "os": "linux",
+            "architecture": "amd64",
+            "digest": "sha256:b2052877a767c1b9acb2e1929a68185264a45de3976713e3eb114d47fa090ae4",
+            "imageId": "sha256:bb865aa87cb99cc5684d44f9e4bfbe141dd6219c60667489f7f663017b28ac5e"
+          },
+          {
+            "os": "linux",
+            "architecture": "arm64",
+            "digest": "sha256:6f8cdee39649c31f79f683847425cb677147b0114e2eea260b16b1ffe5fd44f9",
+            "imageId": "sha256:2246c69e77ce701b6b1b5d8e9b3f31e40afa54d2501b00f4cf18e627277c7c1d"
+          }
+        ]
+      }
+    },
+    "dataplane": {
+      "candidateImage": "docker.io/redislabs/iris-lens-data:1.0.1",
+      "localImage": "lens-dataplane-onprem:1.0.1",
+      "artifact": "images/oci-lens-dp.tar",
+      "registryDigest": "sha256:dcd192c13fb6fa40f314a142f4fcfe9e4e0eec420031bf3113ddb562b1c8a25d",
+      "platforms": [
+        {
+          "os": "linux",
+          "architecture": "amd64",
+          "digest": "sha256:9b5ff1c21cefe8be51b99b22e5b045a21295faad78a55c9e292260874c19d589",
+          "imageId": "sha256:d0bd27d91d4e25011c88a538fda670b35d8feaceb226f334f7996c5d6f1ce497"
+        },
+        {
+          "os": "linux",
+          "architecture": "arm64",
+          "digest": "sha256:7f350352e01c06f8af765957b94d6b28bcbea2bcf22f4f22149e404d1a9ed4c0",
+          "imageId": "sha256:7538dcba2f6e81539ae8ca09a1bdad95916e7a5ebcfcc186767240bd948a913b"
+        }
+      ],
+      "archiveSha256": "sha256:df81348f2fd443124543ca7ac9a9fc026204208bf48173d70717f26bc1777e2f",
+      "publication": {
+        "status": "published",
+        "component": "dataplane",
+        "commit": "69f024e73451f059979615d79c44fbb6c704a854",
+        "image": "docker.io/redislabs/iris-lens-data:1.0.1",
+        "digest": "sha256:dcd192c13fb6fa40f314a142f4fcfe9e4e0eec420031bf3113ddb562b1c8a25d",
+        "reference": "docker.io/redislabs/iris-lens-data@sha256:dcd192c13fb6fa40f314a142f4fcfe9e4e0eec420031bf3113ddb562b1c8a25d",
+        "platforms": [
+          {
+            "os": "linux",
+            "architecture": "amd64",
+            "digest": "sha256:9b5ff1c21cefe8be51b99b22e5b045a21295faad78a55c9e292260874c19d589",
+            "imageId": "sha256:d0bd27d91d4e25011c88a538fda670b35d8feaceb226f334f7996c5d6f1ce497"
+          },
+          {
+            "os": "linux",
+            "architecture": "arm64",
+            "digest": "sha256:7f350352e01c06f8af765957b94d6b28bcbea2bcf22f4f22149e404d1a9ed4c0",
+            "imageId": "sha256:7538dcba2f6e81539ae8ca09a1bdad95916e7a5ebcfcc186767240bd948a913b"
+          }
+        ]
+      }
+    }
+  },
+  "chart": "chart/redis-lens-1.0.1.tgz",
+  "imageValues": "lens-images.values.json",
+  "sbom": "sbom/",
+  "openapi": [
+    "openapi/lens-controlplane.openapi.json",
+    "openapi/lens-dataplane.openapi.json"
+  ],
+  "publication": {
+    "status": "published",
+    "sourceRun": "https://github.com/redislabsdev/iris/actions/runs/43446523116",
+    "chartSha256": "sha256:8e22afdf229ba7a405402f4a1c237657e2775b7bf4b7deeafb261520d2d56de9",
+    "contentsDigest": "sha256:fa1a4f650af4db44e68b488031d44a7ae7b28656846b543637b232d05bd5967e"
+  }
+}
