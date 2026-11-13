@@ -518,6 +518,28 @@ entries:
     version: 0.3.0
   redis-intent-router:
   - apiVersion: v2
+    appVersion: 1.0.1
+    created: "2026-11-13T16:33:41.576967533Z"
+    dependencies:
+    - name: redis-iris-onprem-lib
+      repository: https://helm.redis.io/ai
+      version: 0.5.0
+    description: Redis Intent Router on-prem control plane and data plane
+    digest: 65ce58b47b11a99975c94929919f88326b57982b4645156b38c19903c29ff0c8
+    home: https://github.com/Redislabsdev/iris
+    keywords:
+    - redis
+    - intent
+    - router
+    - ai
+    - on-prem
+    kubeVersion: '>=1.28.0-0'
+    name: redis-intent-router
+    type: application
+    urls:
+    - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-intent-router-1.0.1/redis-intent-router-1.0.1.tgz
+    version: 1.0.1
+  - apiVersion: v2
     appVersion: 1.0.0
     created: "2026-11-04T21:02:07.429066824Z"
     dependencies:
@@ -797,4 +819,4 @@ entries:
     urls:
     - https://github.com/RedisLabs/redis-enterprise-helm/releases/download/redis-lens-0.10.2/redis-lens-0.10.2.tgz
     version: 0.10.2
-generated: "2026-11-13T15:59:09.5571292Z"
+generated: "2026-11-13T16:33:41.577061459Z"
