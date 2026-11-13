@@ -180,6 +180,25 @@ has "$out" "kind: PodDisruptionBudget" "autoscaling minReplicas 2 renders a PDB"
 out=$(workload --set workload.pdbEnabled=true --set workload.autoscalingEnabled=true --set workload.minReplicas=1)
 lacks "$out" "kind: PodDisruptionBudget" "autoscaling minReplicas 1 renders nothing, whatever replicas says"
 
+echo "== redis-onprem.serverTLS.* through redis-onprem.deployment (MOD-20903) =="
+PROBE='workload.livenessProbe={"httpGet":{"path":"/health/liveness","port":"http"}}'
+out=$(workload --set-json "$PROBE")
+lacks "$out" "scheme: HTTPS" "no serverTLS keeps the HTTP probe"
+lacks "$out" "server-tls" "no serverTLS mounts nothing"
+out=$(workload --set-json "$PROBE" --set workload.serverTLS.certSecret=svc-tls)
+has "$out" "              scheme: HTTPS" "certSecret switches the probe to HTTPS"
+has "$out" "              mountPath: /etc/iris/server-tls" "certSecret mounts the certificate"
+has "$out" "            secretName: svc-tls" "certSecret is the Secret of the volume"
+lacks "$out" "client-ca" "no clientCASecret mounts no client CA"
+has "$out" 'config: {"cert_file":"/etc/iris/server-tls/tls.crt","key_file":"/etc/iris/server-tls/tls.key"}' "config without a client CA"
+has "$out" "scheme: https" "scheme helper"
+out=$(workload --set-json "$PROBE" --set workload.serverTLS.certSecret=svc-tls --set workload.serverTLS.clientCASecret=agents-ca --set workload.serverTLS.clientCAKey=bundle.pem)
+has "$out" "            secretName: agents-ca" "clientCASecret is mounted"
+has "$out" "              - key: bundle.pem" "clientCAKey selects the key"
+has "$out" 'config: {"cert_file":"/etc/iris/server-tls/tls.crt","client_ca_file":"/etc/iris/client-ca/bundle.pem","key_file":"/etc/iris/server-tls/tls.key"}' "config with a client CA"
+expect_fail "tls.server.clientCASecret needs tls.server.certSecret" "client CA without a certificate" \
+  -s templates/workloads.yaml --set workload.replicas=1 --set workload.serverTLS.clientCASecret=agents-ca
+
 if (( failures > 0 )); then
   echo "$failures suite helper assertion(s) failed" >&2
   exit 1

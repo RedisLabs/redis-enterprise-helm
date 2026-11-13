@@ -9,7 +9,13 @@ app.kubernetes.io/name: fixture
 {{- $w := dict "root" $ "name" "fixture" "component" "server" "labelsTemplate" "fixture.labels" "selectorLabelsTemplate" "fixture.labels"
   "replicas" .replicas "autoscalingEnabled" .autoscalingEnabled "minReplicas" .minReplicas "enabled" .pdbEnabled "strategy" .strategy
   "serviceAccountName" "fixture" "containerName" "fixture" "argsTemplate" "fixture.args" "port" 8080
-  "image" (dict "repository" "fixture" "tag" "1" "pullPolicy" "IfNotPresent") }}
+  "image" (dict "repository" "fixture" "tag" "1" "pullPolicy" "IfNotPresent")
+  "serverTLS" .serverTLS "livenessProbe" .livenessProbe "readinessProbe" .readinessProbe }}
+{{- with .serverTLS }}
+---
+config: {{ include "redis-onprem.serverTLS.config" . }}
+scheme: {{ include "redis-onprem.serverTLS.scheme" . }}
+{{- end }}
 {{ include "redis-onprem.deployment" $w }}
 {{- with (include "redis-onprem.pdb" $w | trim) }}
 ---

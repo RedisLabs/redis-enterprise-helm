@@ -45,6 +45,11 @@ automountServiceAccountToken: {{ .automount }}
 {{- if .volumeMountsTemplate }}{{- $volumeMounts = include .volumeMountsTemplate $root -}}{{- end -}}
 {{- $volumes := "" -}}
 {{- if .volumesTemplate }}{{- $volumes = include .volumesTemplate $root -}}{{- end -}}
+{{- /* serverTLS: the tls.server dict of the product (_tls.tpl). It adds the Secret volumes and HTTPS probes. */ -}}
+{{- $volumeMounts = printf "%s%s" $volumeMounts (include "redis-onprem.serverTLS.volumeMounts" .serverTLS) -}}
+{{- $volumes = printf "%s%s" $volumes (include "redis-onprem.serverTLS.volumes" .serverTLS) -}}
+{{- $livenessProbe := include "redis-onprem.serverTLS.probe" (dict "tls" .serverTLS "probe" .livenessProbe) | fromYaml -}}
+{{- $readinessProbe := include "redis-onprem.serverTLS.probe" (dict "tls" .serverTLS "probe" .readinessProbe) | fromYaml -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -115,11 +120,11 @@ spec:
             - name: http
               containerPort: {{ default .port .containerPort }}
               protocol: TCP
-          {{- with .livenessProbe }}
+          {{- with $livenessProbe }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- with .readinessProbe }}
+          {{- with $readinessProbe }}
           readinessProbe:
             {{- toYaml . | nindent 12 }}
           {{- end }}
