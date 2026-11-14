@@ -66,9 +66,31 @@ A nil derived value means the suite leaves the field off (no IdP, say), so an em
 {{- toJson (dict "value" .derived) -}}
 {{- end }}
 
-{{/* Tenant. Takes root, prefix, path (default tenantId), local, default (standalone). */}}
+{{/*
+Tenant. Takes root, prefix, path (default tenantId), local, default (standalone).
+With global.iris.auth.oidc.tenantIdClaim (the multi-tenant mode) there is no fixed tenant: the
+tenant is "" and each operator token names its tenant in that claim.
+*/}}
 {{- define "redis-onprem.suite.tenantId" -}}
-{{- (include "redis-onprem.suite.value" (dict "root" .root "prefix" .prefix "path" (default "tenantId" .path) "local" .local "globalPath" (list "tenantId") "globalDefault" "default" "default" (default "" .default)) | fromJson).value -}}
+{{- $claim := include "redis-onprem.suite.tenantIdClaim" (dict "root" .root) -}}
+{{- if $claim -}}
+{{- $tenant := (include "redis-onprem.suite.value" (dict "root" .root "path" "tenantId" "globalPath" (list "tenantId") "globalDefault" "" "default" "") | fromJson).value -}}
+{{- if $tenant -}}
+{{- fail (printf "global.iris.tenantId (%q) gives one tenant, and global.iris.auth.oidc.tenantIdClaim (%q) gives more than one tenant; set only one of them" (toString $tenant) $claim) -}}
+{{- end -}}
+{{- if not (or (kindIs "invalid" .local) (eq (toString .local) "")) -}}
+{{- fail (printf "%s%s (%q) gives one tenant, and global.iris.auth.oidc.tenantIdClaim (%q) gives more than one tenant; remove the product value" (default "" .prefix) (default "tenantId" .path) (toString .local) $claim) -}}
+{{- end -}}
+{{- end -}}
+{{- (include "redis-onprem.suite.value" (dict "root" .root "prefix" .prefix "path" (default "tenantId" .path) "local" .local "globalPath" (list "tenantId") "globalDefault" (ternary "" "default" (ne $claim "")) "default" (default "" .default)) | fromJson).value -}}
+{{- end }}
+
+{{/*
+The token claim that names the tenant in the multi-tenant mode: global.iris.auth.oidc.tenantIdClaim
+under the umbrella, else "". Takes root. Unset markers and a missing auth or oidc block mean no claim.
+*/}}
+{{- define "redis-onprem.suite.tenantIdClaim" -}}
+{{- trim (toString (include "redis-onprem.suite.value" (dict "root" .root "path" "tenantIdClaim" "globalPath" (list "auth" "oidc" "tenantIdClaim") "globalDefault" "" "default" "") | fromJson).value) -}}
 {{- end }}
 
 {{/* Cluster DNS domain. Takes root, prefix, path (default clusterDomain), local. */}}

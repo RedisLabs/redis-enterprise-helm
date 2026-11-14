@@ -6,6 +6,7 @@ metadata:
 data:
   enabled: {{ include "redis-onprem.suite.enabled" . | quote }}
   tenantId: {{ include "redis-onprem.suite.tenantId" (dict "root" . "prefix" $p "local" .Values.tenantId "default" "standalone-tenant") | quote }}
+  tenantIdClaim: {{ include "redis-onprem.suite.tenantIdClaim" (dict "root" .) | quote }}
   clusterDomain: {{ include "redis-onprem.suite.clusterDomain" (dict "root" . "prefix" $p "local" .Values.clusterDomain) | quote }}
   fqdn: {{ include "redis-onprem.suite.fqdn" (dict "root" . "prefix" $p "local" .Values.clusterDomain "name" "svc-a") | quote }}
   license: {{ include "redis-onprem.suite.license" (dict "root" . "prefix" $p "local" .Values.license "defaultSecretKey" "license") | quote }}
