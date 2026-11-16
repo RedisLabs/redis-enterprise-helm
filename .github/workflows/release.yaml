@@ -1,8 +1,11 @@
 name: Release Charts
 
+# Disabled: the /release comment trigger is turned off.
+# Restore the issue_comment trigger below to re-enable it.
 on:
-  issue_comment:
-    types: [created]
+  workflow_dispatch:
+#  issue_comment:
+#    types: [created]
 
 jobs:
   release:
@@ -11,6 +14,7 @@ jobs:
     # 2. Comment contains "/release"
     # 3. PR is open (not closed/merged yet)
     if: |
+      false &&
       github.event.issue.pull_request &&
       contains(github.event.comment.body, '/release') &&
       github.event.issue.state == 'open'
