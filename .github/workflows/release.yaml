@@ -5,18 +5,116 @@ on:
     types: [created]
 
 jobs:
-  release:
-    # Only run if:
-    # 1. Comment is on a PR (not an issue)
-    # 2. Comment contains "/release"
-    # 3. PR is open (not closed/merged yet)
+  authorize:
     if: |
       github.event.issue.pull_request &&
       contains(github.event.comment.body, '/release') &&
       github.event.issue.state == 'open'
     permissions:
+      pull-requests: read
+    runs-on: ubuntu-latest
+    outputs:
+      head_sha: ${{ steps.authorize.outputs.head_sha }}
+      head_ref: ${{ steps.authorize.outputs.head_ref }}
+
+    steps:
+      # Anyone can comment on or "approve" a PR in a public repository, so every actor is checked for write access.
+      - name: Authorize release request
+        id: authorize
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pull_number = context.issue.number;
+            const comment = context.payload.comment;
+
+            if (comment.body.trim() !== '/release') {
+              core.notice('Comment is not exactly "/release"; nothing to release.');
+              return;
+            }
+
+            const writeAccess = new Map();
+            const hasWriteAccess = async (login) => {
+              if (!writeAccess.has(login)) {
+                let permission = 'none';
+                try {
+                  ({ data: { permission } } = await github.rest.repos.getCollaboratorPermissionLevel({
+                    owner, repo, username: login
+                  }));
+                } catch (error) {
+                  if (error.status !== 404) throw error;
+                }
+                writeAccess.set(login, ['admin', 'write'].includes(permission));
+              }
+              return writeAccess.get(login);
+            };
+
+            if (!(await hasWriteAccess(comment.user.login))) {
+              throw new Error(`${comment.user.login} does not have write access to ${owner}/${repo}.`);
+            }
+
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
+            const versionBranch = /^\d+\.\d+\.\d+-\d+$/;
+
+            if (pr.state !== 'open') {
+              throw new Error('PR is not open.');
+            }
+            if (pr.head.repo?.full_name !== `${owner}/${repo}`) {
+              throw new Error('Release PRs must come from a branch in this repository, not a fork.');
+            }
+            if (!versionBranch.test(pr.head.ref)) {
+              throw new Error(`Head branch "${pr.head.ref}" is not a version branch (e.g. 8.2.6-21).`);
+            }
+            if (pr.base.ref !== pr.base.repo.default_branch && !versionBranch.test(pr.base.ref)) {
+              throw new Error(`Base branch "${pr.base.ref}" is neither the default branch nor a version branch.`);
+            }
+
+            const chartDir = 'charts/redis-enterprise-operator/';
+            const files = await github.paginate(github.rest.pulls.listFiles, { owner, repo, pull_number, per_page: 100 });
+            const outsideChart = files
+              .flatMap(file => [file.filename, file.previous_filename])
+              .filter(path => path && !path.startsWith(chartDir));
+            if (outsideChart.length > 0) {
+              throw new Error(`Release PRs may only change ${chartDir}; also changed: ${outsideChart.join(', ')}`);
+            }
+            if (pr.changed_files > files.length) {
+              throw new Error(`Could only list ${files.length} of ${pr.changed_files} changed files.`);
+            }
+
+            // Only a reviewer's latest review counts, and only if it approves the commit being released.
+            const reviews = await github.paginate(github.rest.pulls.listReviews, { owner, repo, pull_number, per_page: 100 });
+            const latestReviews = new Map();
+            for (const review of reviews) {
+              if (review.user && !['COMMENTED', 'PENDING'].includes(review.state)) {
+                latestReviews.set(review.user.login, review);
+              }
+            }
+            const approvers = [];
+            for (const [login, review] of latestReviews) {
+              if (
+                review.state === 'APPROVED' &&
+                review.commit_id === pr.head.sha &&
+                review.user.type === 'User' &&
+                await hasWriteAccess(login)
+              ) {
+                approvers.push(login);
+              }
+            }
+            if (approvers.length === 0) {
+              throw new Error(
+                `PR needs an approval of its current head commit (${pr.head.sha}) from a reviewer with write access.`
+              );
+            }
+
+            core.info(`Release of ${pr.head.ref} requested by ${comment.user.login}, approved by ${approvers.join(', ')}`);
+            core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('head_ref', pr.head.ref);
+
+  release:
+    needs: authorize
+    if: needs.authorize.outputs.head_sha != ''
+    permissions:
       contents: write # to push chart release and create a release (helm/chart-releaser-action)
-      pull-requests: read # to read PR details and reviews
 
     runs-on: ubuntu-latest
     outputs:
@@ -24,48 +122,11 @@ jobs:
       chart_version: ${{ steps.chart-releaser.outputs.chart_version }}
 
     steps:
-      - name: Get PR details and check approval
-        id: pr
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-
-            // Check if PR is open
-            if (pr.data.state !== 'open') {
-              core.setFailed('PR is not open. Cannot release.');
-              return;
-            }
-
-            // Check if PR is approved
-            const reviews = await github.rest.pulls.listReviews({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-
-            const approvedReviews = reviews.data.filter(review => review.state === 'APPROVED');
-
-            if (approvedReviews.length === 0) {
-              core.setFailed('PR must be approved before release. Please get an approval first.');
-              return;
-            }
-
-            core.info(`PR is approved by: ${approvedReviews.map(r => r.user.login).join(', ')}`);
-
-            core.setOutput('base_ref', pr.data.base.ref);
-            core.setOutput('head_ref', pr.data.head.ref);
-            core.setOutput('head_sha', pr.data.head.sha);
-
       - name: Checkout Code
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          ref: ${{ steps.pr.outputs.head_sha }}  # Checkout the PR branch HEAD
+          ref: ${{ needs.authorize.outputs.head_sha }}  # The approved commit, even if the branch moved since
 
       - name: Configure Git
         run: |
