@@ -1,0 +1,38 @@
+# .github/actions/helm-chart-generator/action.yml
+name: 'Helm Chart HTML Generator'
+description: 'Generates a static HTML page from Helm chart index.yaml file'
+
+inputs:
+  index_file:
+    description: 'Path to the index.yaml file'
+    required: false
+    default: 'index.yaml'
+  output_file:
+    description: 'Output HTML file path'
+    required: false
+    default: 'index.html'
+  repo_url:
+    description: 'Repository URL'
+    required: false
+    default: 'https://helm.redis.io'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Install Dependencies
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyyaml packaging
+
+    - name: Run Generator Script
+      shell: bash
+      run: |
+        python ${{ github.action_path }}/htidx.py ${{ inputs.index_file }} \
+          --output ${{ inputs.output_file }} \
+          --repo-url ${{ inputs.repo_url }}
