@@ -129,6 +129,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.authorize.outputs.head_sha }}  # The approved commit, even if the branch moved since
+          persist-credentials: false
 
       - name: Configure Git
         run: |
@@ -157,12 +158,13 @@ jobs:
       - name: Create and push release tag
         env:
           TAG_NAME: redis-enterprise-operator-${{ steps.extract-version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           # Create the tag
           git tag "$TAG_NAME"
 
           # Push the tag
-          git push origin "$TAG_NAME"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$TAG_NAME"
 
           echo "Created and pushed tag: $TAG_NAME"
 
@@ -185,26 +187,36 @@ jobs:
       - release
     if: needs.release.outputs.changed_charts != ''   # Only run when charts changed
     steps:
+      # The generator comes from the default branch; gh-pages is only data.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/actions
+          persist-credentials: false
+
       - uses: actions/checkout@v7
         with:
           ref: gh-pages
-          fetch-depth: 0
+          path: pages
+          persist-credentials: false
 
       - name: Generate Helm Charts HTML
         uses: ./.github/actions/generate-helm-html-index
         with:
-          index_file: 'index.yaml'
-          output_file: 'index.html'
+          index_file: 'pages/index.yaml'
+          output_file: 'pages/index.html'
 
       - name: Commit and Push
+        working-directory: pages
         env:
           CHANGED_CHARTS: ${{ needs.release.outputs.changed_charts }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config --local user.name "$GITHUB_ACTOR"
           git config --local user.email "$GITHUB_ACTOR@users.noreply.github.com"
           git add index.html
           git commit -m "Update Helm charts page version: $CHANGED_CHARTS" || exit 0  # Don't fail if no changes
-          git push
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:gh-pages
 
   deploy:
     environment:
@@ -222,6 +234,7 @@ jobs:
         with:
           ref: gh-pages
           fetch-depth: 0
+          persist-credentials: false
       - name: Setup Pages
         uses: actions/configure-pages@v6
       - name: Upload artifact
