@@ -27,7 +27,7 @@ There is no dedicated test suite checked in, so treat `helm lint` and `helm temp
 
 ## Commit & Pull Request Guidelines
 
-Recent history uses short imperative subjects such as `promoting version 8.0.16-25 (#38)`. Keep commit messages concise and scoped to a single chart or workflow change. Use `git town` when configured for the repo; otherwise use plain Git commands. PRs should explain which Helm repository is affected, note any value or release-flow changes, and include validation commands. Release triggers are chart-specific: `/release` for the Redis Enterprise operator flow and `/release-redis-agent-memory` for the AI chart flow.
+Recent history uses short imperative subjects such as `promoting version 8.0.16-25 (#38)`. Keep commit messages concise and scoped to a single chart or workflow change. Use `git town` when configured for the repo; otherwise use plain Git commands. PRs should explain which Helm repository is affected, note any value or release-flow changes, and include validation commands. Release triggers are chart-specific: `/release` for the Redis Enterprise operator flow (the comment must be exactly `/release`, on a version-branch PR from this repository, and both the commenter and an approver of the PR's current head commit need write access) and `/release-redis-agent-memory` for the AI chart flow.
 
 ## Agent-Specific Notes
 
