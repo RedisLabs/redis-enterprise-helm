@@ -213,7 +213,8 @@ jobs:
   deploy:
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      # page_url is the site root over http; this workflow publishes the AI repository
+      url: https://helm.redis.io/ai/
     runs-on: ubuntu-latest
     permissions:
       id-token: write
