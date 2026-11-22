@@ -4,19 +4,119 @@ on:
   issue_comment:
     types: [created]
 
+permissions: {}
+
 jobs:
-  release:
-    # Only run if:
-    # 1. Comment is on a PR (not an issue)
-    # 2. Comment contains "/release"
-    # 3. PR is open (not closed/merged yet)
+  authorize:
     if: |
       github.event.issue.pull_request &&
       contains(github.event.comment.body, '/release') &&
       github.event.issue.state == 'open'
     permissions:
+      pull-requests: read
+    runs-on: ubuntu-latest
+    outputs:
+      head_sha: ${{ steps.authorize.outputs.head_sha }}
+      head_ref: ${{ steps.authorize.outputs.head_ref }}
+
+    steps:
+      # Anyone can comment on or "approve" a PR in a public repository, so every actor is checked for write access.
+      - name: Authorize release request
+        id: authorize
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pull_number = context.issue.number;
+            const comment = context.payload.comment;
+
+            if (comment.body.trim() !== '/release') {
+              core.notice('Comment is not exactly "/release"; nothing to release.');
+              return;
+            }
+
+            const writeAccess = new Map();
+            const hasWriteAccess = async (login) => {
+              if (!writeAccess.has(login)) {
+                let permission = 'none';
+                try {
+                  ({ data: { permission } } = await github.rest.repos.getCollaboratorPermissionLevel({
+                    owner, repo, username: login
+                  }));
+                } catch (error) {
+                  if (error.status !== 404) throw error;
+                }
+                writeAccess.set(login, ['admin', 'write'].includes(permission));
+              }
+              return writeAccess.get(login);
+            };
+
+            if (!(await hasWriteAccess(comment.user.login))) {
+              throw new Error(`${comment.user.login} does not have write access to ${owner}/${repo}.`);
+            }
+
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
+            const versionBranch = /^\d+\.\d+\.\d+-\d+$/;
+
+            if (pr.state !== 'open') {
+              throw new Error('PR is not open.');
+            }
+            if (pr.head.repo?.full_name !== `${owner}/${repo}`) {
+              throw new Error('Release PRs must come from a branch in this repository, not a fork.');
+            }
+            if (!versionBranch.test(pr.head.ref)) {
+              throw new Error(`Head branch "${pr.head.ref}" is not a version branch (e.g. 8.2.6-21).`);
+            }
+            if (pr.base.ref !== pr.base.repo.default_branch && !versionBranch.test(pr.base.ref)) {
+              throw new Error(`Base branch "${pr.base.ref}" is neither the default branch nor a version branch.`);
+            }
+
+            const chartDir = 'charts/redis-enterprise-operator/';
+            const files = await github.paginate(github.rest.pulls.listFiles, { owner, repo, pull_number, per_page: 100 });
+            const outsideChart = files
+              .flatMap(file => [file.filename, file.previous_filename])
+              .filter(path => path && !path.startsWith(chartDir));
+            if (outsideChart.length > 0) {
+              throw new Error(`Release PRs may only change ${chartDir}; also changed: ${outsideChart.join(', ')}`);
+            }
+            if (pr.changed_files > files.length) {
+              throw new Error(`Could only list ${files.length} of ${pr.changed_files} changed files.`);
+            }
+
+            // Only a reviewer's latest review counts, and only if it approves the commit being released.
+            const reviews = await github.paginate(github.rest.pulls.listReviews, { owner, repo, pull_number, per_page: 100 });
+            const latestReviews = new Map();
+            for (const review of reviews) {
+              if (review.user && !['COMMENTED', 'PENDING'].includes(review.state)) {
+                latestReviews.set(review.user.login, review);
+              }
+            }
+            const approvers = [];
+            for (const [login, review] of latestReviews) {
+              if (
+                review.state === 'APPROVED' &&
+                review.commit_id === pr.head.sha &&
+                review.user.type === 'User' &&
+                await hasWriteAccess(login)
+              ) {
+                approvers.push(login);
+              }
+            }
+            if (approvers.length === 0) {
+              throw new Error(
+                `PR needs an approval of its current head commit (${pr.head.sha}) from a reviewer with write access.`
+              );
+            }
+
+            core.info(`Release of ${pr.head.ref} requested by ${comment.user.login}, approved by ${approvers.join(', ')}`);
+            core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('head_ref', pr.head.ref);
+
+  release:
+    needs: authorize
+    if: needs.authorize.outputs.head_sha != ''
+    permissions:
       contents: write # to push chart release and create a release (helm/chart-releaser-action)
-      pull-requests: read # to read PR details and reviews
 
     runs-on: ubuntu-latest
     outputs:
@@ -24,48 +124,12 @@ jobs:
       chart_version: ${{ steps.chart-releaser.outputs.chart_version }}
 
     steps:
-      - name: Get PR details and check approval
-        id: pr
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-
-            // Check if PR is open
-            if (pr.data.state !== 'open') {
-              core.setFailed('PR is not open. Cannot release.');
-              return;
-            }
-
-            // Check if PR is approved
-            const reviews = await github.rest.pulls.listReviews({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-
-            const approvedReviews = reviews.data.filter(review => review.state === 'APPROVED');
-
-            if (approvedReviews.length === 0) {
-              core.setFailed('PR must be approved before release. Please get an approval first.');
-              return;
-            }
-
-            core.info(`PR is approved by: ${approvedReviews.map(r => r.user.login).join(', ')}`);
-
-            core.setOutput('base_ref', pr.data.base.ref);
-            core.setOutput('head_ref', pr.data.head.ref);
-            core.setOutput('head_sha', pr.data.head.sha);
-
       - name: Checkout Code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          ref: ${{ steps.pr.outputs.head_sha }}  # Checkout the PR branch HEAD
+          ref: ${{ needs.authorize.outputs.head_sha }}  # The approved commit, even if the branch moved since
+          persist-credentials: false
 
       - name: Configure Git
         run: |
@@ -74,32 +138,43 @@ jobs:
 
       - name: Extract version from Helm chart metadata
         id: extract-version
+        env:
+          HEAD_REF: ${{ needs.authorize.outputs.head_ref }}
         run: |
-          VERSION=$(grep '^version:' charts/redis-enterprise-operator/Chart.yaml | awk '{print $2}')
+          VERSION=$(grep '^version:' charts/redis-enterprise-operator/Chart.yaml | awk '{print $2}' | tr -d "\"'")
 
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$ ]]; then
+            echo "::error::Chart version is not of the form X.Y.Z-N"
+            exit 1
+          fi
+          if [ "$VERSION" != "$HEAD_REF" ]; then
+            echo "::error::Chart version $VERSION does not match branch $HEAD_REF"
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Detected version: $VERSION"
 
       - name: Create and push release tag
+        env:
+          TAG_NAME: redis-enterprise-operator-${{ steps.extract-version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="${{ steps.extract-version.outputs.version }}"
-          TAG_NAME="redis-enterprise-operator-$VERSION"
-
           # Create the tag
           git tag "$TAG_NAME"
 
           # Push the tag
-          git push origin "$TAG_NAME"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$TAG_NAME"
 
           echo "Created and pushed tag: $TAG_NAME"
 
       - name: Set up Helm
-        uses: azure/setup-helm@v5
+        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
         with:
           version: v3.9.2
 
       - name: Run chart-releaser
-        uses: helm/chart-releaser-action@v1
+        uses: helm/chart-releaser-action@cae68fefc6b5f367a0275617c9f83181ba54714f # v1.7.0
         id: chart-releaser
         env:
           CR_TOKEN: "${{ github.token }}"
@@ -112,24 +187,36 @@ jobs:
       - release
     if: needs.release.outputs.changed_charts != ''   # Only run when charts changed
     steps:
-      - uses: actions/checkout@v7
+      # The generator comes from the default branch; gh-pages is only data.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/actions
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: gh-pages
-          fetch-depth: 0
+          path: pages
+          persist-credentials: false
 
       - name: Generate Helm Charts HTML
         uses: ./.github/actions/generate-helm-html-index
         with:
-          index_file: 'index.yaml'
-          output_file: 'index.html'
+          index_file: 'pages/index.yaml'
+          output_file: 'pages/index.html'
 
       - name: Commit and Push
+        working-directory: pages
+        env:
+          CHANGED_CHARTS: ${{ needs.release.outputs.changed_charts }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config --local user.name "$GITHUB_ACTOR"
-          git config --local user.email "$GITHUB_ACTOR@users.noreply.github.com"  
+          git config --local user.email "$GITHUB_ACTOR@users.noreply.github.com"
           git add index.html
-          git commit -m "Update Helm charts page version: ${{ needs.release.outputs.changed_charts  }}" || exit 0  # Don't fail if no changes
-          git push
+          git commit -m "Update Helm charts page version: $CHANGED_CHARTS" || exit 0  # Don't fail if no changes
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:gh-pages
 
   deploy:
     environment:
@@ -143,17 +230,18 @@ jobs:
       - generate-page
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: gh-pages
           fetch-depth: 0
+          persist-credentials: false
       - name: Setup Pages
-        uses: actions/configure-pages@v6
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           # Upload entire repository
           path: '.'
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
