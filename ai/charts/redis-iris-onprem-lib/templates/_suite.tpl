@@ -270,3 +270,23 @@ the cluster at 1.0. Takes root.
 {{- end -}}
 {{- toJson (dict "baseURL" (printf "http://%s:9200" (include "redis-onprem.suite.fqdn" (dict "root" .root "name" "iris-identity-service"))) "allowInsecureTransport" true) -}}
 {{- end }}
+
+{{/*
+Pod template annotations as YAML ("" when none): the caller's podAnnotations, plus
+iris.redis.io/config-revision when global.iris.configRevision is set, so changing that one value
+rolls every Deployment. The caller's own annotation wins on that key. Takes root (the chart root,
+or a caller context holding it under root, as Context Gateway passes) and podAnnotations.
+*/}}
+{{- define "redis-onprem.suite.podAnnotations" -}}
+{{- $root := .root -}}
+{{- if not (hasKey $root "Values") }}{{ $root = $root.root }}{{ end -}}
+{{- $out := deepCopy (default (dict) .podAnnotations) -}}
+{{- $raw := dig "iris" "configRevision" "" (default (dict) $root.Values.global) -}}
+{{- /* A values-file number is a float64, which toString prints with an exponent. */ -}}
+{{- $revision := toString $raw -}}
+{{- if and (kindIs "float64" $raw) (eq $raw (floor $raw)) }}{{ $revision = printf "%.0f" $raw }}{{ end -}}
+{{- if $revision -}}
+{{- $out = merge $out (dict "iris.redis.io/config-revision" $revision) -}}
+{{- end -}}
+{{- with $out }}{{ toYaml . }}{{ end -}}
+{{- end }}
