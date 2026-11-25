@@ -210,18 +210,15 @@ jobs:
             git push origin HEAD:gh-pages
           fi
 
-  deploy:
-    environment:
-      name: github-pages
-      # page_url is the site root over http; this workflow publishes the AI repository
-      url: https://helm.redis.io/ai/
+  upload-pages:
     runs-on: ubuntu-latest
     permissions:
-      id-token: write
-      pages: write
-    needs:
-      - release
+      contents: read
+      pages: read
+    needs: release
     if: needs.release.outputs.changed_charts != ''
+    outputs:
+      artifact_name: ${{ steps.artifact-name.outputs.name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -232,11 +229,31 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v6
 
+      # Keep full reruns from creating duplicate names. Deploy-only retries
+      # reuse the name from the successful upload job.
+      - name: Name Pages artifact
+        id: artifact-name
+        run: echo "name=github-pages-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
         with:
           path: .
+          name: ${{ steps.artifact-name.outputs.name }}
 
+  deploy:
+    environment:
+      name: github-pages
+      # page_url is the site root over http; this workflow publishes the AI repository
+      url: https://helm.redis.io/ai/
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      pages: write
+    needs: upload-pages
+    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+        with:
+          artifact_name: ${{ needs.upload-pages.outputs.artifact_name }}
