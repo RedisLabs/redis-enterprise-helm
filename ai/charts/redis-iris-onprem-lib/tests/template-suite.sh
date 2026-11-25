@@ -203,6 +203,25 @@ has "$out" "kind: PodDisruptionBudget" "autoscaling minReplicas 2 renders a PDB"
 out=$(workload --set workload.pdbEnabled=true --set workload.autoscalingEnabled=true --set workload.minReplicas=1)
 lacks "$out" "kind: PodDisruptionBudget" "autoscaling minReplicas 1 renders nothing, whatever replicas says"
 
+echo "== redis-onprem.deployment config revision (global.iris.configRevision) =="
+out=$(workload)
+lacks "$out" "iris.redis.io/config-revision" "configRevision unset renders no annotation"
+out=$(workload --set global.iris.configRevision=7)
+has "$out" '        iris.redis.io/config-revision: "7"' "configRevision lands on the pod template"
+printf 'global:\n  iris:\n    configRevision: 20261119\n' >"$fixture/revision.yaml"
+out=$(workload -f "$fixture/revision.yaml")
+has "$out" '        iris.redis.io/config-revision: "20261119"' "a values-file integer renders without an exponent"
+out=$(workload --set-json global.iris.configRevision=1.5)
+has "$out" '        iris.redis.io/config-revision: "1.5"' "a fractional number keeps its digits"
+out=$(workload --set global.iris.configRevision=7 --set workload.wrapRoot=true)
+has "$out" '        iris.redis.io/config-revision: "7"' "configRevision found through a caller context holding the root"
+out=$(workload --set global.iris.configRevision=7 --set-json 'workload.podAnnotations={"iris.redis.io/config-revision":"local","a":"b"}')
+has "$out" "        iris.redis.io/config-revision: local" "a local annotation on the same key wins"
+has "$out" "        a: b" "other local annotations kept beside the revision"
+out=$(workload --set-json 'workload.podAnnotations={"a":"b"}')
+has "$out" "        a: b" "standalone renders the local annotations unchanged"
+lacks "$out" "iris.redis.io/config-revision" "standalone renders no revision"
+
 if (( failures > 0 )); then
   echo "$failures suite helper assertion(s) failed" >&2
   exit 1
