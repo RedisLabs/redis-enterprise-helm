@@ -1,0 +1,26 @@
+# Context Gateway semantic search with Cohere embeddings (embed-v5.0-pro).
+#
+# Same delivery as embeddings-vertex-ai.yaml: the data plane reads the overlay
+# file held by the Secret.
+#
+#   kubectl create secret generic gateway-embeddings \
+#     --from-file=embeddings.yaml=./embeddings.yaml
+#
+# embeddings.yaml:
+#   inference:
+#     models:
+#       - provider: cohere
+#         model: embed-v5.0-pro
+#         dimensions: 2048              # the model's own width; Cohere is not sent a dimensions setting
+#   embedders_connection_details:
+#     cohere:
+#       protocol: cohere
+#       base_url: https://api.cohere.ai/compatibility/v1
+#       credentials:
+#         type: static
+#         api_key: REPLACE-ME
+dataplane:
+  overlays:
+    - existingSecret: gateway-embeddings
+      secretKey: embeddings.yaml
+      checksum: "REPLACE-WITH-SHA256-OF-THE-SECRET-DATA"

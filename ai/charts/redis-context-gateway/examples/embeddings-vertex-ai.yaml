@@ -1,0 +1,36 @@
+# Context Gateway semantic search with Vertex AI embeddings (gemini-embedding-001).
+#
+# Install on top of your base values (see kubernetes-secret.yaml), from the chart
+# folder (context-gateway/helm):
+#   helm install gateway . -f examples/kubernetes-secret.yaml -f examples/embeddings-vertex-ai.yaml
+#
+# inference and embedders_connection_details are not chart values: the data plane
+# reads them from a mounted overlay file. The Secret below holds that file.
+#
+#   kubectl create secret generic gateway-embeddings \
+#     --from-file=embeddings.yaml=./embeddings.yaml
+#
+# embeddings.yaml:
+#   inference:
+#     models:
+#       - provider: vertex
+#         model: gemini-embedding-001   # the name a Surface index records
+#         dimensions: 1536
+#   embedders_connection_details:
+#     vertex:
+#       protocol: vertex-ai
+#       base_url: https://us-central1-aiplatform.googleapis.com/v1/projects/REPLACE_PROJECT/locations/us-central1/publishers/google/models/gemini-embedding-001:predict
+#       embeddings_input_field: content
+#       credentials:
+#         type: gcp-service-account   # vertex-ai accepts only this type and no api_key
+#         gcp:
+#           service_account_json: |
+#             {"type": "service_account", "project_id": "REPLACE_PROJECT", "...": "REPLACE-ME"}
+#
+# After you replace the key, change checksum so the data plane rolls: no
+# component reloads a changed key in place.
+dataplane:
+  overlays:
+    - existingSecret: gateway-embeddings
+      secretKey: embeddings.yaml
+      checksum: "REPLACE-WITH-SHA256-OF-THE-SECRET-DATA"

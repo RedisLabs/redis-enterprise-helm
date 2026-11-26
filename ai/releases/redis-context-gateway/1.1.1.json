@@ -1,0 +1,114 @@
+{
+  "product": "redis-context-gateway",
+  "deployment": "on-prem",
+  "version": "1.1.1",
+  "release": true,
+  "commit": "ec4379ef0379381e105d85a63a229e1ebb0674b5",
+  "components": {
+    "controlplane": {
+      "candidateImage": "docker.io/redislabs/iris-context-gateway-control:1.1.1",
+      "localImage": "redislabs/iris-context-gateway-control:1.1.1",
+      "artifact": "images/oci-context-gateway-controlplane-onprem.tar",
+      "registryDigest": "sha256:72f62a47a57036481a17f715438beba3099229da60a2b992a76a71e2b8bffe75",
+      "platforms": [
+        {
+          "os": "linux",
+          "architecture": "amd64",
+          "digest": "sha256:2e65825e691063a47a7986937616ce86c94faf35724f2fa71b409b0c5787fc70",
+          "imageId": "sha256:6ffc4e303a4713f2fdcbe55543e6d1a51e92bffb179480857946034ce2fe3b3c"
+        },
+        {
+          "os": "linux",
+          "architecture": "arm64",
+          "digest": "sha256:2e083a19fe9a7c7f8406490c280560d9c9ce1fddf13fbce41abdcad9155f0b77",
+          "imageId": "sha256:c422b2898fe6051d099eff77bd1d6d42d49c0d94ced2d46cb74602f0aa53d658"
+        }
+      ],
+      "archiveSha256": "sha256:4d835adb6d82c0005c608d3009fbb146213e0ccf4bba5fd122287767aaa35d04",
+      "publication": {
+        "status": "published",
+        "component": "controlplane",
+        "commit": "ec4379ef0379381e105d85a63a229e1ebb0674b5",
+        "image": "docker.io/redislabs/iris-context-gateway-control:1.1.1",
+        "digest": "sha256:72f62a47a57036481a17f715438beba3099229da60a2b992a76a71e2b8bffe75",
+        "reference": "docker.io/redislabs/iris-context-gateway-control@sha256:72f62a47a57036481a17f715438beba3099229da60a2b992a76a71e2b8bffe75",
+        "platforms": [
+          {
+            "os": "linux",
+            "architecture": "amd64",
+            "digest": "sha256:2e65825e691063a47a7986937616ce86c94faf35724f2fa71b409b0c5787fc70",
+            "imageId": "sha256:6ffc4e303a4713f2fdcbe55543e6d1a51e92bffb179480857946034ce2fe3b3c"
+          },
+          {
+            "os": "linux",
+            "architecture": "arm64",
+            "digest": "sha256:2e083a19fe9a7c7f8406490c280560d9c9ce1fddf13fbce41abdcad9155f0b77",
+            "imageId": "sha256:c422b2898fe6051d099eff77bd1d6d42d49c0d94ced2d46cb74602f0aa53d658"
+          }
+        ]
+      }
+    },
+    "dataplane": {
+      "candidateImage": "docker.io/redislabs/iris-context-gateway-data:1.1.1",
+      "localImage": "redislabs/iris-context-gateway-data:1.1.1",
+      "artifact": "images/oci-context-gateway-dataplane.tar",
+      "registryDigest": "sha256:c49d7d3d05737f378fc090a3fe326bc652b68c29d4c287a5ce5ca7feaf4b40eb",
+      "platforms": [
+        {
+          "os": "linux",
+          "architecture": "amd64",
+          "digest": "sha256:eaed36ec0cc9cb4899f4f9c853522179f77a60a7d6e6044aa0f822b437ac6817",
+          "imageId": "sha256:61c4153b8dd4429b42ac31c89ceb60721b3efe5a59a215c16f1e051dd30dc957"
+        },
+        {
+          "os": "linux",
+          "architecture": "arm64",
+          "digest": "sha256:79c6f7b8c88bb1445d9c71effc5ebe47d0caa5f9e40e162c9a89f88e68cff71a",
+          "imageId": "sha256:44bef8b5c361f49e38378139bc3002b3146f2b03a1ece6626b418b14f8ab3e65"
+        }
+      ],
+      "archiveSha256": "sha256:5e3ebd758a509fb895d9e17849b953611bcdef3b507b9f2f8e87a869b001314e",
+      "publication": {
+        "status": "published",
+        "component": "dataplane",
+        "commit": "ec4379ef0379381e105d85a63a229e1ebb0674b5",
+        "image": "docker.io/redislabs/iris-context-gateway-data:1.1.1",
+        "digest": "sha256:c49d7d3d05737f378fc090a3fe326bc652b68c29d4c287a5ce5ca7feaf4b40eb",
+        "reference": "docker.io/redislabs/iris-context-gateway-data@sha256:c49d7d3d05737f378fc090a3fe326bc652b68c29d4c287a5ce5ca7feaf4b40eb",
+        "platforms": [
+          {
+            "os": "linux",
+            "architecture": "amd64",
+            "digest": "sha256:eaed36ec0cc9cb4899f4f9c853522179f77a60a7d6e6044aa0f822b437ac6817",
+            "imageId": "sha256:61c4153b8dd4429b42ac31c89ceb60721b3efe5a59a215c16f1e051dd30dc957"
+          },
+          {
+            "os": "linux",
+            "architecture": "arm64",
+            "digest": "sha256:79c6f7b8c88bb1445d9c71effc5ebe47d0caa5f9e40e162c9a89f88e68cff71a",
+            "imageId": "sha256:44bef8b5c361f49e38378139bc3002b3146f2b03a1ece6626b418b14f8ab3e65"
+          }
+        ]
+      }
+    }
+  },
+  "chart": "chart/redis-context-gateway-1.1.1.tgz",
+  "imageValues": "context-gateway-images.values.json",
+  "sbom": "sbom/",
+  "openapi": [
+    "openapi/context-gateway-controlplane.openapi.json"
+  ],
+  "validation": {
+    "identityService": {
+      "chart": "redis-ai/iris-identity-service",
+      "version": "1.1.1",
+      "resolvedFrom": "release version"
+    }
+  },
+  "publication": {
+    "status": "published",
+    "sourceRun": "https://github.com/redislabsdev/iris/actions/runs/45755221003",
+    "chartSha256": "sha256:353367861a3ee9b4a03fb8582d5e0d6208816600e144c5e38a66d7f54e776584",
+    "contentsDigest": "sha256:9f6c9cf49fbc593ed058211f3c79246fcc3dda448fe77fc855ac64de7ec98b46"
+  }
+}
