@@ -1,7 +1,10 @@
 nameOverride: ""
 fullnameOverride: ""
 
-# The one tenant this installation serves. Required.
+# The one tenant this installation serves (single-tenant mode). Leave it empty
+# for the multi-tenant mode. Then enable dataplane.oidc and controlplane.oidc,
+# and set dataplane.oidc.tenantIDClaim. Each caller brings its own tenant. See
+# "Multi-tenant mode" in the README.
 tenantId: ""
 
 # Audience of IdP access tokens, shared by every Iris service. Set it to the
@@ -56,6 +59,18 @@ tls:
   # https:// dataplane.identityServiceBaseURL.
   caCertSecret: ""
   caCertSecretChecksum: ""
+
+redisClientTLS:
+  # Optional Secret with tls.crt and tls.key: the client certificate every
+  # rediss:// connection presents (redis_client_tls in the service config). With
+  # a certificate-based Redis database user, use a rediss:// URL with no login.
+  # Mounted read-only at /etc/redis-client-tls without subPath, so a renewed
+  # pair is picked up without a restart. Empty disables the feature.
+  existingSecret: ""
+  # Optional per-connection certificates: [{name, existingSecret}]. Each is
+  # mounted at /etc/redis-client-tls/<name>/tls.{crt,key}; a connection block's
+  # own tls: names those paths (cert_path, key_path).
+  extraCertificates: []
 
 license:
   existingSecret: ""
@@ -124,7 +139,7 @@ controlplane:
   image:
     repository: redislabs/iris-intent-router-control
     # The image release this chart version ships; override to run another.
-    tag: "1.0.1"
+    tag: "1.1.1"
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
@@ -176,7 +191,7 @@ dataplane:
   image:
     repository: redislabs/iris-intent-router-data
     # The image release this chart version ships; override to run another.
-    tag: "1.0.1"
+    tag: "1.1.1"
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
@@ -186,8 +201,8 @@ dataplane:
   # identityService.allowInsecureTransport=true.
   identityServiceBaseURL: ""
   # Console operators sign in through your IdP, and the console sends their access
-  # token to the data plane. Agent keys stay enabled. The token's tenant must equal
-  # tenantId. A mapped product_admin or suite_admin has full access to every Router
+  # token to the data plane. Agent keys stay enabled. With tenantId set, the token's
+  # tenant must equal it. A mapped product_admin or suite_admin has full access to every Router
   # of that tenant; a mapped operator or viewer is admitted but holds no Router,
   # exactly as in the Playbook chart. The control plane validates the same tokens
   # against the same issuer (controlplane.oidc).
