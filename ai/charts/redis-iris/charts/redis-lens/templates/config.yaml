@@ -9,6 +9,10 @@ metadata:
 data:
   lens-dataplane.yaml: |
     profile: prod
+    {{- with include "redis-onprem.redisClientTLS.config" .Values.redisClientTLS | fromJson }}
+    redis_client_tls:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
     tenant_id: {{ $suite.tenantId | quote }}
     server:
       host: 0.0.0.0
@@ -29,6 +33,10 @@ data:
       oidc:
         {{- include "redis-lens.oidcValidation" . | nindent 8 }}
       {{- end }}
+      {{- if .Values.dataplane.tenantIdentityProviders.enabled }}
+      tenant_identity_providers:
+        enabled: true
+      {{- end }}
     license:
       license_path: /etc/lens/license/{{ $suite.license.secretKey }}
     ingest:
@@ -46,12 +54,15 @@ data:
     storage:
       key_prefix: {{ .Values.storage.keyPrefix | quote }}
     assembler:
+      {{- if trim $suite.tenantId }}
       instance_ids:
         - {{ .Values.instance.id | quote }}
+      {{- end }}
       # Each worker pod overrides this with its own name (LENS_ASSEMBLER_CONSUMER)
       # so replicas never share a consumer in the group.
       consumer: lens-worker
-      poll_interval: 100ms
+      {{- /* Each poll reads every tenant's instance, so the multi-tenant mode polls less often. */}}
+      poll_interval: {{ ternary "100ms" "1s" (not (empty (trim $suite.tenantId))) }}
       sweep_interval: 1s
       read_block: 100ms
       claim_min_idle: 1m
@@ -83,6 +94,10 @@ metadata:
 data:
   lens-controlplane.yaml: |
     profile: prod
+    {{- with include "redis-onprem.redisClientTLS.config" .Values.redisClientTLS | fromJson }}
+    redis_client_tls:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
     tenant_id: {{ $suite.tenantId | quote }}
     server:
       host: 0.0.0.0

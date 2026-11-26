@@ -397,6 +397,13 @@ CP="$(doc "$OUT" Deployment redis-agent-memory-controlplane)"
 has "$CP" "$(printf 'secretName: suite-license\n            items:\n              - key: lic')" "custom suite license and key"
 has "$CP" "secretName: corp-ca" "suite CA trust"
 has "$OUT" "admin_tenant_id: acme" "suite tenant owns admin resources"
+DP_CONFIG="$(render "${CUSTOM[@]}" --show-only templates/config.yaml)"
+has "$DP_CONFIG" "admin_tenant_id: acme" "data-plane admin uses the suite tenant"
+has "$DP_CONFIG" "token_file: /etc/controlplane-onprem/admin/token" "data-plane admin uses the shared token"
+for field in 'enabled: true' 'issuer: http://sts.example' 'jwks_uri: https://idp.example/jwks' 'admins: suite_admin' 'static_tenant_id: acme'; do
+  has "$DP_CONFIG" "$field" "data-plane SSO follows the suite"
+done
+rejects 'memory.memory.auth.oidc.enabled (false) conflicts' "${CUSTOM[@]}" --set memory.auth.oidc.enabled=false
 has "$OUT" "$(printf 'oidc:\n        audience:\n        - api://custom\n        enabled: true\n        issuer: http://sts.example\n        jwks_uri: https://idp.example/jwks\n        role_claims:\n        - teams\n        role_mappings:\n          admins: suite_admin\n          mops: operator\n        static_tenant_id: acme')" "control-plane OIDC from global.iris.auth"
 has "$OUT" "base_url: http://iris-identity-service.ai.svc.corp.local:9200" "Identity Service URL follows clusterDomain"
 has "$OUT" "jwks_uri: https://kubernetes.default.svc.corp.local/openid/v1/jwks" "worker identity follows clusterDomain"

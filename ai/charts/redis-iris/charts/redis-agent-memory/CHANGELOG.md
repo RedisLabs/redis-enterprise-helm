@@ -1,5 +1,17 @@
 # Agent Memory chart changes
 
+## 1.1.1
+
+- No component changes.
+
+## 1.1.0
+
+- Add hybrid search, session time filters, opt-in TTL refresh on retrieval, and controls for background memory extraction.
+- Return similarity scores for semantic search hits in REST and MCP results.
+- Add ID and name filters to store lists and enable the on-prem data-plane tools and MemoryETL.
+- Support Vertex AI and Cohere embeddings, and Anthropic and Cohere for LLM roles.
+- Support Redis client certificates for mutual TLS and certificate-only login.
+
 ## 1.0.1
 
 - Publish every image of this chart for `linux/amd64` and `linux/arm64` under the same tag, as one

@@ -140,7 +140,8 @@ The Secret/key the data plane presents to the Identity Service release, as JSON
   "identityServiceBaseURL" (trim (default "" .Values.dataplane.identityServiceBaseURL))
   "allowInsecureTransport" (not (not $ids.allowInsecureTransport))
   "dataplaneOIDC" $dataplaneOIDC
-  "controlplaneOIDC" $cpo -}}
+  "controlplaneOIDC" $cpo
+  "tenantIdentityProviders" .Values.dataplane.tenantIdentityProviders.enabled -}}
 {{- $extraction := deepCopy .Values.extraction -}}
 {{- $connection := $extraction.connection -}}
 {{- $worker := deepCopy .Values.worker -}}
@@ -149,12 +150,18 @@ The Secret/key the data plane presents to the Identity Service release, as JSON
 {{- $_ := set $connection "allowInsecureTransport" (not (not $connection.allowInsecureTransport)) -}}
 {{- $_ := set $worker "enabled" (not (not $worker.enabled)) -}}
 {{- if include "redis-onprem.suite.enabled" . -}}
+{{- $iris := include "redis-onprem.suite.iris" . | fromJson -}}
+{{- $tenantIdPs := dig "products" "playbook" "tenantIdentityProvidersEnabled" false $iris -}}
+{{- if and .Values.dataplane.tenantIdentityProviders.enabled (not $tenantIdPs) -}}
+{{- fail "playbook.dataplane.tenantIdentityProviders.enabled: use global.iris.products.playbook.tenantIdentityProvidersEnabled under redis-iris" -}}
+{{- end -}}
+{{- $_ := set $out "tenantIdentityProviders" $tenantIdPs -}}
 {{- $suiteIds := include "redis-onprem.suite.identityService" (dict "root" .) | fromJson -}}
 {{- $_ := set $out "identityServiceBaseURL" (include "redis-onprem.suite.owned" (dict "prefix" $p "path" "dataplane.identityServiceBaseURL" "local" .Values.dataplane.identityServiceBaseURL "derived" $suiteIds.baseURL) | fromJson).value -}}
 {{- $_ := set $out "allowInsecureTransport" (include "redis-onprem.suite.owned" (dict "prefix" $p "path" "identityService.allowInsecureTransport" "local" $ids.allowInsecureTransport "derived" $suiteIds.allowInsecureTransport) | fromJson).value -}}
 {{- $derived := dict -}}
 {{- if $oidc.issuer -}}
-{{- $derived = dict "enabled" true "issuer" $oidc.accessTokenIssuer "jwksURI" $oidc.jwksURI "tenantIDClaim" "" "staticTenantID" $tenant "roleClaims" $oidc.roleClaims "roleMappings" (include "redis-onprem.suite.roleMappings" (dict "root" . "product" "playbook") | fromJson) "allowInsecureTransport" $oidc.allowInsecureTransport -}}
+{{- $derived = dict "enabled" true "issuer" $oidc.accessTokenIssuer "jwksURI" $oidc.jwksURI "tenantIDClaim" (include "redis-onprem.suite.tenantIdClaim" (dict "root" .)) "staticTenantID" $tenant "roleClaims" $oidc.roleClaims "roleMappings" (include "redis-onprem.suite.roleMappings" (dict "root" . "product" "playbook") | fromJson) "allowInsecureTransport" $oidc.allowInsecureTransport -}}
 {{- $_ := set $out "dataplaneOIDC" $derived -}}
 {{- end -}}
 {{- range $field := list "enabled" "issuer" "jwksURI" "tenantIDClaim" "staticTenantID" "roleClaims" "roleMappings" "allowInsecureTransport" -}}
@@ -268,6 +275,7 @@ allow_insecure_transport: true
   mountPath: /etc/ssl/custom
   readOnly: true
 {{- end }}
+{{- include "redis-onprem.redisClientTLS.volumeMount" .Values.redisClientTLS }}
 {{- end -}}
 
 {{- define "redis-agent-playbook.commonTLSVolume" -}}
@@ -276,4 +284,5 @@ allow_insecure_transport: true
   secret:
     secretName: {{ . }}
 {{- end }}
+{{- include "redis-onprem.redisClientTLS.volume" .Values.redisClientTLS }}
 {{- end -}}

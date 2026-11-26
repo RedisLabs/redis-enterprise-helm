@@ -41,6 +41,7 @@ checksum/license: {{ . | quote }}
   readOnly: true
 {{ include "redis-lens.licenseMount" . }}
 {{- include "redis-lens.tlsCaMount" . }}
+{{- include "redis-onprem.redisClientTLS.volumeMount" .Values.redisClientTLS }}
 {{- end }}
 
 {{- define "redis-lens.controlplaneVolumes" -}}
@@ -67,6 +68,7 @@ checksum/license: {{ . | quote }}
         path: token
 {{ include "redis-lens.licenseVolume" . }}
 {{- include "redis-lens.tlsCaVolume" . }}
+{{- include "redis-onprem.redisClientTLS.volume" .Values.redisClientTLS }}
 {{- end }}
 
 {{- include "redis-onprem.controlplane.deployment" (dict

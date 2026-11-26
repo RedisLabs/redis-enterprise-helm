@@ -142,8 +142,7 @@ and the enabled products, and a local value that differs fails, naming memory.<p
                                                   global.iris.auth, when an issuer is set
   dataplaneOIDC                                   issuer, jwks_uri, role_claims, role_mappings and
                                                   allow_insecure_transport for memory.auth.oidc,
-                                                  when an issuer is set. dataplaneConfig applies
-                                                  them only when memory.auth.oidc.enabled is true
+                                                  enabled when the suite issuer is set
   dataplaneClient, workerIdentity                 memory.dataplane_client and
                                                   memory.auth.worker_identity for the worker
   playbookJWTSubjects,                            with global.iris.extraction.enabled and Playbook:
@@ -170,10 +169,12 @@ and the enabled products, and a local value that differs fails, naming memory.<p
 {{- $derivedOIDC := dict -}}
 {{- if $oidc.issuer -}}
 {{- $derivedOIDC = dict "enabled" true "issuer" $oidc.accessTokenIssuer "jwks_uri" $oidc.jwksURI "role_claims" $oidc.roleClaims "role_mappings" (include "redis-onprem.suite.roleMappings" (dict "root" . "product" "agent_memory") | fromJson) -}}
+{{- /* The multi-tenant mode: each operator token names its tenant, and tenantId stays empty. */ -}}
+{{- with include "redis-onprem.suite.tenantIdClaim" (dict "root" .) }}{{- $_ := set $derivedOIDC "tenant_id_claim" . -}}{{- end -}}
 {{- if $oidc.allowInsecureTransport }}{{- $_ := set $derivedOIDC "allow_insecure_transport" true -}}{{- end -}}
 {{- end -}}
 {{- /* The data plane takes the control plane's fields; allow_insecure_transport is always derived so a local true cannot weaken it. */ -}}
-{{- $dataplaneOIDC := omit $derivedOIDC "enabled" -}}
+{{- $dataplaneOIDC := deepCopy $derivedOIDC -}}
 {{- if $oidc.issuer }}{{- $_ := set $dataplaneOIDC "allow_insecure_transport" (not (not $oidc.allowInsecureTransport)) -}}{{- end -}}
 {{- $_ := set $out "dataplaneOIDC" $dataplaneOIDC -}}
 {{- $localOIDC := dig "auth" "oidc" nil (default (dict) .Values.controlplane.configData) -}}
@@ -191,8 +192,11 @@ and the enabled products, and a local value that differs fails, naming memory.<p
 {{- $sa := printf "system:serviceaccount:%s:redis-agent-playbook-" .Release.Namespace -}}
 {{- $jwtSubjects := list (dict "issuer" $wi.issuer "jwks_uri" $wi.jwksURI "audience" (list "api://memory-dp") "subjects" (list (dict "subject" (print $sa "worker") "authority" "static" "roles" (list "viewer") "resources" (dict "mem-store:*" (dict "permissions" (list "read")))))) -}}
 {{- $_ := set $out "playbookJWTSubjects" (include "redis-onprem.suite.owned" (dict "prefix" $p "path" "memory.auth.jwt_subjects" "local" (dig "auth" "jwt_subjects" nil $memory) "derived" $jwtSubjects) | fromJson).value -}}
+{{- /* The Playbook control plane reads one fixed tenant with this identity. With no fixed tenant (the multi-tenant mode), it sends the token of each caller instead, so Memory trusts no identity here: a workload identity must name one tenant. */ -}}
+{{- if $out.tenantId -}}
 {{- $cpIdentity := dict "enabled" true "issuer" $wi.issuer "jwks_uri" $wi.jwksURI "audience" (list "api://memory-cp") "subjects" (list (dict "subject" (print $sa "controlplane") "tenant" $out.tenantId "roles" (list "viewer"))) -}}
 {{- $_ := set $out "playbookWorkloadIdentity" (include "redis-onprem.suite.owned" (dict "prefix" $p "path" "controlplane.configData.auth.workload_identity" "local" (dig "auth" "workload_identity" nil (default (dict) .Values.controlplane.configData)) "derived" $cpIdentity) | fromJson).value -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- toJson $out -}}
@@ -468,6 +472,12 @@ Validate required enterprise inputs.
 {{- if not .Values.controlplane.config.secretKey -}}
 {{- fail "controlplane.config.secretKey is required" -}}
 {{- end -}}
+{{- /* A rendered config is a ConfigMap, so it must not hold the tenant settings token. */ -}}
+{{- $settingsToken := dig "tenant_settings" "token" "" (include "redis-agent-memory.dataplaneMergedConfig" . | fromJson) -}}
+{{- $cpSettingsToken := dig "tenant_settings" "token" "" (default (dict) .Values.controlplane.configData) -}}
+{{- if or (and .Values.config.render $settingsToken) (and .Values.controlplane.config.render (or $settingsToken $cpSettingsToken)) -}}
+{{- fail "tenant_settings.token: a rendered config is a ConfigMap, so it must not hold the token; set tenant_settings.token_file to a mounted Secret, or put the token in the secret overlay" -}}
+{{- end -}}
 {{- if and (not .Values.controlplane.adminToken.existingSecret) (not .Values.controlplane.adminToken.autoGenerate) -}}
 {{- fail "controlplane.adminToken: set adminToken.existingSecret (BYO) or adminToken.autoGenerate=true" -}}
 {{- end -}}
@@ -558,6 +568,9 @@ mounted secret overlays and are merged by the config loader at runtime.
 {{- define "redis-agent-memory.renderConfig" -}}
 {{- $shared := deepCopy (default (dict) .Values.shared) -}}
 {{- $cfg := mergeOverwrite $shared (deepCopy (default (dict) .body)) -}}
+{{- with include "redis-onprem.redisClientTLS.config" .Values.redisClientTLS | fromJson -}}
+{{- $_ := set $cfg "redis_client_tls" . -}}
+{{- end -}}
 {{- $oidc := index (default (dict) (index $cfg "auth")) "oidc" -}}
 {{- if kindIs "map" $oidc -}}
 {{- include "redis-agent-memory.stampOIDCTenant" (dict "oidc" $oidc "tenant" .suite.tenantId "path" "auth.oidc") -}}
@@ -574,7 +587,8 @@ keeps the two releases consistent.
 
 stampOIDCTenant sets tenantId as the static_tenant_id of an enabled oidc dict,
 in place, rendering nothing. tenantId conflicts with a tenant_id_claim
-(multi-tenant) and with a different static_tenant_id.
+(multi-tenant) and with a different static_tenant_id. A static_tenant_id
+conflicts with a tenant_id_claim, as in the shared OIDC config (MOD-21262).
 */}}
 {{- define "redis-agent-memory.stampOIDCTenant" -}}
 {{- if .oidc.enabled -}}
@@ -583,6 +597,8 @@ in place, rendering nothing. tenantId conflicts with a tenant_id_claim
 {{- $static := trim (toString (default "" .oidc.static_tenant_id)) -}}
 {{- if and $tenant $claim -}}
 {{- fail (printf "tenantId is for single-tenant deployments and pins every agent key to it; %s.tenant_id_claim is multi-tenant. Unset one of them" .path) -}}
+{{- else if and $claim $static -}}
+{{- fail (printf "%s.static_tenant_id and %s.tenant_id_claim are mutually exclusive: a static tenant replaces the tenant of each caller. Unset one of them" .path .path) -}}
 {{- else if and $tenant $static (ne $static $tenant) -}}
 {{- fail (printf "%s.static_tenant_id %q differs from tenantId %q" .path $static $tenant) -}}
 {{- else if $tenant -}}
@@ -639,10 +655,15 @@ validateIdentityService has already refused anything that cannot start.
 {{- $_ := set $auth "jwt_subjects" . -}}
 {{- $_ := set $body "auth" $auth -}}
 {{- end -}}
-{{- /* An enabled memory.auth.oidc takes the suite IdP settings, as the control plane does (opt-in: the data plane is not enabled for you). */ -}}
+{{- /* Suite operator SSO enables both planes, as it does for Playbook. */ -}}
 {{- $bodyAuth := default (dict) (index $body "auth") -}}
 {{- $bodyOIDC := default (dict) (index $bodyAuth "oidc") -}}
 {{- $effectiveOIDC := deepCopy (dig "auth" "oidc" (dict) (include "redis-agent-memory.dataplaneMergedConfig" . | mustFromJson)) -}}
+{{- with (dig "dataplaneOIDC" "enabled" false $suite) -}}
+{{- $_ := include "redis-onprem.suite.owned" (dict "prefix" "memory." "path" "memory.auth.oidc.enabled" "local" $effectiveOIDC.enabled "derived" .) -}}
+{{- $_ := set $effectiveOIDC "enabled" . -}}
+{{- $_ := set $bodyOIDC "enabled" . -}}
+{{- end -}}
 {{- if $effectiveOIDC.enabled -}}
 {{- range $field, $derived := $suite.dataplaneOIDC -}}
 {{- /* An empty derived string (no jwksURI in global.iris) leaves the field to the local value. */ -}}
@@ -685,6 +706,38 @@ validateIdentityService has already refused anything that cannot start.
 {{- $_ := set $auth "agent_keys" $agentKeys -}}
 {{- $_ := set $body "auth" $auth -}}
 {{- end -}}
+{{- $auth := default (dict) (index $body "auth") -}}
+{{- $cpConfig := include "redis-agent-memory.controlplaneConfig" . | fromYaml -}}
+{{- $cpAuth := default (dict) (index $cpConfig "auth") -}}
+{{- /* With a tenant claim and no explicit admin tenant, both planes leave admin_tenant_id
+unset, so the code gives the admin token the system tenant. Each plane decides from its own
+auth.oidc, so with the data-plane admin token both planes must have the claim, or the two
+admin tenants would differ. Else the deprecated "1" stays. */ -}}
+{{- $cpOIDC := default (dict) (index $cpAuth "oidc") -}}
+{{- /* The merged data-plane OIDC: .Values.shared and the suite values are in it. */ -}}
+{{- $dpOIDC := $effectiveOIDC -}}
+{{- $cpClaim := and (index $cpOIDC "enabled") (trim (toString (default "" (index $cpOIDC "tenant_id_claim")))) -}}
+{{- $dpClaim := and (index $dpOIDC "enabled") (trim (toString (default "" (index $dpOIDC "tenant_id_claim")))) -}}
+{{- if and (not (index $cpAuth "admin_tenant_id")) (or $cpClaim $dpClaim) -}}
+{{- if index $auth "admin_tenant_id" -}}
+{{- fail "memory.auth.admin_tenant_id must be unset when the tenant comes from tenant_id_claim" -}}
+{{- end -}}
+{{- if and (ne (include "redis-agent-memory.dataplaneAuthMethod" .) "none") (not (and $cpClaim $dpClaim)) -}}
+{{- fail "with a tenant_id_claim, set it on both controlplane.configData.auth.oidc and memory.auth.oidc, or set controlplane.configData.auth.admin_tenant_id, so that both planes give the admin token one tenant" -}}
+{{- end -}}
+{{- else -}}
+{{- $tenant := trim (toString (default "1" (index $cpAuth "admin_tenant_id"))) -}}
+{{- if and (index $auth "admin_tenant_id") (ne (toString (index $auth "admin_tenant_id")) (toString $tenant)) -}}
+{{- fail "memory.auth.admin_tenant_id must match the control plane admin tenant" -}}
+{{- end -}}
+{{- $_ := set $auth "admin_tenant_id" (toString $tenant) -}}
+{{- end -}}
+{{- if ne (include "redis-agent-memory.dataplaneAuthMethod" .) "none" -}}
+{{- $_ := set $auth "admin_token" (dict "token_file" "/etc/controlplane-onprem/admin/token") -}}
+{{- else -}}
+{{- $_ := unset $auth "admin_token" -}}
+{{- end -}}
+{{- $_ := set $body "auth" $auth -}}
 {{- include "redis-agent-memory.renderConfig" (dict "Values" .Values "body" $body "suite" $suite) -}}
 {{- end }}
 
@@ -696,6 +749,21 @@ release calls this control plane's grant validator with it.
 {{- define "redis-agent-memory.controlplaneConfig" -}}
 {{- $suite := include "redis-agent-memory.suite" . | fromJson -}}
 {{- $body := deepCopy (default (dict) .Values.controlplane.configData) -}}
+{{- $dp := include "redis-agent-memory.dataplaneMergedConfig" . | fromJson -}}
+{{- $ownership := mergeOverwrite (dict "enabled" false) (deepCopy (default (dict) $dp.ownership)) -}}
+{{- if hasKey $body "ownership" -}}
+{{- $cpOwnership := mergeOverwrite (dict "enabled" false) (deepCopy (default (dict) .Values.shared.ownership)) (deepCopy $body.ownership) -}}
+{{- if ne (toJson $ownership) (toJson $cpOwnership) -}}
+{{- fail "controlplane.configData.ownership must match the data plane; configure shared.ownership or memory.ownership" -}}
+{{- end -}}
+{{- end -}}
+{{- $_ := set $body "ownership" $ownership -}}
+{{- $tenantSettings := deepCopy (default (dict) $dp.tenant_settings) -}}
+{{- $cpTenantSettings := mergeOverwrite (deepCopy $tenantSettings) (deepCopy (default (dict) $body.tenant_settings)) -}}
+{{- if ne (default "" $tenantSettings.url) (default "" $cpTenantSettings.url) -}}
+{{- fail "controlplane.configData.tenant_settings.url must match the data plane; configure shared.tenant_settings" -}}
+{{- end -}}
+{{- if $tenantSettings -}}{{- $_ := set $body "tenant_settings" $cpTenantSettings -}}{{- end -}}
 {{- $auth := default (dict) (index $body "auth") -}}
 {{- /* Under redis-iris with an IdP: operator login from global.iris.auth; tenant and audience are stamped below. */ -}}
 {{- with $suite.oidc }}{{- $_ := set $auth "oidc" . -}}{{- end -}}

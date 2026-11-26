@@ -8,7 +8,10 @@
 {{- if and (eq .Values.tracing.capture "received") (not .Values.tracing.enabled) -}}
 {{- fail "tracing.capture=received requires tracing.enabled=true" -}}
 {{- end -}}
-{{- $tenant := required "tenantId is required" $suite.tenantId -}}
+{{- /* The control plane still resolves the tenant from its operator token. */ -}}
+{{- if and (not (trim $suite.tenantId)) (not (and $suite.controlplaneOIDC.enabled (trim $suite.dataplaneOIDC.tenantIDClaim) (or $suite.dataplaneOIDC.enabled $suite.tenantIdentityProviders))) -}}
+{{- fail "tenantId is required unless controlplane.oidc uses dataplane.oidc.tenantIDClaim and the data plane enables OIDC or tenant identity providers (multi-tenant mode)" -}}
+{{- end -}}
 {{- /* Under the redis-iris umbrella these values sit under playbook.; the messages name that path. */ -}}
 {{- $at := ternary "playbook." "" (not (empty (default (dict) .Values.global).iris)) -}}
 {{- $storage := required (printf "%sstorage.existingSecret is required" $at) .Values.storage.existingSecret -}}
@@ -60,7 +63,7 @@
 {{- if and $requiresInferenceSecret (not .Values.inference.existingSecret) -}}
 {{- fail (printf "%sinference.existingSecret is required when a non-noop provider is configured" $at) -}}
 {{- end -}}
-{{- if $suite.dataplaneOIDC.enabled -}}
+{{- if or $suite.dataplaneOIDC.enabled (and $suite.controlplaneOIDC.enabled $suite.tenantIdentityProviders) -}}
 {{- if not (trim $suite.audience) -}}
 {{- fail "auth.oidc.audience is required when dataplane.oidc is enabled: set the audience the IdP issues for the Iris API" -}}
 {{- end -}}
@@ -102,8 +105,8 @@ HTTPS rule.
 {{- fail "controlplane.oidc.audience was removed: every Iris service accepts the single auth.oidc.audience. Set auth.oidc.audience to the audience your IdP issues (for example your previous controlplane.oidc.audience value) and remove controlplane.oidc.audience" -}}
 {{- end -}}
 {{- if $suite.controlplaneOIDC.enabled -}}
-{{- if not $suite.dataplaneOIDC.enabled -}}
-{{- fail "controlplane.oidc requires dataplane.oidc.enabled: the control plane validates operator tokens against the same issuer" -}}
+{{- if not (or $suite.dataplaneOIDC.enabled $suite.tenantIdentityProviders) -}}
+{{- fail "controlplane.oidc requires dataplane.oidc.enabled or dataplane.tenantIdentityProviders.enabled" -}}
 {{- end -}}
 {{- if not $suite.dataplaneOIDC.roleMappings -}}
 {{- fail "controlplane.oidc requires dataplane.oidc.roleMappings" -}}

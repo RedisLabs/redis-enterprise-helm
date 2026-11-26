@@ -23,6 +23,9 @@ checksum/runtime-config: {{ include "ui.runtimeConfig" . | sha256sum | quote }}
   mountPath: /etc/nginx/templates/default.conf.template
   subPath: default.conf.template
   readOnly: true
+# The NGINX entrypoint renders the template here under the pod's runtime UID.
+- name: nginx-generated-config
+  mountPath: /etc/nginx/conf.d
 - name: runtime-config
   mountPath: /etc/ui/runtime-config
   readOnly: true
@@ -39,6 +42,8 @@ checksum/runtime-config: {{ include "ui.runtimeConfig" . | sha256sum | quote }}
 - name: nginx-config
   configMap:
     name: {{ include "ui.nginxConfigName" . }}
+- name: nginx-generated-config
+  emptyDir: {}
 - name: runtime-config
   configMap:
     name: {{ include "ui.runtimeConfigName" . }}

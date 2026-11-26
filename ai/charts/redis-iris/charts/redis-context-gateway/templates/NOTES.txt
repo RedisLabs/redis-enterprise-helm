@@ -1,0 +1,9 @@
+{{- $config := .Values.dataplane.config | default dict -}}
+{{- $cache := $config.cache | default dict -}}
+{{- $compression := $config.compression | default dict -}}
+{{- $keys := list -}}
+{{- if hasKey $cache "max_memory_share" }}{{- $keys = append $keys "dataplane.config.cache.max_memory_share" -}}{{- end -}}
+{{- if hasKey $compression "max_memory_share" }}{{- $keys = append $keys "dataplane.config.compression.max_memory_share" -}}{{- end -}}
+{{- if $keys }}
+WARNING: {{ join " and " $keys }} {{ if gt (len $keys) 1 }}are{{ else }}is{{ end }} deprecated and ignored. Redis now enforces maxmemory on the Gateway database, so the Gateway no longer holds the cache and handles to a share of it. Remove {{ if gt (len $keys) 1 }}them{{ else }}it{{ end }}: a later chart release removes {{ if gt (len $keys) 1 }}them{{ else }}it{{ end }} from the schema. Set a finite maxmemory and maxmemory-policy volatile-ttl on the Gateway database instead.
+{{ end -}}

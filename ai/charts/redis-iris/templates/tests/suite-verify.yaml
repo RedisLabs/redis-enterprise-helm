@@ -18,6 +18,11 @@ With global.iris.extraction it also checks the Playbook -> Memory trust (MOD-204
 {{- /* Extraction: the Pod runs as the Playbook worker to present its projected token (a Pod can only project its own). */}}
 {{- $extraction := and $memory $playbook .Values.global.iris.extraction.enabled }}
 {{- $control := .Values.identityService.control }}
+{{- /* A storage overlay (templates/overlays.yaml) replaces the inline embedding models at runtime. */}}
+{{- $models := dict "playbook" (dig "inference" "models" list .Values.playbook) "intent" (dig "inference" "models" list .Values.intent) }}
+{{- range include "redis-iris.overlays" . | fromJsonArray }}
+{{- if .models }}{{- $_ := set $models (trimPrefix "iris-" .name | trimSuffix "-storage") .models }}{{- end }}
+{{- end }}
 {{- $domain := .Values.global.iris.clusterDomain }}
 apiVersion: v1
 kind: Pod
@@ -74,7 +79,7 @@ spec:
         - name: PLAYBOOK_DP_URL
           value: "http://redis-agent-playbook-dataplane.{{ .Release.Namespace }}.svc.{{ $domain }}:9201"
         # The control plane accepts only an embedding it is configured with, so the test Playbook uses the first.
-        {{- with index .Values.playbook.inference.models 0 }}
+        {{- with index $models.playbook 0 }}
         - name: PLAYBOOK_EMBEDDING
           value: {{ dict "provider" .provider "model" .model "dimensions" .dimensions | toJson | quote }}
         {{- end }}
@@ -96,7 +101,7 @@ spec:
         {{- end }}
         {{- if $products.intent.enabled }}
         # A Router's vector space must be the one configured embedding model.
-        {{- with index .Values.intent.inference.models 0 }}
+        {{- with index $models.intent 0 }}
         - name: INTENT_EMBEDDING
           value: {{ dict "provider" .provider "model" .model "dimensions" .dimensions | toJson | quote }}
         {{- end }}
@@ -105,6 +110,13 @@ spec:
           value: "http://iris-ui.{{ .Release.Namespace }}.svc.{{ $domain }}:8080"
         - name: MEMORY_DATABASE_ID
           value: {{ .Values.tests.suiteVerify.databaseId | quote }}
+        {{- if dig "auth" "oidc" "tenantIdClaim" "" .Values.global.iris }}
+        # The multi-tenant mode has no fixed tenant, so the Identity Service refuses a grant with no
+        # tenant. Only Agent Memory runs in this mode (the schema refuses the other products), so only
+        # Memory grants get the control plane's explicit admin tenant, or the reserved system tenant.
+        - name: SUITE_VERIFY_TENANT
+          value: {{ dig "controlplane" "configData" "auth" "admin_tenant_id" "_system" .Values.memory | default "_system" | toString | trim | quote }}
+        {{- end }}
         {{- with .Values.tests.suiteVerify.failAfterMint }}
         - name: SUITE_VERIFY_FAIL_AFTER_MINT
           value: "1"

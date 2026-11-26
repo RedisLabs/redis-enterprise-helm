@@ -94,7 +94,7 @@ memory:
   request_region:
     default: default
   dataplane_client:
-    base_url: http://ram-redis-agent-memory:9000
+    base_url: http://redis-agent-memory:9000
     auth:
       disabled: true
 

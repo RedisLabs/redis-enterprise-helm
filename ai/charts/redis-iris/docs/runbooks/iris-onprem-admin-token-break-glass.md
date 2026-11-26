@@ -35,20 +35,24 @@ The examples use release `iris` in namespace `redis-ai`.
    works on every supported Helm (`helm get metadata` needs Helm 3.13 or later):
 
    ```bash
-   V=$(helm list -n redis-ai --filter '^iris$' -o json | jq -r '.[0].chart' | sed 's/^redis-iris-//')
-   ls "./redis-iris-$V.tgz"
+   CHART_VERSION=$(helm list -n redis-ai --filter '^iris$' -o json | jq -r '.[0].chart' | sed 's/^redis-iris-//')
+   ls "./redis-iris-$CHART_VERSION.tgz"
    ```
 
 2. Disable IdP login. `--reuse-values` keeps every other value, and the pinned
    archive keeps the installed suite:
 
    ```bash
-   helm upgrade iris "./redis-iris-$V.tgz" -n redis-ai --version "$V" \
+   helm upgrade iris "./redis-iris-$CHART_VERSION.tgz" -n redis-ai --version "$CHART_VERSION" \
      --reuse-values --set ui.sso.enabled=false --wait
    ```
 
    The ui-auth Deployment, Service, NetworkPolicy, and ConfigMap are removed, and
-   the gateway rolls with the Admin Token configuration.
+   the gateway rolls with the Admin Token configuration. If the upgrade fails
+   listing existing generated credentials, the release still runs with
+   `global.iris.secrets.generate: true`: hand the credentials over first (redis-iris
+   README, "Hand over generated credentials"), then add `-f handover-values.yaml`
+   to this command and to step 5.
 
 3. Read the admin tokens from the Secrets `NOTES.txt` prints (with generated
    credentials: `iris-memory-admin-token`, `iris-playbook-admin-token`,
@@ -81,7 +85,7 @@ The examples use release `iris` in namespace `redis-ai`.
 5. After the IdP recovers, repeat step 2 with `ui.sso.enabled=true`:
 
    ```bash
-   helm upgrade iris "./redis-iris-$V.tgz" -n redis-ai --version "$V" \
+   helm upgrade iris "./redis-iris-$CHART_VERSION.tgz" -n redis-ai --version "$CHART_VERSION" \
      --reuse-values --set ui.sso.enabled=true --wait
    ```
 

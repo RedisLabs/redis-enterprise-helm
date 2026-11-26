@@ -1,0 +1,36 @@
+# Redis client certificates (mutual TLS (Transport Layer Security)) for every
+# product, with certificate-only login to Redis Enterprise 7.8.4 or later.
+# Layer it on your other values, for example:
+#   helm template iris redis-ai/redis-iris -n redis-ai \
+#     -f examples/memory-only.yaml -f examples/full-suite-gitops.yaml -f examples/redis-mtls.yaml
+#
+# One client Secret per product, no suite-wide default: each product logs in as
+# its own Redis Enterprise certificate user. Create each Secret with the keys
+# tls.crt and tls.key (kubectl create secret tls <name> --cert=... --key=...):
+#
+#   memory-redis-client, playbook-redis-client, lens-redis-client,
+#   cg-redis-client, intent-redis-client, ids-redis-client, ui-auth-redis-client
+#
+# Certificate-only login: write every Redis URL in the products' Redis Secrets
+# (memory-redis, playbook-redis, ids-redis, ui-session-redis, ...) as
+# rediss://host:port with no user name or password, for example
+#   rediss://redis-12000.redis.example.internal:12000
+# Iris then presents the certificate and sends no AUTH. Trust the servers' CA
+# (certificate authority) through global.tls.caCertSecret. Each chart mounts its
+# Secret read-only at /etc/redis-client-tls and renders redis_client_tls; a
+# renewed Secret is picked up without a restart. Setup, rotation and CA
+# rotation: docs/runbooks/iris-onprem-redis-mtls.md.
+memory:
+  redisClientTLS: { existingSecret: memory-redis-client }
+playbook:
+  redisClientTLS: { existingSecret: playbook-redis-client }
+lens:
+  redisClientTLS: { existingSecret: lens-redis-client }
+contextGateway:
+  redisClientTLS: { existingSecret: cg-redis-client }
+intent:
+  redisClientTLS: { existingSecret: intent-redis-client }
+identityService:
+  redisClientTLS: { existingSecret: ids-redis-client }
+ui:
+  redisClientTLS: { existingSecret: ui-auth-redis-client }

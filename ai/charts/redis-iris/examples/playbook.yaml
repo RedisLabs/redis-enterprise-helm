@@ -6,7 +6,7 @@
 # upgrade from 0.1.0 needs this file too; without it the render fails and names
 # the missing playbook.* fields.
 #
-# Create these first in namespace redis-ai (tests/kind.sh shows each one):
+# Create these first in namespace redis-ai (scripts/quickstart-local.sh shows each one):
 #   playbook-storage  key playbook-storage.yaml  the Playbook metadata and content Redis URLs
 #                                                (two distinct Redis deployments)
 # The license is the suite's (global.iris.license, see examples/memory-only.yaml).

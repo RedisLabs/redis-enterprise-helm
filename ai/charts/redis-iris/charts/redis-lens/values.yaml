@@ -1,9 +1,11 @@
 nameOverride: ""
 fullnameOverride: ""
 
-# Required. The tenant the single Lens instance belongs to. The control plane
-# records it on the instance, and the Identity Service stamps it on every
-# agent-key grant that omits a tenant.
+# The tenant the single Lens instance belongs to (single-tenant mode). The
+# control plane records it on the instance, and the Identity Service stamps it
+# on every agent-key grant that omits a tenant. Leave it empty for the
+# multi-tenant mode: then dataplane.oidc and controlplane.oidc must be enabled
+# with dataplane.oidc.tenantIDClaim, and each tenant gets its own instance.
 tenantId: ""
 
 # Audience of IdP access tokens, shared by every Iris service. Set it to the
@@ -17,7 +19,8 @@ auth:
 instance:
   # The one Lens instance this installation serves. The control plane creates
   # it at startup, the worker consumes its stream, and the UI gateway's lens
-  # entry must set the same value as its instanceId.
+  # entry must set the same value as its instanceId. The multi-tenant mode
+  # ignores it: each tenant's instance gets a random ID.
   id: default
   # Initial retention recorded on the instance. An operator PATCH /iris/v1beta1/lens/instance
   # wins after the first start for what the instance record reports, but the
@@ -29,9 +32,9 @@ instance:
     indexRetention: 720h
 
 ingest:
-  # Nothing trims the span streams yet, and the streams database must be
-  # noeviction, so enabled ingest grows the streams without bound. Enable it
-  # deliberately; see the README.
+  # Nothing trims the span streams yet, and stream keys carry no TTL, so no
+  # accepted eviction policy removes them: enabled ingest grows the streams
+  # without bound. Enable it deliberately; see the README.
   enabled: false
   # Scopes the stream keys. One value per installation.
   region: onprem
@@ -74,6 +77,18 @@ tls:
   # Set to roll every workload when the Secret's content changes.
   caCertSecretChecksum: ""
 
+redisClientTLS:
+  # Optional Secret with tls.crt and tls.key: the client certificate every
+  # rediss:// connection presents (redis_client_tls in the service config). With
+  # a certificate-based Redis database user, use a rediss:// URL with no login.
+  # Mounted read-only at /etc/redis-client-tls without subPath, so a renewed
+  # pair is picked up without a restart. Empty disables the feature.
+  existingSecret: ""
+  # Optional per-connection certificates: [{name, existingSecret}]. Each is
+  # mounted at /etc/redis-client-tls/<name>/tls.{crt,key}; a connection block's
+  # own tls: names those paths (cert_path, key_path).
+  extraCertificates: []
+
 license:
   existingSecret: ""
   secretKey: ""  # default license; redis-iris sets global.iris.license.secretKey
@@ -94,7 +109,7 @@ dataplane:
   image:
     repository: redislabs/iris-lens-data
     # The image release this chart version ships; override to run another.
-    tag: "1.0.1"
+    tag: "1.1.1"
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
@@ -125,9 +140,10 @@ dataplane:
     affinity: {}
   # Operator IdP access tokens validated locally by the data plane, with the
   # audience auth.oidc.audience. Reads accept them; ingest stays agent-key only,
-  # and agent keys keep working beside them. The resolved tenant must equal
-  # tenantId: set tenantIDClaim to read it from a claim, or leave it empty to
-  # treat every token as tenantId's. The control plane reuses this block when
+  # and agent keys keep working beside them. With tenantId set, the resolved
+  # tenant must equal it: set tenantIDClaim to read it from a claim, or leave it
+  # empty to treat every token as tenantId's. Without tenantId, tenantIDClaim is
+  # required. The control plane reuses this block when
   # controlplane.oidc.enabled is set.
   oidc:
     enabled: null  # false when unset; redis-iris derives it
@@ -144,6 +160,12 @@ dataplane:
     # Empty is refused: unmapped values are never accepted implicitly.
     roleMappings: {}
     allowInsecureTransport: null  # false when unset
+  # Users of the IdP records that the Identity Service holds for each tenant
+  # (MOD-19515). The read API accepts them with a read grant on the instance;
+  # ingest stays agent-key only. The lens-dataplane runtime credential then
+  # also needs the operations identity-provider-resolve and subject-grant-lookup.
+  tenantIdentityProviders:
+    enabled: false
 
 # PodDisruptionBudget (maxUnavailable: 1) for each Deployment that keeps more than one Pod
 # (minReplicas under autoscaling). Off by default; redis-iris turns it on.
@@ -155,7 +177,7 @@ controlplane:
   image:
     repository: redislabs/iris-lens-control
     # The image release this chart version ships; override to run another.
-    tag: "1.0.1"
+    tag: "1.1.1"
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP

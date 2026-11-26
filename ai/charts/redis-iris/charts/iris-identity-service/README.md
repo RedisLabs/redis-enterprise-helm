@@ -178,8 +178,8 @@ umbrella (`global.iris` is set), the umbrella derives the product wiring from
 | `runtime.serviceCredentials` | `<product>-dp` per enabled product, `api-key-introspect` for that product only |
 | `productValidation.products` | a validator per enabled product: `http://<product control plane>.<namespace>.svc.<clusterDomain>:<port>` |
 | `runtime.unscopedGrantsProduct` | `memory` while Agent Memory is enabled |
-| `runtime.apiKeyTenant.singleTenantID` | `global.iris.tenantId` |
-| `controlAuth.oidc` | `global.iris.auth.oidc` (issuer = access-token issuer), only when an issuer is set |
+| `runtime.apiKeyTenant.singleTenantID` | `global.iris.tenantId`. Empty with `global.iris.auth.oidc.tenantIdClaim` |
+| `controlAuth.oidc` | `global.iris.auth.oidc` (issuer = access-token issuer), only when an issuer is set. `tenant_id_claim` is `global.iris.auth.oidc.tenantIdClaim` |
 | `controlAuth.roleBindings` | `global.iris.auth.roleBindings`: suite scope becomes `scope: global`, product scope `scope: product` for enabled products only; `identity` bindings stay UI-only |
 
 The credentials come from the supplied aggregate Secrets, or else one
@@ -342,7 +342,7 @@ productValidation:
 | `runtime.serviceCredentials[]` | `name: intent-dp`, `subject: intent-dp`, `allowedOperations: [api-key-introspect]`, `allowedProducts: [intent]`, `existingSecret` + `secretKey` | The same Secret, mounted by the Intent data plane as its Identity Service runtime credential |
 | `productValidation.products.intent.baseURL` | `http://intent-redis-intent-router-controlplane:9400` | The control-plane Service `<fullname>-controlplane` on `controlplane.service.port` (default `9400`) |
 | `productValidation.products.intent.credential` | The control plane's internal-token Secret and key | `controlplane.internalToken` (the grants callback token) |
-| `runtime.apiKeyTenant.singleTenantID` | Intent's tenant, for example `1` | `tenantId` |
+| `runtime.apiKeyTenant.singleTenantID` | Intent's tenant, for example `default` | `tenantId` |
 
 The Intent data plane reaches this release through `dataplane.identityServiceBaseURL`.
 Agent keys are issued per Router (`resourceType: intent-router`), so the validator
@@ -351,7 +351,7 @@ base URL is the Intent control plane, which answers the grants callback.
 ```yaml
 runtime:
   apiKeyTenant:
-    singleTenantID: "1"
+    singleTenantID: default
   serviceCredentials:
     - name: intent-dp
       subject: intent-dp
@@ -391,6 +391,8 @@ install.
 | `imagePullSecrets` | `[]` | Pod pull Secrets. Empty falls back to `global.imagePullSecrets`. |
 | `tls.caCertSecret` | `""` | Secret with a PEM CA bundle for outbound TLS, mounted at `/etc/ssl/custom` with `SSL_CERT_DIR` set. Empty falls back to `global.tls.caCertSecret`. |
 | `tls.caCertKey` | `ca.crt` | Key of the bundle in that Secret. |
+| `redisClientTLS.existingSecret` | `""` | Secret with `tls.crt` and `tls.key`: the client certificate IdS presents on every `rediss://` metadata connection. The chart renders `redis_client_tls` with their paths. Empty disables it. See [Redis client certificates](#redis-client-certificates). |
+| `redisClientTLS.extraCertificates` | `[]` | More pairs, `[{name, existingSecret}]`, each mounted at `/etc/redis-client-tls/<name>/` for a connection block's own `tls:`. |
 | `service.type` | `ClusterIP` | Service type. |
 | `service.port` | `9200` | Service and container port; also rendered as the config's `server.port`. |
 | `security.profile` | `""` | `""` or `fips`. Empty falls back to `global.security.profile`. See [FIPS](#fips). |
@@ -413,7 +415,7 @@ install.
 | `runtime.serviceCredentials` | `[]` | **At least one.** See [Runtime service credentials](#runtime-service-credentials). |
 | `productValidation.products` | `{}` | **At least one enabled.** See [Product validators](#product-validators). |
 | `apiKeys.maxRotateGraceSeconds` | `604800` | Longest grace period an API-key rotation may keep the old key alive. |
-| `apiKeys.userBinding.enabled` | `false` | Lets a mint give the key a user (`userId`). The deployment admin and a `suite_admin` can set any user. Another caller can set only its own user ID. |
+| `apiKeys.userBinding.enabled` | `false` | Lets callers authorized to mint a key choose its user with `userId` or `applicationUserId`. |
 | `controlAuth.oidc` | `{}` | Operator login to IdS Control with your IdP's JWTs, copied as is into `auth.oidc`. See [Operator login and subject grants](#operator-login-and-subject-grants). |
 | `controlAuth.roleBindings` | `[]` | Rendered as `auth.role_bindings`. Requires `controlAuth.oidc.enabled`. |
 | `controlAuth.workloadIdentity` | `{}` | Authorized administration workloads call IdS Control with their own ServiceAccount JWT. Copied into `auth.workload_identity`. See [Operator login and subject grants](#operator-login-and-subject-grants). |
@@ -442,7 +444,7 @@ IdS Runtime API:
 |---|---|
 | `name` | **Required.** `^[a-z0-9-]{0,43}[a-z0-9]$` (1–44 characters, no trailing dash), unique. Mounted at `/etc/identity-service/runtime/<name>/token`. |
 | `subject` | **Required.** Subject the caller authenticates as. |
-| `allowedOperations` | **Required.** Any of `api-key-introspect`, `auth-introspect`, `auth-me`, `subject-grant-lookup`. |
+| `allowedOperations` | **Required.** Any of `api-key-introspect`, `auth-introspect`, `auth-me`, `identity-provider-resolve`, `subject-grant-lookup`, `tenant-settings-read` (cross-tenant, non-secret metadata). |
 | `allowedProducts` | **Required.** Any of `memory`, `langcache`, `context`, `playbook`, `lens`, `context-gateway`, `intent`. |
 | `existingSecret` | Secret holding the token. Set exactly one of `existingSecret` and `autoGenerate`. |
 | `secretKey` | Key of the token (default `token`). |
@@ -528,6 +530,9 @@ Every agent key carries a tenant:
   `tenant_id_claim`, so each operator token names its tenant, or with
   `static_tenant_id`. Rendering fails when an enabled `oidc` has no tenant
   source, because its operators could never create a key.
+
+A multi-tenant Lens release (empty Lens `tenantId`) needs a multi-tenant
+Identity Service release: leave `singleTenantID` empty.
 
 OIDC set through `configData.auth.oidc` instead of `controlAuth.oidc` counts
 the same: it is a tenant source, gets `singleTenantID` stamped in, and fails the
@@ -643,6 +648,36 @@ verification.
 kubectl create secret generic ids-certificate-authority --from-file=ca.crt=./my-ca.pem
 helm upgrade --install ids redis-ai/iris-identity-service -f values-ids.yaml --set tls.caCertSecret=ids-certificate-authority
 ```
+
+## Redis client certificates
+
+For a Redis Enterprise database that authenticates IdS by its client
+certificate (mutual TLS (Transport Layer Security)), put the PEM pair in a
+Secret with the keys `tls.crt` and `tls.key` and set
+`redisClientTLS.existingSecret`:
+
+```bash
+kubectl create secret tls ids-redis-client --cert=./ids.crt --key=./ids.key
+helm upgrade --install ids redis-ai/iris-identity-service -f values-ids.yaml --set redisClientTLS.existingSecret=ids-redis-client
+```
+
+- The chart projects the Secret, and each `redisClientTLS.extraCertificates`
+  entry, into one read-only volume at `/etc/redis-client-tls` (default pair at
+  `tls.crt` and `tls.key`, an extra one under `<name>/`) and renders
+  `redis_client_tls` with the default pair's paths. Setting
+  `configData.redis_client_tls` as well fails the render.
+- For certificate-only login, write the metadata URL as `rediss://` without a
+  user name or password in the metadata Secret. With a password in the URL, IdS
+  sends both. A `redis://` URL presents no certificate.
+- The mount has no `subPath`, so a renewed Secret reaches the pod; IdS rereads
+  the pair about every 30 seconds and uses it for new connections without a
+  restart. A broken pair keeps the last good one; a missing or invalid pair at
+  startup stops IdS.
+- Trust the server's CA with `tls.caCertSecret` (see
+  [Private CA trust](#private-ca-trust)).
+
+The Redis Enterprise setup, rotation and CA (certificate authority) rotation
+are in the [Redis client certificate runbook](../../docs/runbooks/iris-onprem-redis-mtls.md).
 
 ## Delegated control-plane auth
 

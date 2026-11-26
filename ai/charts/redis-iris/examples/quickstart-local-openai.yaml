@@ -1,0 +1,30 @@
+# Optional layer on quickstart-local.yaml: Agent Memory with real OpenAI models. Run
+# `quickstart-local.sh setup` with OPENAI_API_KEY set first (it puts the key in mem-secrets), then
+#   helm upgrade --install iris ... -f examples/quickstart-local.yaml -f examples/quickstart-local-openai.yaml
+# Agent Playbook and Intent Router keep their noop models. Not exercised by CI (needs a real key).
+
+memory:
+  controlplane:
+    configData:
+      embedding:
+        dimensions: 3072
+  memory:
+    embedding:
+      provider: openai
+      models:
+        default_embedding_model: text-embedding-3-large
+        dimensions: 3072
+    embedders_connection_details:
+      openai:
+        base_url: https://api.openai.com
+        credentials:
+          type: static
+    inference_providers:
+      openai:
+        protocol: openai
+    promote_session_memory:
+      strategies:
+        instruct:
+          llm:
+            models:
+              dimensions: 3072

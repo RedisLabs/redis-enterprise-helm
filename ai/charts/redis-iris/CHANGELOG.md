@@ -10,6 +10,50 @@ See [Releases and support](README.md#releases-and-support) for the support
 window, and [Values compatibility](README.md#values-compatibility) for what a
 minor release may change in your values.
 
+## Unreleased
+
+### Redis client certificate authentication
+
+Configure `redisClientTLS` per product to use mutual TLS (mTLS) and support
+certificate-only Redis login. See the [Redis client certificate runbook](../../docs/runbooks/iris-onprem-redis-mtls.md)
+for setup and certificate rotation.
+
+### Fewer hand-made Secrets
+
+Local installs need fewer hand-made Secrets (MOD-21051). Values that set none of the new
+inputs render as before, apart from the two generated Secrets below, which never replace an
+existing Secret (with `generate: true` an existing one is refused, like the other generated
+credentials, MOD-20913), and a CSI keyring, which now needs `keyring.existingSecret: ""`.
+
+- **Generated Context Gateway keyring.** With generated credentials, the chart creates
+  `gateway-keyring` (a base64 32-byte key per `keyFiles` file, `k1`) when Context Gateway uses
+  Redis credential storage. It writes the keys only when it creates the Secret: to add a
+  key later, add it to `gateway-keyring` before the `keyFiles` entry (see the README).
+  `contextGateway.credentialStorage.redis.keyring.existingSecret` now defaults to
+  `gateway-keyring`. If you use a CSI keyring (`keyring.secretProviderClass`), set
+  `keyring.existingSecret: ""` before you upgrade; otherwise the render fails with
+  `each required file reference must select exactly one of existingSecret or secretProviderClass`.
+- **Generated cluster CA.** With generated credentials and `global.tls.caCertSecret` unset,
+  the chart creates `cluster-ca` from the namespace's `kube-root-ca.crt` ConfigMap. Create the
+  namespace before installing; to keep a `cluster-ca` you created, set
+  `global.tls.caCertSecret: cluster-ca`.
+- **Suite-level Redis and LLM inputs.** `global.iris.redis.<role>` and
+  `global.iris.inference.openai` fill the products' Redis and model overlay Secrets (`iris-*`)
+  that their references name; see `examples/suite-inputs.yaml` and
+  [Suite-level Redis and LLM inputs](README.md#suite-level-redis-and-llm-inputs). Without
+  `apiKey` every product uses noop models; with it, OpenAI.
+- **Local Context Gateway origin.** `contextGateway.publicBaseURL` may be an `http://` origin,
+  such as `http://localhost:8083`, with `contextGateway.profile: dev` and the chart's data-plane
+  Ingress off.
+- **Admin tokens in one command.** In Admin Token mode the release notes print one command that
+  outputs every enabled product's admin token.
+
+### Local quickstart
+
+`examples/quickstart-local.yaml` and `scripts/quickstart-local.sh` install the whole suite on a
+local KinD cluster in two steps: one replica of everything, Admin Token mode, no Ingress and
+no model provider. See [Local quickstart](README.md#local-quickstart).
+
 ## 1.0.1
 
 A patch release of the 1.0 line. Every product chart moves to `1.0.1`, with

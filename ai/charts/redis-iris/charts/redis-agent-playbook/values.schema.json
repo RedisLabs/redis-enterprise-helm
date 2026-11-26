@@ -13,6 +13,34 @@
     "tests"
   ],
   "properties": {
+    "redisClientTLS": {
+      "description": "Redis client certificates: a Secret with tls.crt and tls.key, and per-connection extras mounted at /etc/redis-client-tls/<name>/.",
+      "type": "object",
+      "properties": {
+        "existingSecret": {
+          "type": "string"
+        },
+        "extraCertificates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "existingSecret"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"
+              },
+              "existingSecret": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "tenantId": {
       "type": "string",
       "maxLength": 64
@@ -290,6 +318,14 @@
           "type": "string",
           "pattern": "^(|https?://[^[:space:]]+)$",
           "description": "URL of the Identity Service release the data plane introspects agent keys against. Required; must be https:// unless identityService.allowInsecureTransport=true outside fips."
+        },
+        "tenantIdentityProviders": {
+          "type": "object",
+          "description": "Users of the tenant IdP records of the Identity Service (MOD-19515).",
+          "properties": {
+            "enabled": { "type": "boolean" }
+          },
+          "additionalProperties": false
         },
         "oidc": {
           "type": "object",

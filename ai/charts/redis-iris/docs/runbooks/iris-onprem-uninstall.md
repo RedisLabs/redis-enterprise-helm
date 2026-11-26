@@ -2,9 +2,10 @@
 
 Use this procedure to remove a redis-iris install from its namespace. `helm uninstall` removes the
 release's workloads, Services, Ingresses, and configuration, but keeps two kinds of object on
-purpose: the credential Secrets the chart generated (`helm.sh/resource-policy: keep`, so an
-uninstall and reinstall keeps every product and agent key working) and the Pods and RBAC objects
-of the last `helm test`. Your own Secrets and your databases are never touched.
+purpose: the credential Secrets the chart generated and the aggregates of the credential handover
+(Helm never deletes a credential, so an uninstall and reinstall keeps every product and agent key
+working) and the Pods and RBAC objects of the last `helm test`. Your own Secrets and your databases
+are never touched.
 
 `iris/helm/tests/kind.sh REDIS_OPS=1` runs this procedure nightly on KinD and checks that step 2
 lists exactly what the uninstall left, and that step 3 leaves only your own objects (MOD-20419).
@@ -22,7 +23,10 @@ The examples use release `iris` in namespace `redis-ai`.
    kubectl -n redis-ai get pods,serviceaccounts,roles,rolebindings,configmaps -l app.kubernetes.io/instance=iris
    ```
 
-   Stop here to reinstall later with the same credentials. Continue to remove everything.
+   Stop here to reinstall later with the same credentials: install with your values and the
+   handover overlay (`global.iris.secrets.generate: false`, redis-iris README "Hand over generated
+   credentials"). With `generate: true` the reinstall is refused, listing the kept Secrets: the
+   chart never accepts existing credentials by itself. Continue to remove everything.
 
 3. Delete it:
 
@@ -31,8 +35,9 @@ The examples use release `iris` in namespace `redis-ai`.
    kubectl -n redis-ai delete pods,serviceaccounts,roles,rolebindings,configmaps -l app.kubernetes.io/instance=iris
    ```
 
-   After this, a new install generates new admin tokens, a new Control token, and new service
-   credentials. Agent keys live in the Identity Service's database, not in these Secrets.
+   After this, a new install with `generate: true` (without the handover overlay) generates new
+   admin tokens, a new Control token, and new service credentials. Agent keys live in the Identity
+   Service's database, not in these Secrets.
 
 4. The databases keep the suite's data. Delete it with your database tooling when you
    decommission the install; the Secrets you supplied (the database URLs, the license, the IdP

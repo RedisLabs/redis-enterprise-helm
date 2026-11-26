@@ -70,8 +70,8 @@ spec:
         {{- with ($annotations | trim) }}
         {{- . | nindent 8 }}
         {{- end }}
-        {{- with .podAnnotations }}
-        {{- toYaml . | nindent 8 }}
+        {{- with (include "redis-onprem.suite.podAnnotations" (dict "root" $root "podAnnotations" .podAnnotations) | trim) }}
+        {{- . | nindent 8 }}
         {{- end }}
       labels:
         {{- include .labelsTemplate $root | nindent 8 }}

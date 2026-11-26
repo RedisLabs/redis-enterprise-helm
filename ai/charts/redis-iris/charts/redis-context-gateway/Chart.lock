@@ -1,6 +1,6 @@
 dependencies:
 - name: redis-iris-onprem-lib
   repository: https://helm.redis.io/ai
-  version: 0.5.0
-digest: sha256:769afbc5f35b7a0bf99cb71d82fbb766a1bf30ded76ca53861ebc522d70eb550
-generated: "2026-11-03T12:00:00+02:00"
+  version: 0.8.0
+digest: sha256:f4047541a674550de83750cb4eb51f57fb0adb15dbcaa3bd43cc4eed42444bc2
+generated: "2026-11-25T21:29:54.648533992+02:00"

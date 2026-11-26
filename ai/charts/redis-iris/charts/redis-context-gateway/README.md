@@ -10,8 +10,10 @@ install Identity Service, Redis, Vault, CSI drivers, or secret-provider resource
 The intended GA deployment uses a global Helm release for one tenant, with one
 Identity Service deployment and one deployment of each enabled product. The
 global chart supplies the same tenant ID to the product charts. A second tenant
-uses a separate global release. The component installation steps below describe
-the configuration contract and support local validation.
+uses a separate global release, or one standalone release of this chart serves
+all tenants in the [multi-tenant mode](#multi-tenant-mode). The component
+installation steps below describe the configuration contract and support local
+validation.
 
 Use separately managed metadata Redis, credential Redis, and customer databases.
 Use a separate Redis ACL user for credentials. Redis endpoint aliases do not prove
@@ -26,7 +28,9 @@ database separation; check the actual Redis deployment.
    - `runtime.serviceCredentials[]` holds the data plane's runtime credential
      with `allowedOperations: [api-key-introspect]` and
      `allowedProducts: [context-gateway]`, from the same Secret as
-     `dataplane.runtimeToken`.
+     `dataplane.runtimeToken`. If the data plane uses `auth.oidc` or a service
+     subject, also add `subject-grant-lookup` to `allowedOperations`. A service
+     subject is a `jwt_subjects` entry with the `identity_service` authority.
    - `productValidation.products.context-gateway.baseURL` reaches the
      control-plane Service. With release name `gateway`, that URL is
      `http://gateway-redis-context-gateway-controlplane:9100` in the same
@@ -117,7 +121,7 @@ restate them here.
 
 | Set on the Identity Service release | Value | Matching Context Gateway value |
 |---|---|---|
-| `runtime.serviceCredentials[]` | `name: context-gateway-dp`, `subject: context-gateway-dataplane`, `allowedOperations: [api-key-introspect]`, `allowedProducts: [context-gateway]`, `existingSecret` + `secretKey` | `dataplane.runtimeToken.existingSecret` + `secretKey`: the same Secret, mounted by the data plane |
+| `runtime.serviceCredentials[]` | `name: context-gateway-dp`, `subject: context-gateway-dataplane`, `allowedOperations: [api-key-introspect]` (add `subject-grant-lookup` with `auth.oidc` or a service subject on the data plane), `allowedProducts: [context-gateway]`, `existingSecret` + `secretKey` | `dataplane.runtimeToken.existingSecret` + `secretKey`: the same Secret, mounted by the data plane |
 | `productValidation.products.context-gateway.baseURL` | `http://gateway-redis-context-gateway-controlplane:9100` | The control-plane Service `<release>-redis-context-gateway-controlplane` on `controlplane.service.port` (default `9100`) |
 | `productValidation.products.context-gateway.credential` | The control plane's grant-validation Secret and key | `controlplane.internalToken.existingSecret` + `secretKey` |
 | `runtime.apiKeyTenant.singleTenantID` | The Gateway tenant, for example `default` | `tenantId`; they must be equal, or the control plane refuses every grant callback for another tenant |
@@ -141,8 +145,10 @@ knows product `context-gateway`, resource type `gateway` and its actions `use`
 keys through the Identity Service Control API with a grant such as
 `{product: context-gateway, resourceType: gateway, resourceId: <gateway-id>, actions: [use]}`;
 grant validation calls the Gateway control plane to check that the Gateway
-exists. Gateway service subjects hold no grants, so `subjectGrants.allowed`
-needs no Gateway entry.
+exists. A service subject gets its Gateway grants from IdS subject grants.
+Thus each such grant needs an entry in `subjectGrants.allowed`, for example
+`{product: context-gateway, resourceType: gateway, actions: [use]}`. Without a
+service subject, no entry is necessary.
 
 ```yaml
 # Identity Service chart values
@@ -152,7 +158,7 @@ runtime:
   serviceCredentials:
     - name: context-gateway-dp
       subject: context-gateway-dataplane
-      allowedOperations: [api-key-introspect]
+      allowedOperations: [api-key-introspect]   # add subject-grant-lookup with auth.oidc or a service subject
       allowedProducts: [context-gateway]
       existingSecret: gateway-runtime
       secretKey: token
@@ -254,6 +260,7 @@ the Identity Service chart's `productValidation.products.context-gateway.credent
 Register the runtime token under the Identity Service chart's
 `runtime.serviceCredentials` with `allowedOperations: [api-key-introspect]` and
 `allowedProducts: [context-gateway]`. These three values must be distinct.
+
 The two Identity Service HTTP paths currently authenticate shared credentials;
 Kubernetes ServiceAccounts do not replace these credentials automatically. MCP
 clients use their own agent keys, not any of these service tokens.
@@ -338,6 +345,31 @@ rotation. Changing additional volume or mount definitions changes the pod
 template and triggers a rollout. The chart's managed references continue to mount
 whole read-only directories without `subPath`.
 
+## Redis client certificates
+
+For a Redis Enterprise database that requires a client certificate (mutual TLS (Transport Layer
+Security)), set `redisClientTLS.existingSecret` to a Secret with `tls.crt` and `tls.key`:
+
+```yaml
+redisClientTLS:
+  existingSecret: gateway-redis-client          # default for every rediss:// client
+  extraCertificates:                         # optional per-connection certificates
+    - name: store-1
+      existingSecret: store-1-redis-client
+```
+
+Both planes mount the Secrets read-only at `/etc/redis-client-tls` (without `subPath`), and the
+chart sets `redis_client_tls` in the service config to `/etc/redis-client-tls/tls.crt` and
+`/etc/redis-client-tls/tls.key`. An extra certificate is mounted at
+`/etc/redis-client-tls/<name>/tls.crt` and `tls.key`; name those paths in the `tls:` block
+(`cert_path`, `key_path`) of the connection it is for. The chart sets `redis_client_tls` in `shared.yaml`, over any value in `shared.config`; component `config` must not set it, because component configuration loads later and would replace the managed pair. Additional `volumes` and `volumeMounts` must not use the `redis-client-tls` name or path.
+
+For certificate-only login (a certificate-based database user), use a `rediss://` URL with no
+username or password; with a password in the URL the client sends both. The server CA is still
+trusted through the CA setting above. When the Secret is renewed, new connections use the new
+certificate within about 30 seconds, without a restart. See the
+[Redis client certificate runbook](../../docs/runbooks/iris-onprem-redis-mtls.md) for the Redis Enterprise setup, rotation and CA rotation.
+
 ## Override non-secret configuration
 
 `shared.config` supplies common settings, such as `metadata_db.client`,
@@ -381,8 +413,38 @@ available at `/metrics` on each HTTP Service. Set
 `service.namespace: context-gateway` and `service.name: controlplane` or
 `dataplane` from runtime identity, as Memory and Playbook do. Kubernetes labels
 do not supply these values. A conflicting `opentelemetry.service_name` is ignored
-with a warning; leave it unset. Pod annotations can configure your metrics scraper. Probes use unauthenticated
+with a warning; leave it unset. Every data-plane MCP error returns
+`error.data.traceId`. With tracing off, the data-plane log lines of that MCP
+request carry the same value as `trace_id`. With tracing on, the request's log
+lines carry the HTTP request's `trace_id`, and the MCP span with the returned ID
+links to that HTTP span in your trace backend. Enable tracing in production so
+that a reported ID leads to the whole request. Pod annotations can configure your metrics scraper. Probes use unauthenticated
 operational endpoints; release-build readiness includes license validity.
+
+## Configure embeddings for semantic search
+
+Semantic and hybrid search tools embed the agent's text through
+`inference.models` and `embedders_connection_details`. The chart schema does not
+list these keys, so deliver both in a mounted overlay file through
+`dataplane.overlays` and set the entry's `checksum` so a changed key rolls the
+pods. See [`examples/embeddings-vertex-ai.yaml`](examples/embeddings-vertex-ai.yaml)
+and [`examples/embeddings-cohere.yaml`](examples/embeddings-cohere.yaml), and the
+[Context Surfaces runbook](../../docs/runbooks/context-gateway-context-surfaces.md)
+for every validation rule.
+
+| Protocol | Credential | Notes |
+| --- | --- | --- |
+| `openai` | `static` key | Also serves OpenAI-compatible endpoints. |
+| `cohere` | `static` key | `base_url: https://api.cohere.ai/compatibility/v1`. At most 96 texts per call; the shared client splits larger calls. |
+| `vertex-ai` | `gcp-service-account` only | Full `:predict` URL; `embeddings_input_field: content`; no `api_key`. At most 250 texts per call. |
+| `oip` | `static` or `none` | Self-hosted embedders. |
+| `anthropic` | n/a | Anthropic has no embeddings API and is refused at startup. |
+
+For Vertex, put the service-account key in the overlay Secret as
+`credentials.gcp.service_account_json`. The key is never in values. A well-formed
+key for an unknown identity passes startup and fails on the first search with
+`invalid credentials: failed to obtain GCP access token ... invalid_grant`. To replace a key, update the Secret and
+change the overlay `checksum`.
 
 ## Tune application defaults and Kubernetes workloads
 
@@ -396,6 +458,12 @@ blocks. Durations use Go units such as `100ms`, `2s`, and `15m`; size limits are
 integer bytes. Shared configuration supplies metadata Redis client tuning, the
 database registry, and telemetry. Component configuration supplies HTTP deadlines,
 control-plane discovery, authentication, and data-plane result limits.
+
+`controlplane.config.upstreams.http.enabled` allows creating http Upstreams,
+which call operator-approved HTTP APIs through one tool per route. It is `false`
+by default, so a create with kind `HTTP` is refused with 400. An http Upstream
+created while it was on keeps being served, updated, and deleted after it is
+turned off.
 
 A registry entry's map key is its database ID. Put its display `name` and optional
 `account_id` and `subscription_id` in `shared.config.databases`. Supply authenticated
@@ -446,20 +514,27 @@ entry, or both planes refuse to start with an error that names the key.
 The two databases have different jobs:
 
 - **Gateway database** (`gateway-db`): cache entries and compression
-  handles. Only the Gateway writes it. Set `maxmemory-policy noeviction` on it.
-  Compression also needs the JSON module (Redis 8 or later includes it).
-  The cache and handles each have their own share of `maxmemory`,
-  `cache.max_memory_share` (default 0.4) and `compression.max_memory_share`
-  (default 0.5), at most 0.95 together. Each stops writing at its own share,
-  so neither can take the other's, and both stop above 90 percent of
-  `maxmemory` as a last backstop. Size `maxmemory` so each share holds what
-  that side needs.
+  handles. Only the Gateway writes it. Give it a finite `maxmemory` and
+  `maxmemory-policy volatile-ttl`. `noeviction` and an unbounded `maxmemory` (reported as 0), which GA accepted, still work with a
+  warning and will be refused in a later release. Redis Software and Redis Cloud enforce
+  their own memory limit and do not report `maxmemory`, so they get no warning for it; set the
+  eviction policy there in the admin console or API, because `CONFIG SET` is refused. Compression also needs the JSON module
+  (Redis 8 or later includes it). Redis enforces the memory limit, not the
+  Gateway: the cache and handles share the database, and under a
+  `volatile-*` policy Redis makes room by evicting Gateway keys, which all
+  carry a TTL. An evicted cache entry is a miss, and an evicted handle reads
+  as expired, including one made by `run_tool_as_handle`. When Redis cannot
+  make room it refuses the write, and the Gateway serves the call uncached or
+  returns the result whole, counted as `out_of_memory`. Compression refuses
+  an `allkeys-*` policy, which may evict keys without a TTL. Under `noeviction` a full
+  Redis refuses the handle write, counted as `out_of_memory`. Size `maxmemory` for what the cache and
+  handles hold together.
 - **Surface database** (`surface-db`): the customer data your Context Surfaces
   read. The Gateway never writes it.
 
-Do not point both at one Redis when compression is on. Compression requires
-`noeviction`, and on one Redis that policy would also apply to your customer
-data, which Redis would then never evict and would refuse writes to once full.
+Do not point both at one Redis when compression is on. On one Redis the
+Gateway's `maxmemory` and eviction policy would also apply to your customer
+data, and Redis could evict customer keys that carry a TTL to make room.
 The data plane logs a warning at startup when the two defaults reach the same
 Redis endpoint. The warning does not stop startup. The control plane runs no
 startup check of the defaults. It checks the Gateway database only when
@@ -469,18 +544,25 @@ Checks that use the Gateway database:
 
 - **Startup, with `dataplane.config.compression.enabled: true` (data plane
   only):** the data
-  plane refuses to start when the default Gateway database does not use
-  `noeviction` or lacks JSON. The error names the database ID and the policy
-  found. Fix it with `CONFIG SET maxmemory-policy noeviction` (and the same
-  value in `redis.conf`), or set `compression.enabled` to `false`.
-- **Startup, with handles disabled:** a database that does not use `noeviction`
-  only logs a warning. `noeviction` is the documented policy either way.
+  plane refuses to start when the default Gateway database does not use a
+  `volatile-*` policy or `noeviction`, or lacks JSON. The error names the
+  database ID, every rule it fails, and the policy found. Fix it with
+  `CONFIG SET maxmemory-policy volatile-ttl` (and the same value in
+  `redis.conf`), or set `compression.enabled` to `false`. `noeviction` and a
+  `maxmemory` of 0 still start, with a deprecation warning that
+  recommends `volatile-ttl` and a finite `maxmemory`.
+- **Startup, with handles disabled:** a database without a `volatile-*`
+  policy only logs a warning. `volatile-ttl` is the documented policy either way.
 - **Compression on:** a Gateway create or update that sends `compression:
   ENABLED`, and an update that changes `databaseId` while compression stays
-  `ENABLED`, checks the Gateway database first. A database with another policy
-  or without JSON is refused with a 400 whose `errors` entry points at
-  `/compression` and gives the reason, for example `database
-  gateway-db uses allkeys-lru, compression needs noeviction`. An unreachable
+  `ENABLED`, checks the Gateway database first. A database without a
+  `volatile-*` policy or `noeviction`, or without JSON, is refused with a
+  400 whose `errors` entry points at `/compression` and gives the reason, for
+  example `database gateway-db uses allkeys-lru, compression needs
+  volatile-ttl or volatile-lru or volatile-lfu or volatile-random`. A database on
+  `noeviction` or a `maxmemory` of 0 passes, and the control plane
+  logs a deprecation warning. A database that does not report `maxmemory`, such as
+  Redis Software or Redis Cloud, passes without one. An unreachable
   database answers 503, so retry. A create that omits `compression` never
   fails on this: when the `databaseId` default would enable compression but the
   database fails the check or cannot be reached, the Gateway is stored with
@@ -529,8 +611,9 @@ administration API. A Gateway created with a `databaseId`, sent or defaulted,
 has both toggles `enabled` unless the request sets them,
 and one created without a database has both `disabled`. The API refuses to
 enable a toggle on a Gateway without a `databaseId`. The Gateway database
-should run `maxmemory-policy noeviction`, and handles need that policy and
-JSON support. A Gateway
+should have a finite `maxmemory` and run `maxmemory-policy volatile-ttl`.
+Handles also need JSON support and refuse `allkeys-*`. `noeviction` and an
+unbounded `maxmemory` still work, with a warning. A Gateway
 without a database, or with a toggle `disabled`, is served uncached, returns
 results whole, and lists no handle tools. Turning a toggle off deletes
 nothing: stored entries expire on their TTL. The `cache` and
@@ -593,6 +676,35 @@ target. With autoscaling on, the Deployment omits `replicas`; otherwise
 `replicaCount` applies. Set min/max replicas and scaling behavior for the
 installation's capacity requirements. The chart does not change the shared
 published Helm library.
+
+## Multi-tenant mode
+
+Leave `tenantId` empty to serve more than one tenant with one release. Then
+enable `controlplane.config.auth.oidc` with `tenant_id_claim`. If data-plane
+OIDC is enabled, set its `tenant_id_claim` too. The data plane can also run
+with agent keys alone: the grants supply each caller's tenant. Do not set
+`static_tenant_id`. Control-plane SSO is required in this mode.
+
+Under the `redis-iris` umbrella, set `global.iris.auth.oidc.tenantIdClaim`
+instead of `global.iris.tenantId`. The umbrella supplies the control-plane
+OIDC settings from the shared issuer and role bindings.
+
+In this mode:
+
+- Each caller keeps the tenant of its credential: the tenant claim of an IdP
+  token, or the tenant of an agent key's grants. A Gateway of another tenant
+  gives `404`.
+- An IdP user's subject grants must name the tenant of its claim. Other grants
+  give `403`.
+- The Identity Service must serve more than one tenant. Do not set
+  `runtime.apiKeyTenant.singleTenantID`.
+- All tenants share the database registry (`shared.config.databases` and
+  `databaseConnections`). Register only the databases that every tenant can
+  use.
+- The control plane refuses the admin token, because the token has no tenant
+  of its own. Health and readiness still work. Automation and tests must use an
+  IdP token with the tenant claim. While the IdP is down, no operator can call
+  the control plane in this mode.
 
 ## Enable IdP administration and shared UI sessions
 
@@ -844,6 +956,33 @@ Chart `0.1.1` uses `/health/liveness` and `/health/readiness` for the
 services changed in this chart. Deploy matching service images that expose these
 routes; older images and newer chart probes must not be mixed. Update custom
 monitoring URLs at the same time.
+
+## Gateway database memory settings
+
+Redis now enforces `maxmemory` on the Gateway database. The Gateway no longer
+holds the cache and handles to a share of it, and no longer pauses them at 90
+percent. What changed, and what still works:
+
+- Recommended: a finite `maxmemory` and `maxmemory-policy volatile-ttl`. Upgrade
+  first, then run `CONFIG SET maxmemory <bytes>` and `CONFIG SET
+  maxmemory-policy volatile-ttl` (and set both in `redis.conf`).
+- `noeviction`, which GA documented, and a `maxmemory` of 0 still
+  work, including for compression. They log a deprecation warning, and a later
+  release refuses them.
+- Redis Software and Redis Cloud enforce their own memory limit and do not
+  report `maxmemory`, so there is no warning for it. They refuse `CONFIG SET`:
+  set the eviction policy in the admin console or API.
+- `dataplane.config.cache.max_memory_share` and
+  `dataplane.config.compression.max_memory_share` are deprecated and ignored.
+  The chart still accepts them, `helm install` and `helm upgrade` print a
+  warning when either is set, and the data plane logs one warning at startup.
+  Remove them. A later chart release removes them from the schema.
+- A handle can now be evicted before its TTL under a `volatile-*` policy, and then
+  reads as expired.
+- The `skipped_low_memory` outcome is gone from
+  `iris_context_gateway_cache_writes_total` and
+  `iris_context_gateway_compression_creates_total`, because the condition no
+  longer exists. Alert on `out_of_memory` instead.
 
 ## Cache and compression key migration
 

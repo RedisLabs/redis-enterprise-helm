@@ -66,7 +66,7 @@ products:
       service: redis-agent-memory-controlplane  # a Service in the release namespace: <fullnameOverride>-controlplane
       # host: redis-agent-memory-controlplane.<namespace>.svc.cluster.local  # instead of service, for an upstream in another namespace
       port: 9100
-      basePath: ""               # empty or "/<path>" with no trailing slash; the Agent Memory SDK paths carry /v2
+      basePath: ""               # empty or "/<path>" with no trailing slash; the Agent Memory SDK paths carry /iris/v1/agent-memory
       scheme: http                # http | https
       caSecretName: ""            # https only: a Secret with a "ca.crt" key to trust
       insecureSkipVerify: false   # https only: skip verification entirely (explicit escape hatch)
@@ -165,6 +165,16 @@ data plane root, because the Lens SDK paths carry `/iris/data/v1beta1/lens/insta
 `instanceId` on the route to the Lens chart's `instance.id`; it defaults to
 `default`, the Lens chart's own default. The SPA reads that instance and asks
 for a Lens read key on its `/lens` page.
+
+For multi-tenant Lens with SSO on, add a hidden `lens-cp` route (`product: lens`,
+`showInNavigation: false`, `basePath: ""`) to the Lens control plane Service.
+Its port is 9300 by default (the Lens chart's `controlplane.service.port`).
+Remove `instanceId` from the `lens` route. Then the SPA asks
+`/api/lens-cp/iris/v1beta1/lens/instance` for the instance of the signed-in
+user's tenant, and the control plane makes that instance on the first call. A
+configured `instanceId` always wins. Without SSO, without the `lens-cp` route,
+or on a 404, the SPA reads the instance `default`. On any other error the
+`/lens` page shows the error. See the `lens-cp` example in `values.yaml`.
 
 For Context Gateway, use route key `context-gateway` and permission product
 `context_gateway`; its backend product identity is `context-gateway`. Keep
@@ -307,6 +317,7 @@ Required when `sso.enabled` is `true` (rendering fails otherwise): a `publicURL`
 | `sso.session.existingSecret` + `secretKey` | Session encryption key. Empty: the chart generates `<release>-redis-iris-ui-auth-session-key` and keeps it on upgrade. |
 | `sso.redis.existingSecret` + `urlsKey` | Session Redis URL(s). They carry credentials, so they come from a Secret; use `rediss://` under FIPS. |
 | `sso.tls.caCertSecret` + `caCertKey` | Private CA for the IdP or Redis, added to the system roots. |
+| `redisClientTLS.existingSecret`, `redisClientTLS.extraCertificates` | Client certificate the UI auth service presents to a `rediss://` session Redis. See [Redis client certificates](#redis-client-certificates). |
 | `sso.scopes` (replaces the default list, and must keep `openid`), `sso.claims`, `sso.session.idleTimeout`, `sso.session.absoluteLifetime` | Passed to the service as they are. |
 | `sso.audience`, `sso.audienceParameter`, `sso.accessTokenIssuer` | Passed to the service as `audience`, `audience_parameter` (`none` is left out) and `access_token_issuer`. The service checks the access token's `aud` against `sso.audience` at sign-in and refuses the sign-in on a mismatch, so the value must be the one your IdP puts in `aud`. `sso.accessTokenIssuer` may be `http://` or `https://`: it is an identifier compared with the token's `iss` and never fetched. On AD FS set it to the discovery document's `access_token_issuer` (`http://<host>/adfs/services/trust`) and keep `sso.issuer` on the HTTPS discovery issuer. The backends' `issuer` must be the same value. |
 | `sso.roleClaims`, `sso.roleMappings` | Passed to the service. It maps the access token's `roleClaims` to Iris roles with `roleMappings` (`{product: {group: role}}`, the shape the product charts use; keys must be `product` values used in `products`) and gives the user permissions per product. See [Role mapping](#role-mapping). |
@@ -363,6 +374,36 @@ Required when `sso.enabled` is `true` (rendering fails otherwise): a `publicURL`
   The product control planes keep accepting them.
 - **`sso.allowInsecureTransport`** exists only so the self-hosted test IdP (`development/test-idp`, plain
   http) can be used in local and KinD runs. Never set it for a real IdP.
+
+### Redis client certificates
+
+For a session Redis (a Redis Enterprise database) that authenticates the UI
+auth service by its client certificate (mutual TLS (Transport Layer Security)),
+put the PEM pair in a Secret with the keys `tls.crt` and `tls.key` and set
+`redisClientTLS.existingSecret` (a top-level value, as in the product charts):
+
+```bash
+kubectl create secret tls ui-auth-redis-client --cert=./ui-auth.crt --key=./ui-auth.key
+helm upgrade --install ui redis-ai/redis-iris-ui -f ui-values.yaml --set redisClientTLS.existingSecret=ui-auth-redis-client
+```
+
+- Only the UI auth Deployment mounts it; the gateway has no Redis connection.
+  The chart projects the Secret, and each `redisClientTLS.extraCertificates`
+  entry (`[{name, existingSecret}]`, under `<name>/`), into one read-only volume
+  at `/etc/redis-client-tls` and renders `redis_client_tls` with the default
+  pair's paths into the service config.
+- For certificate-only login, write the URL in the `sso.redis.existingSecret`
+  Secret as `rediss://host:port` without a user name or password. With a
+  password in the URL, the service sends both. A `redis://` URL presents no
+  certificate.
+- The mount has no `subPath`, so a renewed Secret reaches the pod; the service
+  rereads the pair about every 30 seconds and uses it for new connections
+  without a restart. A broken pair keeps the last good one; a missing or
+  invalid pair at startup stops the service.
+- Trust the Redis server's CA with `sso.tls.caCertSecret`.
+
+The Redis Enterprise setup, rotation and CA (certificate authority) rotation
+are in the [Redis client certificate runbook](../../../docs/runbooks/iris-onprem-redis-mtls.md).
 
 ## Local commands
 
