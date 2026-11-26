@@ -104,6 +104,9 @@ spec:
             {{- end }}
           {{- include "redis-agent-memory.overlayVolumeMounts" . | nindent 12 }}
           {{- include "redis-agent-memory.tlsVolumeMount" . | nindent 12 }}
+          {{- with include "redis-onprem.redisClientTLS.volumeMount" .Values.redisClientTLS | trim }}
+            {{- . | nindent 12 }}
+          {{- end }}
           {{- with .Values.volumeMounts }}
             {{- toYaml . | nindent 12 }}
           {{- end }}
@@ -140,6 +143,9 @@ spec:
         {{- end }}
       {{- include "redis-agent-memory.overlayVolumes" . | nindent 8 }}
       {{- include "redis-agent-memory.tlsVolume" . | nindent 8 }}
+      {{- with include "redis-onprem.redisClientTLS.volume" .Values.redisClientTLS | trim }}
+        {{- . | nindent 8 }}
+      {{- end }}
       {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}
       {{- end }}

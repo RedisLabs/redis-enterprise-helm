@@ -1,4 +1,7 @@
 {{- define "redis-agent-memory.serverAnnotations" -}}
+{{- if .Values.controlplane.adminToken.existingSecretChecksum }}
+checksum/admin-token: {{ .Values.controlplane.adminToken.existingSecretChecksum | quote }}
+{{- end }}
 {{- if .Values.config.existingSecretChecksum }}
 checksum/config: {{ .Values.config.existingSecretChecksum | quote }}
 {{- else if .Values.config.render }}
@@ -24,6 +27,9 @@ checksum/dp-credential: {{ . | quote }}
 {{- end }}
 
 {{- define "redis-agent-memory.serverVolumeMounts" -}}
+- name: admin-token-volume
+  mountPath: /etc/controlplane-onprem/admin
+  readOnly: true
 - name: config-volume
   mountPath: /etc/ai
   readOnly: true
@@ -37,12 +43,19 @@ checksum/dp-credential: {{ . | quote }}
 {{- end }}
 {{ include "redis-agent-memory.overlayVolumeMounts" . }}
 {{ include "redis-agent-memory.tlsVolumeMount" . }}
+{{- include "redis-onprem.redisClientTLS.volumeMount" .Values.redisClientTLS }}
 {{- with .Values.volumeMounts }}
 {{ toYaml . }}
 {{- end }}
 {{- end }}
 
 {{- define "redis-agent-memory.serverVolumes" -}}
+- name: admin-token-volume
+  secret:
+    secretName: {{ include "redis-agent-memory.controlplaneAdminTokenSecretName" . }}
+    items:
+      - key: {{ .Values.controlplane.adminToken.secretKey }}
+        path: token
 - name: config-volume
   {{- if .Values.config.existingSecret }}
   secret:
@@ -75,6 +88,7 @@ checksum/dp-credential: {{ . | quote }}
 {{- end }}
 {{ include "redis-agent-memory.overlayVolumes" . }}
 {{ include "redis-agent-memory.tlsVolume" . }}
+{{- include "redis-onprem.redisClientTLS.volume" .Values.redisClientTLS }}
 {{- with .Values.volumes }}
 {{ toYaml . }}
 {{- end }}

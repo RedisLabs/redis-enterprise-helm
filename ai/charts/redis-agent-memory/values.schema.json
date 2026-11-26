@@ -4,6 +4,34 @@
   "description": "Schema for the redis-agent-memory Helm chart values. Enforced by `helm install`/`helm upgrade` via Helm's built-in JSON Schema validation (see https://helm.sh/docs/topics/charts/#schema-files). Anything not defined here is accepted \u2014 the schema's job is to catch typos and invalid values on the keys we care most about, not to document every field.",
   "type": "object",
   "properties": {
+    "redisClientTLS": {
+      "description": "Redis client certificates: a Secret with tls.crt and tls.key, and per-connection extras mounted at /etc/redis-client-tls/<name>/.",
+      "type": "object",
+      "properties": {
+        "existingSecret": {
+          "type": "string"
+        },
+        "extraCertificates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "existingSecret"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"
+              },
+              "existingSecret": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "auth": {
       "type": "object",
       "description": "Settings shared by every Iris service that validates IdP access tokens.",

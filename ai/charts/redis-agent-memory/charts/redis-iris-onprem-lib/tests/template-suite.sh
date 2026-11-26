@@ -107,6 +107,29 @@ grep -qF 'allowInsecureTransport\":false' <<<"$out" || fail "global OIDC, an htt
 out=$(render "${UMBRELLA[@]}" --set global.iris.workloadIdentity.issuer=https://oidc.eks/id/1)
 expect "$out" workloadIdentity '{"issuer":"https://oidc.eks/id/1","jwksURI":"https://oidc.eks/id/1/openid/v1/jwks"}' "custom workload identity issuer"
 
+echo "== Umbrella, tenant claim: no fixed tenant =="
+out=$(render "${UMBRELLA[@]}" --set global.iris.auth.oidc.tenantIdClaim=tenant_id)
+expect "$out" tenantId "" "the claim gives no fixed tenant"
+expect "$out" tenantIdClaim "tenant_id" "the claim reaches the product"
+out=$(render "${UMBRELLA[@]}")
+expect "$out" tenantIdClaim "" "no claim by default"
+out=$(render)
+expect "$out" tenantIdClaim "" "standalone has no claim"
+expect_fail 'global.iris.tenantId ("acme") gives one tenant, and global.iris.auth.oidc.tenantIdClaim ("tenant_id") gives more than one tenant' \
+  "a tenant and a claim together" "${UMBRELLA[@]}" --set global.iris.tenantId=acme --set global.iris.auth.oidc.tenantIdClaim=tenant_id
+expect_fail 'fixture.tenantId ("t1") gives one tenant, and global.iris.auth.oidc.tenantIdClaim ("tenant_id") gives more than one tenant' \
+  "a product tenant in the claim mode" "${UMBRELLA[@]}" --set global.iris.auth.oidc.tenantIdClaim=tenant_id --set tenantId=t1
+out=$(render "${UMBRELLA[@]}" --set-string global.iris.tenantId= --set global.iris.auth.oidc.tenantIdClaim=tenant_id)
+expect "$out" tenantId "" "an empty global tenant is unset, so the claim applies"
+out=$(render "${UMBRELLA[@]}" --set-string 'global.iris.auth.oidc.tenantIdClaim=  ')
+expect "$out" tenantId "default" "a claim of spaces is no claim"
+expect "$out" tenantIdClaim "" "a claim of spaces is trimmed"
+for unset in 'global.iris.auth.oidc.tenantIdClaim=null' 'global.iris.auth.oidc=null'; do
+  out=$(render "${UMBRELLA[@]}" --set "$unset")
+  expect "$out" tenantId "default" "$unset is no claim"
+  expect "$out" tenantIdClaim "" "$unset gives no claim"
+done
+
 echo "== Umbrella conflicts name the product field =="
 expect_fail 'fixture.tenantId ("other") conflicts with global.iris.tenantId ("acme")' "tenant conflict" \
   "${UMBRELLA[@]}" --set global.iris.tenantId=acme --set tenantId=other
@@ -179,6 +202,25 @@ out=$(workload --set workload.pdbEnabled=true --set workload.autoscalingEnabled=
 has "$out" "kind: PodDisruptionBudget" "autoscaling minReplicas 2 renders a PDB"
 out=$(workload --set workload.pdbEnabled=true --set workload.autoscalingEnabled=true --set workload.minReplicas=1)
 lacks "$out" "kind: PodDisruptionBudget" "autoscaling minReplicas 1 renders nothing, whatever replicas says"
+
+echo "== redis-onprem.deployment config revision (global.iris.configRevision) =="
+out=$(workload)
+lacks "$out" "iris.redis.io/config-revision" "configRevision unset renders no annotation"
+out=$(workload --set global.iris.configRevision=7)
+has "$out" '        iris.redis.io/config-revision: "7"' "configRevision lands on the pod template"
+printf 'global:\n  iris:\n    configRevision: 20261119\n' >"$fixture/revision.yaml"
+out=$(workload -f "$fixture/revision.yaml")
+has "$out" '        iris.redis.io/config-revision: "20261119"' "a values-file integer renders without an exponent"
+out=$(workload --set-json global.iris.configRevision=1.5)
+has "$out" '        iris.redis.io/config-revision: "1.5"' "a fractional number keeps its digits"
+out=$(workload --set global.iris.configRevision=7 --set workload.wrapRoot=true)
+has "$out" '        iris.redis.io/config-revision: "7"' "configRevision found through a caller context holding the root"
+out=$(workload --set global.iris.configRevision=7 --set-json 'workload.podAnnotations={"iris.redis.io/config-revision":"local","a":"b"}')
+has "$out" "        iris.redis.io/config-revision: local" "a local annotation on the same key wins"
+has "$out" "        a: b" "other local annotations kept beside the revision"
+out=$(workload --set-json 'workload.podAnnotations={"a":"b"}')
+has "$out" "        a: b" "standalone renders the local annotations unchanged"
+lacks "$out" "iris.redis.io/config-revision" "standalone renders no revision"
 
 if (( failures > 0 )); then
   echo "$failures suite helper assertion(s) failed" >&2
