@@ -1,6 +1,12 @@
 {{- $at := include "redis-lens.at" . -}}
 {{- $s := include "redis-lens.suite" . | fromJson -}}
-{{- $_ := required (printf "%stenantId is required" $at) (trim $s.tenantId) -}}
+{{- if and (include "redis-onprem.suite.enabled" .) .Values.dataplane.tenantIdentityProviders.enabled -}}
+{{- fail "lens.dataplane.tenantIdentityProviders.enabled requires a standalone Lens release" -}}
+{{- end -}}
+{{- /* An empty tenantId is the multi-tenant mode: the IdP tenant claim gives each caller its tenant. */ -}}
+{{- if and (not (trim $s.tenantId)) (not (and $s.dataplaneOIDC.enabled $s.controlplaneOIDC (trim $s.dataplaneOIDC.tenantIDClaim))) -}}
+{{- fail (printf "%stenantId is required unless %sdataplane.oidc and %scontrolplane.oidc are enabled with %sdataplane.oidc.tenantIDClaim (multi-tenant mode)" $at $at $at $at) -}}
+{{- end -}}
 {{- $_ := required (printf "%sstorage.existingSecret is required" $at) .Values.storage.existingSecret -}}
 {{- $_ := required (printf "%slicense.existingSecret is required" $at) $s.license.existingSecret -}}
 {{- $_ := required (printf "%sdataplane.image.tag is required" $at) .Values.dataplane.image.tag -}}

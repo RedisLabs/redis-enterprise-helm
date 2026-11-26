@@ -110,7 +110,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- $mappings := include "redis-onprem.suite.roleMappings" (dict "root" . "product" "lens") | fromJson -}}
 {{- $derived := dict -}}
 {{- if and $oidc.issuer $mappings -}}
-{{- $derived = dict "enabled" true "issuer" $oidc.accessTokenIssuer "jwksURI" $oidc.jwksURI "tenantIDClaim" "" "roleClaims" $oidc.roleClaims "roleMappings" $mappings "allowInsecureTransport" $oidc.allowInsecureTransport -}}
+{{- $derived = dict "enabled" true "issuer" $oidc.accessTokenIssuer "jwksURI" $oidc.jwksURI "tenantIDClaim" (include "redis-onprem.suite.tenantIdClaim" (dict "root" .)) "roleClaims" $oidc.roleClaims "roleMappings" $mappings "allowInsecureTransport" $oidc.allowInsecureTransport -}}
 {{- $_ := set $out "dataplaneOIDC" $derived -}}
 {{- end -}}
 {{- /* A boolean is compared whenever it is set; another field only when it is not empty. */ -}}

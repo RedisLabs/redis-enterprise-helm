@@ -29,11 +29,24 @@ overlay the chart mounts as a later `--config` file:
 The four data-plane roles map onto the customer databases like this:
 
 - **Records** (`streams` and `index`) need a RAM database, not Flex.
-  `streams` must use `maxmemory-policy noeviction`. `index` needs RediSearch and
-  RedisJSON. A Flex records database fails index creation with a clear error.
+  It must use `maxmemory-policy noeviction` or `volatile-lru`; any other policy
+  can evict a whole stream. `index` needs RediSearch and RedisJSON. A Flex records database fails index creation with a clear error.
 - **Content** (`content`) can be Flex, RAM, or the records database.
 - **Metadata** is a separate small Redis for the instance record. Do not put it
   on a telemetry database. The Identity Service release keeps its own metadata.
+
+The records database user needs these commands and keys from this version on.
+A user created with `+@all`, as the
+[Redis operations runbook](../../docs/runbooks/iris-onprem-redis-operations.md)
+does, needs no change.
+
+| Needed for | Commands | Keys |
+|---|---|---|
+| The open-trace index (required: without them no trace is stored or finalized) | `ZADD`, `ZREM`, `ZRANGEBYSCORE`, `ZCARD` | `lens:{<instance>}:assembler:open` |
+| Size measurement (optional: without them assembly is slower) | `STRLEN`, `MEMORY USAGE` | `lens:{<instance>}:assembly:*`, `lens:{<instance>}:turn:*` |
+| The deleted-instance check (required: the assembler writes that create a key read it; only Neptune's control plane sets it) | `EXISTS` | `lens:{<instance>}:deleted` |
+
+Grant the required commands before upgrading; nothing checks them at startup.
 
 Helm cannot see inside the Secret. A key that omits a role fails at startup
 with the missing key named, for example
@@ -167,7 +180,8 @@ productValidation:
         secretKey: token
 ```
 
-Lens needs no `subjectGrants.allowed` entry and no unscoped-grants product.
+Lens needs no unscoped-grants product. It needs a `subjectGrants.allowed`
+entry only for tenant IdP users. See "Tenant IdP users".
 
 ### Cross-namespace
 
@@ -199,6 +213,31 @@ chart can set one CA bundle for Lens and the Identity Service release.
 
 `security.profile` (`""` or `fips`) and `imagePullSecrets` likewise fall back to
 `global.security.profile` and `global.imagePullSecrets` when empty.
+
+### Redis client certificates
+
+For a Redis Enterprise database that requires a client certificate (mutual TLS (Transport Layer
+Security)), set `redisClientTLS.existingSecret` to a Secret with `tls.crt` and `tls.key`:
+
+```yaml
+redisClientTLS:
+  existingSecret: lens-redis-client          # default for every rediss:// client
+  extraCertificates:                         # optional per-connection certificates
+    - name: store-1
+      existingSecret: store-1-redis-client
+```
+
+The data plane, worker and control plane mount the Secrets read-only at `/etc/redis-client-tls` (without `subPath`), and the
+chart sets `redis_client_tls` in the service config to `/etc/redis-client-tls/tls.crt` and
+`/etc/redis-client-tls/tls.key`. An extra certificate is mounted at
+`/etc/redis-client-tls/<name>/tls.crt` and `tls.key`; name those paths in the `tls:` block
+(`cert_path`, `key_path`) of the connection it is for. 
+
+For certificate-only login (a certificate-based database user), use a `rediss://` URL with no
+username or password; with a password in the URL the client sends both. The server CA is still
+trusted through the CA setting above. When the Secret is renewed, new connections use the new
+certificate within about 30 seconds, without a restart. See the
+[Redis client certificate runbook](../../docs/runbooks/iris-onprem-redis-mtls.md) for the Redis Enterprise setup, rotation and CA rotation.
 
 ### Running under redis-iris
 
@@ -247,8 +286,9 @@ unsupported. The following manual migration is untested guidance:
 ## Ingest is off by default
 
 With `ingest.enabled=false` the data plane answers `POST /iris/data/v1beta1/lens/v1/traces` with 503.
-Nothing trims the span streams yet, and the streams database must be
-`noeviction`, so enabled ingest grows the streams without bound. Turn it on
+Nothing trims the span streams yet, and stream keys carry no TTL, so neither
+`noeviction` nor `volatile-lru` removes them: enabled ingest grows the streams
+without bound. Turn it on
 deliberately and watch the streams database's memory.
 
 ## Keys
@@ -279,7 +319,8 @@ Set `dataplane.oidc.enabled=true` with `issuer`, `jwksURI` and `roleMappings`
 (IdP group to Iris role: `viewer`, `operator`, `product_admin`, `suite_admin`).
 Unmapped values are never accepted, and an empty `roleMappings` is refused. The
 resolved tenant must equal `tenantId`: set `dataplane.oidc.tenantIDClaim` to read
-it from a claim, or leave it empty to treat every token as `tenantId`'s.
+it from a claim, or leave it empty to treat every token as `tenantId`'s. Without
+`tenantId`, see [Multi-tenant mode](#multi-tenant-mode).
 
 An operator token is accepted on the read API only, and only with a read role
 (`viewer` or above). It gets 403 on `POST /v1/traces`: ingest always needs an
@@ -305,6 +346,76 @@ the API's Application (client) ID GUID on Entra ID v2). There is no per-service
 override; use the same value in every Iris chart (the UI sign-in setting for it arrives with MOD-19450).
 The chart refuses an empty or wildcard value.
 
+### Multi-tenant mode
+
+Leave `tenantId` empty to serve more than one tenant with one release. Then
+enable `dataplane.oidc` and `controlplane.oidc`, and set
+`dataplane.oidc.tenantIDClaim`. The chart refuses an empty `tenantId` with
+other settings. Without SSO, use the single-tenant mode.
+
+Under the `redis-iris` umbrella, set `global.iris.auth.oidc.tenantIdClaim`
+instead of `global.iris.tenantId`. The umbrella supplies the OIDC settings
+and the hidden UI control-plane route for tenant instance discovery.
+
+In this mode:
+
+- Each caller keeps the tenant of its agent key or of its operator token. A
+  caller can read only the instance of its own tenant.
+- Each tenant gets its own instance with a random ID. The control plane
+  creates it on the first control plane call of the tenant: a visit to the
+  Lens page of the UI, or `GET /iris/v1beta1/lens/instance`. `instance.id` is
+  not used. You can mint agent keys for the instance only after that call.
+- The worker finds the instance of each tenant in the metadata Redis, so the
+  chart renders no `assembler.instance_ids`.
+- The Identity Service release must be multi-tenant: leave
+  `runtime.apiKeyTenant.singleTenantID` empty.
+- The control plane refuses the admin token, because the token has no tenant
+  of its own. Health and readiness still work. Automation and tests must use an
+  IdP token with the tenant claim. While the IdP is down, no operator can call
+  the control plane in this mode.
+- A change of an existing single-tenant release to the multi-tenant mode does
+  not move the old instance. Its data stays under the old instance ID, and
+  each tenant gets a new instance. No worker assembles the old instance after
+  the change, and the Identity Service accepts no new keys for it. Before the
+  change, revoke the agent keys that name `lens-instance:<instance.id>`: else
+  they can still send spans to the old instance.
+- The worker polls every instance on each poll, so the chart sets the worker
+  poll interval to 1s instead of 100ms. All tenants share the storage.
+  Thus the readiness of the worker reports the errors of each poll. These are
+  the errors of the instance discovery and of the work on each instance. An
+  outage of the shared storage thus makes the worker not ready.
+- Do not share the metadata Redis or its key prefix with a Neptune Lens
+  deployment. Both modes use the same per-tenant index.
+
+In the UI gateway, leave `instanceId` of the `lens` entry unset: the console
+gets the instance ID of the signed-in tenant from the control plane. For that
+call, add a hidden entry that points at the control plane:
+
+```yaml
+products:
+  - key: lens
+    label: Lens
+    product: lens
+    authScheme: bearer
+    healthPath: /health/readiness
+    upstream:
+      host: lens-redis-lens-dataplane.<namespace>.svc.cluster.local
+      port: 9000
+      basePath: ""
+      scheme: http
+  - key: lens-cp
+    label: Lens control plane
+    product: lens
+    authScheme: bearer
+    showInNavigation: false
+    healthPath: /health/readiness
+    upstream:
+      host: lens-redis-lens-controlplane.<namespace>.svc.cluster.local
+      port: 9300
+      basePath: ""
+      scheme: http
+```
+
 ### Operator token troubleshooting
 
 Agent keys and operator tokens fail for different reasons, so check which one the caller sent:
@@ -320,11 +431,34 @@ Access follows each credential's own lifetime. Revoking an agent key in the Iden
 Identity Service's runtime cache expires) but does not affect operator tokens, and removing an operator's role in the
 IdP takes effect only when their current token expires.
 
+
+## Tenant IdP users
+
+In a standalone Lens release, set `dataplane.tenantIdentityProviders.enabled=true`
+to accept users of the IdP records that the Identity Service holds for each
+tenant (MOD-19515). The
+read API accepts such a user with a `read` grant on the instance. Ingest stays
+agent keys only. On the Identity Service release:
+
+- Add `identity-provider-resolve` and `subject-grant-lookup` to the
+  `allowedOperations` of the `lens-dataplane` runtime credential.
+- Allow the Lens read grants. IdS removes each grant that this list does not
+  allow from the grant lookup.
+
+```yaml
+subjectGrants:
+  allowed:
+    - product: lens
+      resourceType: lens-instance
+      actions: [read]
+```
+
 ## UI gateway entry
 
 Reads are served by the data plane, so the `iris/ui/helm` gateway's `lens`
 entry points at the data-plane Service root. Set its `instanceId` to this
-chart's `instance.id`; the console puts it in every read path:
+chart's `instance.id`; the console puts it in every read path. For the
+multi-tenant mode, see [Multi-tenant mode](#multi-tenant-mode).
 
 ```yaml
 products:
