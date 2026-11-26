@@ -227,6 +227,12 @@ schema rejects any other key, and rejects `storage.identityServiceKey`.
 | `serviceAccount.create`, `serviceAccount.name`, `serviceAccount.annotations` | `true`, `""`, `{}` | The ServiceAccount both planes run as. An empty name uses the release's. |
 | `podSecurityContext` | non-root user and group `65532`, `RuntimeDefault` seccomp | Pod-level security context of both planes. |
 | `securityContext` | no privilege escalation, all capabilities dropped, read-only root filesystem | Container-level security context of both planes. |
+| `dataplane.oidc.enabled` | `null` (`false`) | Accept operator IdP access tokens on the data plane. Agent keys stay enabled. |
+| `dataplane.oidc.issuer`, `dataplane.oidc.jwksURI` | `""` | The IdP issuer and the JWKS URI of its signing keys. OIDC needs both. |
+| `dataplane.oidc.tenantIDClaim`, `dataplane.oidc.staticTenantID` | `""` | The tenant source. Set exactly one. The resolved tenant must equal `tenantId`. |
+| `dataplane.oidc.roleMappings` | `{}` | IdP group to Iris role. OIDC needs at least one entry. The control plane uses the same mappings. |
+| `dataplane.oidc.allowInsecureTransport` | `null` (`false`) | Accept an `http://` JWKS URI. The fips profile refuses it. |
+| `controlplane.oidc.enabled` | `null` (`false`) | Accept the same operator tokens on the control plane. Requires `dataplane.oidc.enabled`. |
 | `dataplane.oidc.roleClaims` | `[]` | Token claims the operator's roles are read from. Empty uses the shared defaults, `roles` and `groups`. |
 | `auth.oidc.audience` | `""` (`api://redis-iris`) | The audience operator tokens must carry. Used only when `dataplane.oidc` or `controlplane.oidc` is enabled; use the same value in every Iris chart. |
 
@@ -362,6 +368,31 @@ The validator hop is configured on the Identity Service release: under fips its
 endpoint, trusted through that release's own `tls.caCertSecret`. Set
 `security.profile` (or `global.security.profile`) on both releases.
 
+### Redis client certificates
+
+For a Redis Enterprise database that requires a client certificate (mutual TLS (Transport Layer
+Security)), set `redisClientTLS.existingSecret` to a Secret with `tls.crt` and `tls.key`:
+
+```yaml
+redisClientTLS:
+  existingSecret: intent-redis-client          # default for every rediss:// client
+  extraCertificates:                         # optional per-connection certificates
+    - name: store-1
+      existingSecret: store-1-redis-client
+```
+
+The data plane and control plane mount the Secrets read-only at `/etc/redis-client-tls` (without `subPath`), and the
+chart sets `redis_client_tls` in the service config to `/etc/redis-client-tls/tls.crt` and
+`/etc/redis-client-tls/tls.key`. An extra certificate is mounted at
+`/etc/redis-client-tls/<name>/tls.crt` and `tls.key`; name those paths in the `tls:` block
+(`cert_path`, `key_path`) of the connection it is for. With `controlplane.config.existingSecret`, the chart does not render the control-plane config: add `redis_client_tls` with those two paths to that config yourself.
+
+For certificate-only login (a certificate-based database user), use a `rediss://` URL with no
+username or password; with a password in the URL the client sends both. The server CA is still
+trusted through the CA setting above. When the Secret is renewed, new connections use the new
+certificate within about 30 seconds, without a restart. See the
+[Redis client certificate runbook](../../docs/runbooks/iris-onprem-redis-mtls.md) for the Redis Enterprise setup, rotation and CA rotation.
+
 ## Credentials
 
 Two tokens are chart-managed, each guarding a different surface. Both default
@@ -410,7 +441,7 @@ controlplane:
     enabled: true                # requires dataplane.oidc.enabled
 ```
 
-The token's tenant must equal `tenantId`. A mapped `product_admin` or
+With `tenantId` set, the token's tenant must equal it. A mapped `product_admin` or
 `suite_admin` has full access to every Router of that tenant; a mapped
 `operator` or `viewer` is admitted but holds no Router. `roleMappings` is
 required and raw role names are never accepted implicitly. The control plane
@@ -418,6 +449,36 @@ validates the same tokens against the same issuer. `auth.oidc.audience` is share
 by every Iris service and must not contain a wildcard. The issuer is only compared
 with a token's `iss`, so an `http://` issuer needs no opt-in; an HTTP JWKS URI needs
 `dataplane.oidc.allowInsecureTransport=true`, which the fips profile refuses.
+
+### Multi-tenant mode
+
+Leave `tenantId` empty to serve more than one tenant with one release. Then
+enable `dataplane.oidc` and `controlplane.oidc`, and set
+`dataplane.oidc.tenantIDClaim`. The chart refuses an empty `tenantId` with
+other settings. Without SSO, use the single-tenant mode.
+
+Under the `redis-iris` umbrella, set `global.iris.auth.oidc.tenantIdClaim`
+instead of `global.iris.tenantId`. The umbrella supplies the control-plane
+OIDC settings from the shared issuer and role bindings.
+
+In this mode:
+
+- Each caller keeps the tenant of its agent key or of its operator token. A
+  Router of another tenant gives `404`. The planes refuse a caller without a
+  tenant.
+- The Identity Service release must serve many tenants too: leave its
+  `runtime.apiKeyTenant.singleTenantID` empty, so that each grant names its
+  tenant.
+- All tenants share the customer database registry (`databases:` in the
+  storage Secret). Each tenant can name each listed database.
+- The control plane refuses the admin token, because the token has no tenant
+  of its own. Health and readiness still work. Automation and tests must use an
+  IdP token with the tenant claim. While the IdP is down, no operator can call
+  the control plane in this mode.
+- The control plane does not reconcile the Routers at startup or in the
+  background. A Router takes a step toward its settled state each time it is
+  read (`GET`, list) or changed, as in cloud. A client that polls a Router gives
+  all the progress that it needs.
 
 ## Storage
 
@@ -488,6 +549,50 @@ embedders_connection_details:
       type: static
       api_key: REPLACE_PRIVATELY
 ```
+
+To embed with Vertex AI, use the `vertex-ai` protocol with a Google service
+account. The key stays in the Secret, and the `inference.models` identity must
+match (`provider: vertex`, `model: gemini-embedding-001`, `dimensions: 1536`):
+
+```yaml
+embedders_connection_details:
+  vertex:
+    protocol: vertex-ai
+    base_url: https://us-central1-aiplatform.googleapis.com/v1/projects/<project>/locations/us-central1/publishers/google/models/gemini-embedding-001:predict
+    embeddings_input_field: content
+    credentials:
+      type: gcp-service-account
+      gcp:
+        service_account_json: "<key JSON>"
+```
+
+`base_url` is the full `:predict` URL. At most 250 texts go in one request, and
+the shared client splits larger calls, so a 256-example `AddExamples` is sent as
+250 plus 6. The request sets `autoTruncate: false`, so an input over the model's
+token limit (about 2,048 tokens) is refused and the call fails; it is never
+silently cut. To replace the key, update the Secret and change
+`inference.existingSecretChecksum` so the data plane rolls.
+
+Cohere works with a static key and the `cohere` protocol. See
+`examples/cohere/inference-secret.example.yaml` and
+`examples/vertex-ai/inference-secret.example.yaml`:
+
+```yaml
+embedders_connection_details:
+  cohere:
+    protocol: cohere
+    base_url: https://api.cohere.ai/compatibility/v1
+    credentials:
+      type: static
+      api_key: REPLACE_PRIVATELY
+```
+
+Cohere is not sent a `dimensions` setting, so `inference.models` must list the
+model's own width (2048 for `embed-v5.0-pro`); a different width fails the call.
+At most 96 texts go in one request, so a 256-example `AddExamples` is sent as
+96, 96 and 64. Cohere trims over-limit input silently after Iris's 15,000-byte
+cut. Anthropic has no embeddings API and cannot be an embedder. Changing the
+model or width needs a new Router and does not re-embed existing data.
 
 The data plane embeds through the shared `pkg/inference` client. Each
 `embedders_connection_details` entry (`base_url`, `credentials`, optional
@@ -569,7 +674,7 @@ Run the package gates with:
 task intent:test:chart
 task intent:fips:test:runtime
 task intent:test:lifecycle
-task intent:test:release-artifacts
+task intent:test:release-license
 task intent:test:onprem-kind
 ```
 
@@ -594,8 +699,30 @@ ordered steps and what still blocks them.
 ## Tuning
 
 `dataplane.limits`, `dataplane.match` and `dataplane.search` are copied
-verbatim (snake_case keys) into the data-plane config. See
-`intent/dataplane/internal/infrastructure/config.go` for the keys and defaults.
+verbatim (snake_case keys) into the data-plane config. An empty map keeps the
+defaults below.
+
+| Key | Default | Rule |
+| --- | --- | --- |
+| `limits.max_intents_per_router` | `1000` | Not negative. |
+| `limits.max_intents_per_batch` | `100` | At most the API maximum. |
+| `limits.max_examples_per_batch` | `5000` | Not negative. |
+| `limits.max_examples_per_add` | `256` | At most the API maximum. |
+| `limits.default_page_size` | `50` | At most `limits.max_page_size`. |
+| `limits.max_page_size` | `200` | At most the API maximum. |
+| `match.scan_k` | `50` | From 1 to 1000. |
+| `match.aggregation` | `min` | `min` or `avg`. |
+| `match.default_max_intents` | `5` | At most `match.max_intents_cap`. |
+| `match.max_intents_cap` | `50` | |
+| `match.default_threshold` | `0.7` | From 0 to 1. |
+| `search.hnsw.m` | `16` | From 2 to 512. |
+| `search.hnsw.ef_construction` | `200` | From 8 to 4096. |
+| `search.hnsw.ef_runtime` | `100` | From 1 to 4096. |
+| `search.query_timeout` | `1s` | Not negative. |
+| `search.ready_cache_ttl` | `2s` | Not negative. |
+| `search.verify_interval` | `60s` | At least `5s`. |
+
+A limit can make the API maximum smaller, but never larger.
 Set fractional values such as `match.default_threshold` from a values file;
 `--set` turns `0.8` into a string.
 
