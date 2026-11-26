@@ -5,11 +5,16 @@ Redis Iris Lens has been rendered as three workloads:
   Control plane:                  {{ include "redis-lens.controlplaneName" . }}:{{ .Values.controlplane.service.port }}
 
 Connected to the Identity Service at {{ include "redis-lens.identityServiceBaseURL" . }}.
-
+{{- $suite := include "redis-lens.suite" . | fromJson }}
+{{ if trim $suite.tenantId }}
 Instance: {{ .Values.instance.id }}. Mint ingest and read keys for
 lens-instance:{{ .Values.instance.id }} on that Identity Service release with
 its control token.
-{{- $suite := include "redis-lens.suite" . | fromJson }}
+{{- else }}
+Multi-tenant mode: each tenant gets its own instance on its first control plane
+call (a UI visit or GET /iris/v1beta1/lens/instance). Mint the tenant's ingest
+and read keys for that instance ID only after that call.
+{{- end }}
 {{- if and .Release.IsUpgrade (or $suite.dataplaneOIDC.enabled $suite.controlplaneOIDC) }}
 UPGRADE: IdP access tokens must carry the audience {{ trim $suite.audience | quote }} (auth.oidc.audience).
 {{- end }}
@@ -19,4 +24,10 @@ ingest.enabled=true. Nothing trims the span streams yet; see the README.
 {{ end }}
 To read through the UI gateway, add a lens product entry whose upstream is
 {{ include "redis-lens.dataplaneName" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.dataplane.service.port }}
+{{- if trim $suite.tenantId }}
 with an empty basePath and instanceId {{ .Values.instance.id }}.
+{{- else }}
+with an empty basePath and no instanceId. Also add a hidden lens-cp entry
+(product lens, showInNavigation false, empty basePath) whose upstream is
+{{ include "redis-lens.controlplaneName" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.controlplane.service.port }}.
+{{- end }}

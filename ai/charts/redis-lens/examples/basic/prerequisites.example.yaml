@@ -1,7 +1,7 @@
 # Example only. Do not commit real Redis URLs, credentials, tokens, or licenses.
 #
-# streams and index live on the customer RAM database (not Flex): streams needs
-# maxmemory-policy noeviction, index needs RediSearch and RedisJSON.
+# streams and index live on the customer RAM database (not Flex): it needs
+# maxmemory-policy noeviction or volatile-lru, index needs RediSearch and RedisJSON.
 # content lives on a customer Flex or RAM database, or the same one as records.
 # metadata is a separate small Redis that holds the instance record; it never
 # shares a database with telemetry. The Identity Service release keeps its own
@@ -32,7 +32,7 @@ stringData:
         urls:
           - rediss://<metadata-user>:<metadata-password>@<metadata-host>:6379
     # Optional. The control plane checks the DRAM for RediSearch, RedisJSON,
-    # and noeviction at startup and on PATCH, naming what is missing.
+    # and noeviction or volatile-lru at startup and on PATCH, naming what is missing.
     dram:
       urls:
         - rediss://<dram-user>:<dram-password>@<dram-host>:6379

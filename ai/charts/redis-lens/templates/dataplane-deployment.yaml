@@ -62,6 +62,7 @@ checksum/license: {{ . | quote }}
   readOnly: true
 {{ include "redis-lens.licenseMount" . }}
 {{- include "redis-lens.tlsCaMount" . }}
+{{- include "redis-onprem.redisClientTLS.volumeMount" .Values.redisClientTLS }}
 {{- end }}
 
 {{- define "redis-lens.dataplaneSharedVolumes" -}}
@@ -76,6 +77,7 @@ checksum/license: {{ . | quote }}
         path: storage.yaml
 {{ include "redis-lens.licenseVolume" . }}
 {{- include "redis-lens.tlsCaVolume" . }}
+{{- include "redis-onprem.redisClientTLS.volume" .Values.redisClientTLS }}
 {{- end }}
 
 {{- define "redis-lens.dataplaneVolumeMounts" -}}
