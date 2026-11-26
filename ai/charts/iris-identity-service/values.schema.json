@@ -5,7 +5,7 @@
   "additionalProperties": false,
   "definitions": {
     "product": { "type": "string", "enum": ["memory", "langcache", "context", "playbook", "lens", "context-gateway", "intent"] },
-    "operation": { "type": "string", "enum": ["api-key-introspect", "auth-introspect", "auth-me", "subject-grant-lookup"] },
+    "operation": { "type": "string", "enum": ["api-key-introspect", "auth-introspect", "auth-me", "identity-provider-resolve", "subject-grant-lookup", "tenant-settings-read"] },
     "secretRef": {
       "type": "object",
       "additionalProperties": false,
@@ -53,6 +53,25 @@
       "properties": {
         "caCertSecret": { "type": "string" },
         "caCertKey": { "type": "string", "minLength": 1 }
+      }
+    },
+    "redisClientTLS": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingSecret": { "type": "string" },
+        "extraCertificates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "existingSecret"],
+            "properties": {
+              "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" },
+              "existingSecret": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
       }
     },
     "service": {

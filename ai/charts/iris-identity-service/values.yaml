@@ -29,6 +29,16 @@ tls:
   caCertSecret: ""
   caCertKey: ca.crt
 
+# Redis client certificates (MOD-14536). existingSecret names a Secret with
+# tls.crt and tls.key that IdS presents on every rediss:// metadata connection;
+# the chart renders redis_client_tls with their paths. extraCertificates mounts
+# more pairs at /etc/redis-client-tls/<name>/ for a connection block's own tls:.
+# All Secrets share one read-only projected volume at /etc/redis-client-tls, so
+# a renewed pair is reloaded without a restart. Empty disables the feature.
+redisClientTLS:
+  existingSecret: ""
+  extraCertificates: []  # [{name, existingSecret}]
+
 service:
   type: ClusterIP
   # Also rendered as the service's server.port.
@@ -92,7 +102,7 @@ runtime:
   # At least one is required. No product defaults. Each entry:
   #   name: memory-dp                     # ^[a-z0-9-]{0,43}[a-z0-9]$, unique; mount directory name
   #   subject: memory-dp
-  #   allowedOperations: [api-key-introspect]   # api-key-introspect|auth-introspect|auth-me|subject-grant-lookup
+  #   allowedOperations: [api-key-introspect]   # api-key-introspect|auth-introspect|auth-me|identity-provider-resolve|subject-grant-lookup|tenant-settings-read
   #   allowedProducts: [memory]           # memory|langcache|context|playbook|lens|context-gateway|intent
   #   existingSecret: memory-dp-credential  # shared with the data plane; owned by automation
   #   secretKey: token
