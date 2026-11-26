@@ -172,3 +172,48 @@ echo "OK: control-plane volumes/volumeMounts passthrough renders (enables CSI-sy
 
 echo ""
 echo "All control-plane chart template checks passed."
+
+echo "=== Admin recovery credential is shared by CP and DP, never the worker ==="
+OUT=$(render --set controlplane.adminToken.existingSecret=shared-admin --set controlplane.adminToken.secretKey=admin --set controlplane.adminToken.existingSecretChecksum=rotated)
+[ "$(grep -c 'mountPath: /etc/controlplane-onprem/admin' <<<"$OUT")" = "2" ] || fail "CP and DP must mount the admin secret"
+[ "$(grep -c 'secretName: shared-admin' <<<"$OUT")" = "2" ] || fail "CP and DP must use the same secret"
+[ "$(grep -c 'checksum/admin-token: \"rotated\"' <<<"$OUT")" = "2" ] || fail "CP and DP must share rotation annotations"
+OUT=$(render --set config.existingSecret= --set config.render=true --set memory.profile=prod --set dataplane.identityServiceBaseURL=https://ids.example --set identityService.credential.existingSecret=memory-dp-credential --set tenantId=tenant-a)
+grep -q 'admin_tenant_id: tenant-a' <<<"$OUT" || fail "DP must use the deployment admin tenant"
+grep -q 'token_file: /etc/controlplane-onprem/admin/token' <<<"$OUT" || fail "DP config must use the mounted token"
+OUT=$(render --set config.existingSecret= --set config.render=true --set memory.profile=dev --set memory.auth.method=none --set shared.auth.admin_tenant_id=tenant-shared)
+grep -q 'admin_tenant_id: tenant-shared' <<<"$OUT" || fail "DP must use the shared control-plane admin tenant"
+if render --set config.existingSecret= --set config.render=true --set memory.profile=dev --set memory.auth.method=none --set tenantId=tenant-a --set memory.auth.admin_tenant_id=tenant-b >/dev/null 2>&1; then
+  fail "mismatched CP/DP admin tenants must fail"
+fi
+# No tenant and no claim: the DP keeps the deprecated "1" of the CP.
+OUT=$(render --set config.existingSecret= --set config.render=true --set memory.profile=dev --set memory.auth.method=none)
+grep -q 'admin_tenant_id: "1"' <<<"$OUT" || fail "with no tenant and no claim the DP must keep admin tenant \"1\""
+# A CP tenant claim and no admin tenant: neither plane names one, so the code gives the system tenant.
+CLAIM_CP=(--set config.existingSecret= --set config.render=true --set memory.profile=dev --set memory.auth.method=none
+  --set-json 'controlplane.configData.auth.oidc={"enabled":true,"issuer":"https://idp.example/issuer","jwks_uri":"https://idp.example/jwks","tenant_id_claim":"tenant_id","role_mappings":{"admins":"suite_admin"}}')
+OUT=$(render "${CLAIM_CP[@]}")
+grep -q 'admin_tenant_id' <<<"$OUT" && fail "with a CP tenant claim neither plane may render admin_tenant_id"
+if render "${CLAIM_CP[@]}" --set memory.auth.admin_tenant_id=tenant-b >/dev/null 2>&1; then
+  fail "a DP admin tenant must fail when the CP takes the tenant from a claim"
+fi
+# With the DP admin token, both planes must have the claim, or the two admin tenants would differ.
+CLAIM_AGENT_KEY=("${CLAIM_CP[@]}" --set memory.auth.method=agent_key --set dataplane.identityServiceBaseURL=https://ids.example
+  --set identityService.credential.existingSecret=memory-dp-credential)
+CLAIM_ERR="$(mktemp)"
+if render "${CLAIM_AGENT_KEY[@]}" >"$CLAIM_ERR" 2>&1; then
+  fail "a CP claim with a DP admin token and no DP claim must fail"
+fi
+grep -q 'set it on both controlplane.configData.auth.oidc and memory.auth.oidc' "$CLAIM_ERR" \
+  || fail "the error must name both settings: $(cat "$CLAIM_ERR")"
+rm -f "$CLAIM_ERR"
+OUT=$(render "${CLAIM_AGENT_KEY[@]}" --set memory.auth.oidc.enabled=true --set memory.auth.oidc.issuer=https://idp.example/issuer \
+  --set memory.auth.oidc.jwks_uri=https://idp.example/jwks --set memory.auth.oidc.tenant_id_claim=tenant_id)
+grep -q 'admin_tenant_id' <<<"$OUT" && fail "with the claim on both planes neither plane may render admin_tenant_id"
+# A claim in shared.auth.oidc reaches both planes, so the render passes.
+OUT=$(render --set config.existingSecret= --set config.render=true --set memory.profile=dev --set memory.auth.method=agent_key \
+  --set dataplane.identityServiceBaseURL=https://ids.example --set identityService.credential.existingSecret=memory-dp-credential \
+  --set-json 'shared.auth.oidc={"enabled":true,"issuer":"https://idp.example/issuer","jwks_uri":"https://idp.example/jwks","tenant_id_claim":"tenant_id","role_mappings":{"admins":"suite_admin"}}')
+grep -q 'admin_tenant_id' <<<"$OUT" && fail "with the claim in shared.auth.oidc neither plane may render admin_tenant_id"
+OUT=$(render "${CLAIM_AGENT_KEY[@]}" --set controlplane.configData.auth.admin_tenant_id=ops)
+grep -q 'admin_tenant_id: ops' <<<"$OUT" || fail "an explicit CP admin tenant must reach the DP"

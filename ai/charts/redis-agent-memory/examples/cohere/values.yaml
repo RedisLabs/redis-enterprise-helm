@@ -1,0 +1,77 @@
+# Redis Agent Memory — Cohere for LLM roles and embeddings.
+#
+# Start from ../basic/values.yaml and merge this file over it:
+#   helm install ram ../.. -f ../basic/values.yaml -f values.yaml \
+#     --set image.tag=<RAM_VERSION> --set controlplane.image.tag=<RAM_VERSION>
+#
+# Recommended model per role: docs/runbooks/onprem-inference-providers.md.
+#
+# The Cohere key arrives through secret-overlay.example.yaml, never through
+# values. No Cohere embedding model has 3072 dimensions, so this deployment
+# uses a 2048-dimension vector space: it is a new vector space, not a change
+# to an existing one.
+
+memory:
+  inference_providers:
+    cohere:
+      endpoint:
+        base_url: https://api.cohere.ai/compatibility/v1
+        # Set explicitly so a provider default change cannot change this role.
+        generation_api: chat_completions
+        auth_format: bearer
+        timeout: 60s
+      http_client:
+        skip_verify: false
+        timeout: 60s
+        max_retry_attempts: 3
+
+  embedding:
+    provider: cohere
+    models:
+      default_embedding_model: embed-v5.0-pro
+      dimensions: 2048
+
+  embedders_connection_details:
+    cohere:
+      protocol: cohere
+      base_url: https://api.cohere.ai/compatibility/v1
+      credentials:
+        type: static
+
+  promote_session_memory:
+    strategies:
+      instruct:
+        max_completion_tokens: 4096
+        llm:
+          provider: cohere
+          credentials:
+            type: static
+          models:
+            default_chat_model: command-a-plus-05-2026
+
+  session_summarisation:
+    enabled: true
+    llm:
+      provider: cohere
+      credentials:
+        type: static
+      models:
+        default_chat_model: command-a-plus-05-2026
+
+  # Memory uses classification.llm for classification and namespace routing
+  # (fixed 3-second deadline). command-r7b-12-2024 is faster but routed only 4 of 6
+  # test cases correctly, so use command-a-plus-05-2026.
+  classification:
+    llm:
+      provider: cohere
+      credentials:
+        type: static
+      models:
+        default_chat_model: command-a-plus-05-2026
+
+# The control plane sizes the long-term-memory index from its own copy of the
+# width. It must equal memory.embedding.models.dimensions above.
+controlplane:
+  configData:
+    embedding:
+      dimensions: 2048

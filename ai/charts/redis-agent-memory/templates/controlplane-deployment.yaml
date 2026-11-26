@@ -47,6 +47,7 @@ checksum/license: {{ .Values.license.existingSecretChecksum | quote }}
   readOnly: true
 {{ include "redis-agent-memory.overlayVolumeMounts" . }}
 {{ include "redis-agent-memory.tlsVolumeMount" . }}
+{{- include "redis-onprem.redisClientTLS.volumeMount" .Values.redisClientTLS }}
 {{- with .Values.controlplane.volumeMounts }}
 {{ toYaml . }}
 {{- end }}
@@ -87,6 +88,7 @@ checksum/license: {{ .Values.license.existingSecretChecksum | quote }}
         path: {{ .Values.license.fileName }}
 {{ include "redis-agent-memory.overlayVolumes" . }}
 {{ include "redis-agent-memory.tlsVolume" . }}
+{{- include "redis-onprem.redisClientTLS.volume" .Values.redisClientTLS }}
 {{- with .Values.controlplane.volumes }}
 {{ toYaml . }}
 {{- end }}

@@ -69,6 +69,52 @@ grep -q "api: true" <<<"$OUT" \
   || fail "namespace_features.api was not rendered from the example values"
 echo "OK: rendered config ConfigMap merges base + region overrides"
 
+echo "=== Ownership defaults agree across control plane, data plane, and worker ==="
+OWNERSHIP_OUT="$(helm template "$RELEASE" "$CHART_DIR" "${TENANT_ARGS[@]}" \
+  -f "$EXAMPLES/base-values.yaml" -f "$EXAMPLES/region-eu.yaml" \
+  --set image.tag=0.0.0-test --set controlplane.image.tag=cp-0.0.0-test \
+  --set license.existingSecret=ram-license --set memory.ownership.enabled=true \
+  --set 'memory.ownership.tenant_overrides[0].tenant_id=TenantA' \
+  --set 'memory.ownership.tenant_overrides[0].enabled=false' \
+  --set shared.tenant_settings.url=http://identity-service:8080 \
+  --set shared.tenant_settings.allow_insecure_http=true \
+  --set shared.tenant_settings.token_file=/etc/tenant-settings/token \
+  --set controlplane.configData.tenant_settings.token_file=/etc/tenant-settings-cp/token)"
+[ "$(grep -A1 '^[[:space:]]*ownership:' <<<"$OWNERSHIP_OUT" | grep -c 'enabled: true')" -ge 2 ] \
+  || fail "control plane and data plane must share ownership defaults"
+grep -q 'tenant_id: TenantA' <<<"$OWNERSHIP_OUT" || fail "tenant ID case must be preserved"
+[ "$(grep -c 'url: http://identity-service:8080' <<<"$OWNERSHIP_OUT")" -ge 2 ] \
+  || fail "tenant settings endpoint must agree across control plane and data plane"
+grep -q '/etc/tenant-settings-cp/token' <<<"$OWNERSHIP_OUT" || fail "control plane credential override was lost"
+
+if helm template "$RELEASE" "$CHART_DIR" "${TENANT_ARGS[@]}" \
+  -f "$EXAMPLES/base-values.yaml" -f "$EXAMPLES/region-eu.yaml" \
+  --set image.tag=0.0.0-test --set controlplane.image.tag=cp-0.0.0-test \
+  --set license.existingSecret=ram-license \
+  --set shared.tenant_settings.url=https://identity-service:8443 \
+  --set controlplane.configData.tenant_settings.url=https://other-identity-service:8443 >/dev/null 2>&1; then
+  fail "differing tenant settings endpoints must fail rendering"
+fi
+
+for token_flag in shared.tenant_settings.token=inline-token controlplane.configData.tenant_settings.token=inline-token; do
+  if helm template "$RELEASE" "$CHART_DIR" "${TENANT_ARGS[@]}" \
+    -f "$EXAMPLES/base-values.yaml" -f "$EXAMPLES/region-eu.yaml" \
+    --set image.tag=0.0.0-test --set controlplane.image.tag=cp-0.0.0-test \
+    --set license.existingSecret=ram-license \
+    --set shared.tenant_settings.url=https://identity-service:8443 \
+    --set "$token_flag" >/dev/null 2>&1; then
+    fail "an inline tenant settings token must fail rendering ($token_flag)"
+  fi
+done
+
+if helm template "$RELEASE" "$CHART_DIR" "${TENANT_ARGS[@]}" \
+  -f "$EXAMPLES/base-values.yaml" -f "$EXAMPLES/region-eu.yaml" \
+  --set image.tag=0.0.0-test --set controlplane.image.tag=cp-0.0.0-test \
+  --set license.existingSecret=ram-license --set memory.ownership.enabled=true \
+  --set controlplane.configData.ownership.enabled=false >/dev/null 2>&1; then
+  fail "differing control-plane ownership defaults must fail rendering"
+fi
+
 echo "=== Case 1b: service defaults and deployment embedding config are preserved ==="
 grep -q "namespace: iris:memory" <<<"$OUT" \
   && fail "default metadata namespace should not be rendered" || true
@@ -315,8 +361,8 @@ render_suite() {
   helm template "$RELEASE" "$CHART_DIR" "${SUITE_BASE[@]}" "${SUITE_IDP[@]}" "$@" --show-only templates/config.yaml
 }
 
-# Enabled, nothing else set: the data plane gets what the control plane gets.
-OUT="$(render_suite --set memory.auth.oidc.enabled=true)"
+# Suite SSO enables the data plane with the same IdP settings as the control plane.
+OUT="$(render_suite)"
 for want in "issuer: https://idp.example/issuer" "jwks_uri: https://idp.example/jwks" "admins: suite_admin" "- groups"; do
   grep -q -- "$want" <<<"$OUT" || fail "memory.auth.oidc did not derive '$want' from global.iris"
 done
@@ -343,9 +389,11 @@ done
 grep -q -- "- groups" <<<"$OUT" && fail "a custom roleClaims must replace the default groups claim"
 grep -q "issuer: https://idp.example/issuer" <<<"$OUT" && fail "accessTokenIssuer must replace issuer on the data plane"
 
-# Opt-in: without memory.auth.oidc.enabled the data plane renders no OIDC.
-OUT="$(render_suite)"
-grep -q "idp.example" <<<"$OUT" && fail "the data plane must not enable OIDC by itself"
+# A local switch cannot disable the suite's data-plane SSO.
+if render_suite --set memory.auth.oidc.enabled=false >"$TMPDIR_ERR" 2>&1; then
+  fail "memory.auth.oidc.enabled=false must conflict with suite SSO"
+fi
+grep -q 'memory.memory.auth.oidc.enabled (false) conflicts' "$TMPDIR_ERR" || fail "the disabled OIDC conflict must name its field"
 
 # A local value equal to the derived one is accepted; a different one fails, naming the field.
 render_suite --set memory.auth.oidc.enabled=true --set memory.auth.oidc.issuer=https://idp.example/issuer >/dev/null \
@@ -398,6 +446,12 @@ echo "=== Case 6: examples/basic renders with only the --set flags its own heade
 # the documented quick start without failing this test.
 BASIC_OUT="$(helm template "$RELEASE" "$CHART_DIR" -f "$CHART_DIR/examples/basic/values.yaml" \
   --set image.tag=0.0.0-test --set controlplane.image.tag=cp-0.0.0-test)"
+BASIC_DP_CONFIG="$(awk '/memory-dataplane.config.yaml: \|/{capture=1; next} capture && (/^---/ || /^  [^ ]/) {exit} capture {print}' <<<"$BASIC_OUT")"
+grep -q 'method: none' <<<"$BASIC_DP_CONFIG" \
+  || fail "examples/basic must preserve auth.method=none"
+if grep -q 'admin_token:' <<<"$BASIC_DP_CONFIG"; then
+  fail "examples/basic must not enable required data-plane auth through an admin token"
+fi
 if grep -q "app.kubernetes.io/name: iris-identity-service" <<<"$BASIC_OUT"; then
   fail "examples/basic rendered Identity Service objects"
 fi

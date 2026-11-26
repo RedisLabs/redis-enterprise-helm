@@ -1,0 +1,64 @@
+{
+  "product": "redis-agent-memory",
+  "deployment": "on-prem",
+  "version": "1.1.1",
+  "release": true,
+  "commit": "ec4379ef0379381e105d85a63a229e1ebb0674b5",
+  "components": {
+    "dataplane": {
+      "candidateImage": "docker.io/redislabs/agent-memory:1.1.1",
+      "registryDigest": "sha256:13553dcf7db0be18cac42f6265bd00bf7d88ab640a9c771cc17fe4f779b29f46",
+      "platforms": [
+        {
+          "os": "linux",
+          "architecture": "amd64",
+          "digest": "sha256:1df3351b2442e4197f8bd7fde6e7308ab4b2fc12345eed2f0357a43333802ed1"
+        },
+        {
+          "os": "linux",
+          "architecture": "arm64",
+          "digest": "sha256:965d0f25b85b5bfa07419345258cc38eb9107ee3e38c9c73cdd0fb3df6c88e29"
+        }
+      ],
+      "publication": {
+        "status": "published",
+        "component": "dataplane",
+        "commit": "ec4379ef0379381e105d85a63a229e1ebb0674b5",
+        "image": "docker.io/redislabs/agent-memory:1.1.1",
+        "digest": "sha256:13553dcf7db0be18cac42f6265bd00bf7d88ab640a9c771cc17fe4f779b29f46",
+        "reference": "docker.io/redislabs/agent-memory@sha256:13553dcf7db0be18cac42f6265bd00bf7d88ab640a9c771cc17fe4f779b29f46"
+      }
+    },
+    "controlplane": {
+      "candidateImage": "docker.io/redislabs/agent-memory-control-plane:1.1.1",
+      "registryDigest": "sha256:f29131e62a851c086c7fc3e8af3056167d708737dcdb7e32ce520aba7105cd53",
+      "platforms": [
+        {
+          "os": "linux",
+          "architecture": "amd64",
+          "digest": "sha256:ac0b76abcf7ae918c8cba9a074d2e6a71e2644f4dac6ca36006266d8d4f435d4"
+        },
+        {
+          "os": "linux",
+          "architecture": "arm64",
+          "digest": "sha256:628067f1d4e469a0f0127bf6b86bae64913fc6ec41dfdeba5cae2a01ec982020"
+        }
+      ],
+      "publication": {
+        "status": "published",
+        "component": "controlplane",
+        "commit": "ec4379ef0379381e105d85a63a229e1ebb0674b5",
+        "image": "docker.io/redislabs/agent-memory-control-plane:1.1.1",
+        "digest": "sha256:f29131e62a851c086c7fc3e8af3056167d708737dcdb7e32ce520aba7105cd53",
+        "reference": "docker.io/redislabs/agent-memory-control-plane@sha256:f29131e62a851c086c7fc3e8af3056167d708737dcdb7e32ce520aba7105cd53"
+      }
+    }
+  },
+  "chart": "chart/redis-agent-memory-1.1.1.tgz",
+  "publication": {
+    "status": "published",
+    "sourceRun": "https://github.com/redislabsdev/iris/actions/runs/45755214587",
+    "chartSha256": "sha256:55de34008f7a9fbf8b2771d739278677b06c0af7c66e2d1bff1e664ac3f03460",
+    "contentsDigest": "sha256:d14afdb8ac13ea206a33043f0965028251bb045695cd78cc4548c7ae45d4e535"
+  }
+}

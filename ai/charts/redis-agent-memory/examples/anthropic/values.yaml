@@ -1,0 +1,58 @@
+# Redis Agent Memory — Anthropic for LLM roles, OpenAI for embeddings.
+#
+# Start from ../basic/values.yaml and merge this file over it:
+#   helm install ram ../.. -f ../basic/values.yaml -f values.yaml \
+#     --set image.tag=<RAM_VERSION> --set controlplane.image.tag=<RAM_VERSION>
+#
+# Recommended model per role: docs/runbooks/onprem-inference-providers.md.
+# Anthropic has no embeddings API, so the embedder stays on OpenAI. The keys
+# for both providers arrive through the overlay in secret-overlay.example.yaml.
+
+memory:
+  # LLM connection registry. generation_api is set explicitly so the provider
+  # default can change without changing this deployment.
+  inference_providers:
+    anthropic:
+      endpoint:
+        base_url: https://api.anthropic.com/v1/
+        generation_api: chat_completions
+        auth_format: bearer
+        timeout: 60s
+      http_client:
+        skip_verify: false
+        timeout: 60s
+        max_retry_attempts: 3
+
+  # Embeddings stay on OpenAI (see ../basic/values.yaml).
+  embedding:
+    provider: openai
+    models:
+      default_embedding_model: text-embedding-3-large
+      dimensions: 3072
+
+  promote_session_memory:
+    strategies:
+      instruct:
+        llm:
+          provider: anthropic
+          credentials:
+            type: static
+          models:
+            default_chat_model: claude-haiku-5-5
+
+  session_summarisation:
+    enabled: true
+    llm:
+      provider: anthropic
+      credentials:
+        type: static
+      models:
+        default_chat_model: claude-haiku-5-5
+
+  classification:
+    llm:
+      provider: anthropic
+      credentials:
+        type: static
+      models:
+        default_chat_model: claude-haiku-5-5

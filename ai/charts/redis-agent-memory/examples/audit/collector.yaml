@@ -1,0 +1,144 @@
+# Supply the iris-audit-files ReadWriteMany PVC in redis-ai before applying.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: iris-audit-collector
+  namespace: redis-ai
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush                     1
+        Grace                     30
+        Log_Level                 info
+        Parsers_File              /fluent-bit/etc/iris-parsers.conf
+        storage.path              /state/buffer
+        storage.sync              full
+        storage.checksum          on
+        HTTP_Server               on
+        HTTP_Listen               0.0.0.0
+        HTTP_Port                 2020
+        Health_Check              on
+
+    [INPUT]
+        Name                      tail
+        Tag                       iris
+        Path                      /var/log/containers/*_${IRIS_NAMESPACE}_*.log
+        multiline.parser          docker, cri
+        DB                        /state/tail.db
+        DB.sync                   full
+        Read_from_Head            on
+        Refresh_Interval          2
+        Rotate_Wait               30
+        Buffer_Max_Size           1M
+        Path_Key                  source_file
+        storage.type              filesystem
+
+    [FILTER]
+        Name                      parser
+        Match                     iris
+        Key_Name                  log
+        Parser                    iris_json
+        Reserve_Data              on
+
+    [FILTER]
+        Name                      grep
+        Match                     iris
+        Regex                     logger (^|\.)audit$
+
+    [OUTPUT]
+        Name                      file
+        Match                     iris
+        Path                      /audit
+        File                      audit-${NODE_NAME}.jsonl
+        Format                    plain
+        Retry_Limit               no_limits
+        Rotate                    on
+        Rotate_Max_Size           50M
+        Rotate_Max_Files          10
+        Rotate_Gzip               on
+  iris-parsers.conf: |
+    [PARSER]
+        Name                      iris_json
+        Format                    json
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: iris-audit-collector
+  namespace: redis-ai
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: iris-audit-collector
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: iris-audit-collector
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+        - operator: Exists
+      securityContext:
+        fsGroup: 2000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: collector
+          image: cr.fluentbit.io/fluent/fluent-bit:5.2.0
+          args: ["-c", "/fluent-bit/etc/fluent-bit.conf"]
+          env:
+            - name: IRIS_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          securityContext:
+            runAsUser: 0
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          ports:
+            - name: metrics
+              containerPort: 2020
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: metrics
+          volumeMounts:
+            - name: config
+              mountPath: /fluent-bit/etc
+              readOnly: true
+            - name: logs
+              mountPath: /var/log
+              readOnly: true
+            - name: state
+              mountPath: /state
+            - name: audit
+              mountPath: /audit
+      volumes:
+        - name: config
+          configMap:
+            name: iris-audit-collector
+        - name: logs
+          hostPath:
+            path: /var/log
+            type: Directory
+        - name: state
+          hostPath:
+            path: /var/lib/iris-audit-collector
+            type: DirectoryOrCreate
+        - name: audit
+          persistentVolumeClaim:
+            claimName: iris-audit-files
