@@ -9,6 +9,9 @@ metadata:
 data:
   playbook-dataplane.yaml: |
     profile: prod
+    {{- with include "redis-onprem.redisClientTLS.config" .Values.redisClientTLS | fromJson }}
+    {{- dict "redis_client_tls" . | toYaml | nindent 4 }}
+    {{- end }}
     tenant_id: {{ $suite.tenantId | quote }}
     server:
       host: 0.0.0.0
@@ -65,6 +68,10 @@ data:
               "playbook:*": {permissions: [read, propose]}
         allow_insecure_transport: {{ $suite.extraction.connection.allowInsecureTransport }}
       {{- end }}
+      {{- end }}
+      {{- if $suite.tenantIdentityProviders }}
+      tenant_identity_providers:
+        enabled: true
       {{- end }}
     {{- if .Values.extraction.connection.enabled }}
     {{- $extractionWorkers := .Values.extraction.connection.workerSubjects }}

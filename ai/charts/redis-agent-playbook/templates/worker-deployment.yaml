@@ -127,6 +127,9 @@ metadata:
 data:
   worker.yaml: |
     profile: prod
+    {{- with include "redis-onprem.redisClientTLS.config" .Values.redisClientTLS | fromJson }}
+    {{- dict "redis_client_tls" . | toYaml | nindent 4 }}
+    {{- end }}
     server:
       port: {{ $suite.worker.port }}
     license:

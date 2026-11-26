@@ -1,0 +1,30 @@
+# Worker overlay for Vertex AI chat — plaintext contents of the Secret named by
+# worker.existingSecret. This is NOT a Helm values file. The embedder overlay is in
+# inference-overlay.example.yaml.
+#
+# After you replace the key, update existingSecretChecksum and run `helm upgrade`,
+# or restart the worker: no component reloads a changed key in place.
+inference_providers:
+  vertex-gemini:             # alias key; protocol sets the wire protocol
+    protocol: openai
+    endpoint:
+      # The global location; the Gemini models answered 404 in us-central1.
+      base_url: https://aiplatform.googleapis.com/v1/projects/REPLACE_PROJECT/locations/global/endpoints/openapi
+      # Without this Iris appends /v1 to an OpenAI base URL and Google answers 404.
+      base_url_as_is: true
+      # The endpoint has no Responses API.
+      generation_api: chat_completions
+    http_client:
+      timeout: 60s
+worker:
+  redis:
+    urls: ["rediss://USER:PASSWORD@regional-queue:6379"]
+  llm:
+    provider: vertex-gemini
+    models:
+      default_chat_model: google/gemini-3.6-flash
+    credentials:
+      type: gcp-service-account
+      gcp:
+        service_account_json: |
+          {"type": "service_account", "project_id": "REPLACE_PROJECT", "...": "REPLACE-ME"}
