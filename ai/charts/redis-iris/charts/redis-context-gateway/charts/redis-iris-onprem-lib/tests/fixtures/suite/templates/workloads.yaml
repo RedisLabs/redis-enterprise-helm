@@ -6,8 +6,9 @@ app.kubernetes.io/name: fixture
 - serve
 {{- end -}}
 {{- with .Values.workload }}
-{{- $w := dict "root" $ "name" "fixture" "component" "server" "labelsTemplate" "fixture.labels" "selectorLabelsTemplate" "fixture.labels"
-  "replicas" .replicas "autoscalingEnabled" .autoscalingEnabled "minReplicas" .minReplicas "enabled" .pdbEnabled "strategy" .strategy
+{{- /* wrapRoot passes the chart root inside a caller context, as Context Gateway does. */}}
+{{- $w := dict "root" (ternary (dict "root" $) $ (eq (toString .wrapRoot) "true")) "name" "fixture" "component" "server" "labelsTemplate" "fixture.labels" "selectorLabelsTemplate" "fixture.labels"
+  "replicas" .replicas "autoscalingEnabled" .autoscalingEnabled "minReplicas" .minReplicas "enabled" .pdbEnabled "strategy" .strategy "podAnnotations" .podAnnotations
   "serviceAccountName" "fixture" "containerName" "fixture" "argsTemplate" "fixture.args" "port" 8080
   "image" (dict "repository" "fixture" "tag" "1" "pullPolicy" "IfNotPresent") }}
 {{ include "redis-onprem.deployment" $w }}

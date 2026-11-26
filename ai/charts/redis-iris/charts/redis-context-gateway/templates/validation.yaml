@@ -1,6 +1,19 @@
 {{- $at := include "gateway.at" . -}}
 {{- $s := include "gateway.suite" . | fromJson -}}
-{{- $_ := required (printf "%stenantId is required" $at) $s.tenantId -}}
+{{- /* An empty tenantId is the multi-tenant mode: the IdP tenant claim gives each caller its tenant. */ -}}
+{{- if not $s.tenantId -}}
+  {{- $cpOIDC := dig "auth" "oidc" (dict) .Values.controlplane.config -}}
+  {{- if hasKey $s "controlplaneOIDC" -}}{{- $cpOIDC = default (dict) $s.controlplaneOIDC -}}{{- end -}}
+  {{- $dpOIDC := dig "auth" "oidc" (dict) .Values.dataplane.config -}}
+  {{- /* The data plane takes the claim only when its own OIDC is enabled. Without it, agent keys carry the tenant of the key. */ -}}
+  {{- if or (not (and $cpOIDC.enabled (trim (default "" $cpOIDC.tenant_id_claim)))) (and $dpOIDC.enabled (not (trim (default "" $dpOIDC.tenant_id_claim)))) -}}
+    {{- fail (printf "%stenantId is required unless %scontrolplane.config.auth.oidc is enabled with tenant_id_claim, and %sdataplane.config.auth.oidc too when it is enabled (multi-tenant mode)" $at $at $at) -}}
+  {{- end -}}
+  {{- /* A static tenant wins over the claim, so with it every caller would get the same tenant. The data-plane schema already refuses static_tenant_id. */ -}}
+  {{- if trim (default "" $cpOIDC.static_tenant_id) -}}
+    {{- fail "an empty tenantId (multi-tenant mode) does not allow controlplane.config.auth.oidc.static_tenant_id" -}}
+  {{- end -}}
+{{- end -}}
 {{- $_ := required (printf "%spublicBaseURL is required" $at) .Values.publicBaseURL -}}
 {{- $_ := required (printf "%sidentityService.baseURL is required" $at) $s.identityService.baseURL -}}
 {{- if and (hasPrefix "http://" $s.identityService.baseURL) (not $s.identityService.allowInsecureTransport) -}}
@@ -88,7 +101,7 @@
       {{- end -}}
     {{- end -}}
   {{- end -}}
-  {{- range $key := list "tenant_id" "profile" "license" "metadata_db" "databases" "dataplane" -}}
+  {{- range $key := list "tenant_id" "profile" "license" "metadata_db" "databases" "dataplane" "redis_client_tls" -}}
     {{- if hasKey $settings.config $key -}}{{- fail "component config contains a shared or chart-owned setting" -}}{{- end -}}
   {{- end -}}
   {{- if or (hasKey (default dict $settings.config.server) "port") (hasKey (default dict $settings.config.server) "host") -}}
@@ -120,6 +133,8 @@
     {{- end -}}
     {{- $_ := set $volumeNames .name true -}}
   {{- end -}}
+  {{- $clientTLS := include "redis-onprem.redisClientTLS.entries" $.Values.redisClientTLS | fromJsonArray -}}
+  {{- if $clientTLS -}}{{- $_ := set $volumeNames "redis-client-tls" true -}}{{- end -}}
   {{- range concat $.Values.volumes $settings.volumes -}}
     {{- if hasKey $volumeNames .name -}}{{- fail "additional volume names must be unique and must not replace managed volumes" -}}{{- end -}}
     {{- $_ := set $volumeNames .name true -}}
@@ -130,6 +145,9 @@
     {{- $path := clean .mountPath -}}
     {{- if or (eq $path "/etc/context-gateway/config") (hasPrefix "/etc/context-gateway/config/" $path) (eq $path "/etc/context-gateway/files") (hasPrefix "/etc/context-gateway/files/" $path) -}}
       {{- fail "additional volumeMounts must not cover managed configuration or file-reference paths" -}}
+    {{- end -}}
+    {{- if and $clientTLS (or (eq $path "/etc/redis-client-tls") (hasPrefix "/etc/redis-client-tls/" $path)) -}}
+      {{- fail "additional volumeMounts must not cover the redisClientTLS mount at /etc/redis-client-tls" -}}
     {{- end -}}
     {{- if hasKey $mountPaths $path -}}{{- fail "additional volumeMount paths must be unique within each component" -}}{{- end -}}
     {{- $_ := set $mountPaths $path true -}}

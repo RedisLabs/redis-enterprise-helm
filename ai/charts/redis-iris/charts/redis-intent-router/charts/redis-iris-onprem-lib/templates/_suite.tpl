@@ -66,9 +66,31 @@ A nil derived value means the suite leaves the field off (no IdP, say), so an em
 {{- toJson (dict "value" .derived) -}}
 {{- end }}
 
-{{/* Tenant. Takes root, prefix, path (default tenantId), local, default (standalone). */}}
+{{/*
+Tenant. Takes root, prefix, path (default tenantId), local, default (standalone).
+With global.iris.auth.oidc.tenantIdClaim (the multi-tenant mode) there is no fixed tenant: the
+tenant is "" and each operator token names its tenant in that claim.
+*/}}
 {{- define "redis-onprem.suite.tenantId" -}}
-{{- (include "redis-onprem.suite.value" (dict "root" .root "prefix" .prefix "path" (default "tenantId" .path) "local" .local "globalPath" (list "tenantId") "globalDefault" "default" "default" (default "" .default)) | fromJson).value -}}
+{{- $claim := include "redis-onprem.suite.tenantIdClaim" (dict "root" .root) -}}
+{{- if $claim -}}
+{{- $tenant := (include "redis-onprem.suite.value" (dict "root" .root "path" "tenantId" "globalPath" (list "tenantId") "globalDefault" "" "default" "") | fromJson).value -}}
+{{- if $tenant -}}
+{{- fail (printf "global.iris.tenantId (%q) gives one tenant, and global.iris.auth.oidc.tenantIdClaim (%q) gives more than one tenant; set only one of them" (toString $tenant) $claim) -}}
+{{- end -}}
+{{- if not (or (kindIs "invalid" .local) (eq (toString .local) "")) -}}
+{{- fail (printf "%s%s (%q) gives one tenant, and global.iris.auth.oidc.tenantIdClaim (%q) gives more than one tenant; remove the product value" (default "" .prefix) (default "tenantId" .path) (toString .local) $claim) -}}
+{{- end -}}
+{{- end -}}
+{{- (include "redis-onprem.suite.value" (dict "root" .root "prefix" .prefix "path" (default "tenantId" .path) "local" .local "globalPath" (list "tenantId") "globalDefault" (ternary "" "default" (ne $claim "")) "default" (default "" .default)) | fromJson).value -}}
+{{- end }}
+
+{{/*
+The token claim that names the tenant in the multi-tenant mode: global.iris.auth.oidc.tenantIdClaim
+under the umbrella, else "". Takes root. Unset markers and a missing auth or oidc block mean no claim.
+*/}}
+{{- define "redis-onprem.suite.tenantIdClaim" -}}
+{{- trim (toString (include "redis-onprem.suite.value" (dict "root" .root "path" "tenantIdClaim" "globalPath" (list "auth" "oidc" "tenantIdClaim") "globalDefault" "" "default" "") | fromJson).value) -}}
 {{- end }}
 
 {{/* Cluster DNS domain. Takes root, prefix, path (default clusterDomain), local. */}}
@@ -247,4 +269,24 @@ the cluster at 1.0. Takes root.
 {{- fail "global.security.profile: fips is not supported by redis-iris 0.1; FIPS support is planned for redis-iris 1.1" -}}
 {{- end -}}
 {{- toJson (dict "baseURL" (printf "http://%s:9200" (include "redis-onprem.suite.fqdn" (dict "root" .root "name" "iris-identity-service"))) "allowInsecureTransport" true) -}}
+{{- end }}
+
+{{/*
+Pod template annotations as YAML ("" when none): the caller's podAnnotations, plus
+iris.redis.io/config-revision when global.iris.configRevision is set, so changing that one value
+rolls every Deployment. The caller's own annotation wins on that key. Takes root (the chart root,
+or a caller context holding it under root, as Context Gateway passes) and podAnnotations.
+*/}}
+{{- define "redis-onprem.suite.podAnnotations" -}}
+{{- $root := .root -}}
+{{- if not (hasKey $root "Values") }}{{ $root = $root.root }}{{ end -}}
+{{- $out := deepCopy (default (dict) .podAnnotations) -}}
+{{- $raw := dig "iris" "configRevision" "" (default (dict) $root.Values.global) -}}
+{{- /* A values-file number is a float64, which toString prints with an exponent. */ -}}
+{{- $revision := toString $raw -}}
+{{- if and (kindIs "float64" $raw) (eq $raw (floor $raw)) }}{{ $revision = printf "%.0f" $raw }}{{ end -}}
+{{- if $revision -}}
+{{- $out = merge $out (dict "iris.redis.io/config-revision" $revision) -}}
+{{- end -}}
+{{- with $out }}{{ toYaml . }}{{ end -}}
 {{- end }}

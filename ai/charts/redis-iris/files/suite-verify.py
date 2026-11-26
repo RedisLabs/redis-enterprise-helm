@@ -60,6 +60,8 @@ INTENT_EMBEDDING = json.loads(os.environ.get("INTENT_EMBEDDING", "{}"))
 PLAYBOOK_EMBEDDING = json.loads(os.environ.get("PLAYBOOK_EMBEDDING", "{}"))
 UI = os.environ["UI_URL"]
 DATABASE = os.environ.get("MEMORY_DATABASE_ID", "")
+# Set in the multi-tenant mode, where the Identity Service has no fixed tenant to put on a grant.
+TENANT = os.environ.get("SUITE_VERIFY_TENANT", "")
 TIMEOUT = 30
 
 
@@ -132,6 +134,8 @@ def remove(what, url, token):
 
 def mint(cleanup, what, grant):
     """Mints a key with one grant, registers its removal, and returns its token."""
+    if TENANT:
+        grant = {**grant, "tenant": TENANT}
     status, body = request("POST", f"{IDS}/v1/api-keys", CONTROL, {"name": NAME, "grants": [grant]})
     expect(status, 201, f"minting a {what} key (the Identity Service validates it with {grant['product']})", body)
     cleanup.append((f"{grant['product']} key", f"{IDS}/v1/api-keys/{body['keyId']}", CONTROL))

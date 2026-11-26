@@ -7,7 +7,7 @@
 # 0.4.0 needs this file too, or global.iris.products.lens.enabled: false;
 # without either the render fails and names the missing lens.* field.
 #
-# Create this first in namespace redis-ai (tests/kind.sh shows it):
+# Create this first in namespace redis-ai (scripts/quickstart-local.sh shows it):
 #   lens-storage  key lens-dataplane-storage.yaml     storage.{streams,content,index,metadata}.urls
 #                 key lens-controlplane-storage.yaml  storage.metadata.urls
 # The license, tenant, Identity Service connection, and credentials are the suite's.

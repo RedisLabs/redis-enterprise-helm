@@ -1,0 +1,217 @@
+# Local quickstart: the whole redis-iris suite on one KinD (or similar) cluster, release iris in
+# namespace redis-ai, Admin Token mode, one replica of everything, no Ingress, no TLS, no model provider.
+#
+#   iris/helm/scripts/quickstart-local.sh setup
+#   helm upgrade --install iris redis-ai/redis-iris -n redis-ai --wait \
+#     -f iris/helm/examples/quickstart-local.yaml
+#   iris/helm/scripts/quickstart-local.sh tokens     # prints every admin token, then port-forwards the UI
+#
+# `setup` creates every Secret this file names (and the Redis they point at), so it replaces
+# memory-only.yaml, playbook.yaml, lens.yaml, context-gateway.yaml and intent.yaml; do not layer them.
+# For a real Memory model, add -f iris/helm/examples/quickstart-local-openai.yaml and run `setup` with
+# OPENAI_API_KEY set. Everything is reached through `kubectl port-forward`: the Context Gateway
+# publicBaseURL below is a placeholder (its Ingress is off), so route it yourself before using MCP clients.
+# CPU: each pod requests 50m, so the suite fits a 2-CPU node (the CI arm64 runner); a node with less leaves
+# pods Pending and `helm --wait` times out. The README recommends about 4 CPUs and 8 GiB.
+
+global:
+  iris:
+    license:
+      existingSecret: iris-license
+      secretKey: license
+    # The operational mode: the chart generates no credential. scripts/quickstart-local.sh setup creates
+    # these two Secrets, every admin token and the Identity Service Control token once and never overwrites them,
+    # so a retried or upgraded install (for example with quickstart-local-openai.yaml) works.
+    secrets:
+      generate: false
+      dataplaneServiceCredentials: {existingSecret: iris-dataplane-credentials}
+      controlplaneInternalTokens: {existingSecret: iris-internal-tokens}
+
+identityService:
+  replicaCount: 1
+  metadata:
+    existingSecret: ids-metadata
+  resources:
+    requests: {cpu: 50m}
+
+# Admin Token mode: operators paste each product's token (no IdP, public URL or Ingress).
+ui:
+  replicaCount: 1
+  uiAuth:
+    replicas: 1
+  sso:
+    enabled: false
+  ingress:
+    enabled: false
+  resources:
+    requests: {cpu: 50m}
+
+memory:
+  secrets:
+    secretName: mem-secrets
+  # The worker verifies the cluster's ServiceAccount issuer over TLS.
+  tls:
+    caCertSecret: cluster-ca
+  server:
+    replicaCount: 1
+    autoscaling:
+      enabled: false
+    resources:
+      requests: {cpu: 50m}
+  worker:
+    replicaCount: 1
+    autoscaling:
+      enabled: false
+    resources:
+      requests: {cpu: 50m}
+  controlplane:
+    resources:
+      requests: {cpu: 50m}
+    configData:
+      profile: dev
+      auth:
+        type: admin-token
+        admin_token:
+          token_file: /etc/controlplane-onprem/admin/token
+        internal_token:
+          token_file: /etc/controlplane-onprem/internal/token
+      embedding:
+        dimensions: 384
+  shared:
+    # The chart mounts iris-license here but does not derive the path; the published images read it.
+    license: {license_path: /etc/redis-agent-memory/license}
+    databases:
+      "1":
+        name: default
+  # Noop embedder and noop inference: no model provider needed.
+  memory:
+    profile: dev
+    default_extraction_strategy: instruct
+    request_region:
+      default: eu1
+    background_jobs:
+      redis:
+        enabled: true
+        queue_prefix: ram
+        worker_regions: [eu1]
+        defaults:
+          concurrency: 2
+          max_retry: 3
+          timeout: 5m
+          completed_retention: 1h
+          requeue_without_retry_delay: 5s
+          shutdown_timeout: 30s
+      idempotency:
+        enabled: true
+        done_ttl: 24h
+        lock_ttl: 5m
+        lease_extension_interval: 1m
+        operation_timeout: 5s
+    embedding:
+      provider: noop
+      models:
+        default_embedding_model: noop
+        dimensions: 384
+    embedders_connection_details:
+      noop:
+        protocol: noop
+    session_summarisation:
+      enabled: false
+    session_summary_view:
+      enabled: false
+    inference_providers:
+      openai:
+        protocol: noop
+        endpoint:
+          base_url: https://api.openai.com/v1
+          timeout: 30s
+          auth_format: bearer
+    classification:
+      llm:
+        provider: openai
+        credentials:
+          type: static
+        models:
+          default_chat_model: gpt-5.6-luna
+    promote_session_memory:
+      strategies:
+        instruct:
+          promotion_deduplication_window: 1s
+          reasoning_effort: low
+          llm:
+            provider: openai
+            credentials:
+              type: static
+            models:
+              default_chat_model: gpt-4o
+              dimensions: 384
+
+playbook:
+  storage:
+    existingSecret: playbook-storage
+  inference:
+    models:
+      - provider: noop
+        model: playbook-test
+        dimensions: 384
+  controlplane:
+    resources:
+      requests: {cpu: 50m}
+  dataplane:
+    replicaCount: 1
+    resources:
+      requests: {cpu: 50m}
+  # Only rendered with global.iris.extraction.enabled, which this preset leaves off.
+  worker:
+    resources:
+      requests: {cpu: 50m}
+
+lens:
+  storage:
+    existingSecret: lens-storage
+  controlplane:
+    resources:
+      requests: {cpu: 50m}
+  dataplane:
+    server:
+      replicaCount: 1
+      resources:
+        requests: {cpu: 50m}
+
+contextGateway:
+  # Placeholder: the data plane Ingress is off, so nothing serves this origin.
+  publicBaseURL: https://localhost
+  metadataDB:
+    existingSecret: gateway-metadata
+  credentialStorage:
+    provider: redis
+    redis:
+      connection:
+        existingSecret: gateway-credential-redis
+      keyring:
+        existingSecret: gateway-keyring
+  controlplane:
+    resources:
+      requests: {cpu: 50m}
+  dataplane:
+    replicaCount: 1
+    resources:
+      requests: {cpu: 50m}
+
+intent:
+  storage:
+    existingSecret: intent-storage
+  inference:
+    # The noop embedder matches by shared words, not meaning; it needs no Secret or provider.
+    allowLocalModels: true
+    models:
+      - provider: noop
+        model: intent-test
+        dimensions: 384
+  controlplane:
+    resources:
+      requests: {cpu: 50m}
+  dataplane:
+    replicaCount: 1
+    resources:
+      requests: {cpu: 50m}

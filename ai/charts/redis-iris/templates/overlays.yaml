@@ -1,0 +1,151 @@
+{{- /*
+Suite-level Redis and LLM inputs (MOD-21051, docs/specs/MOD-21051-iris-umbrella-suite-inputs.md).
+Each product reference that names its iris-* overlay gets that Secret, built from
+global.iris.redis.<role> and global.iris.inference.openai; a reference naming any other Secret
+renders nothing here (bring your own). Plain release resources: they follow upgrades, render in
+renderMode gitops too, and their content lives in the release (or in Git under gitops).
+Without an OpenAI apiKey, every overlay uses noop providers; with it, OpenAI. The Playbook and Intent
+Router storage overlays (both planes load them after the chart's config) carry the one embedding model,
+and their inference overlays the data plane's connection; inline inference.models only pass the
+product chart's render checks. A product whose inference.existingSecret names another Secret keeps its
+inline models: its storage overlay then carries no inference block.
+
+redis-iris.overlays: JSON list of {name, ref, data: {key: content}, missing, sameRedis, models}, one per
+overlay to render. missing is the first input it needs that has no urls ("" when none); validate.yaml fails on it.
+models: the served embedding models, on the Playbook and Intent storage overlays that set them (suite-verify reads them).
+*/ -}}
+{{- define "redis-iris.overlays" -}}
+{{- $v := .Values -}}
+{{- $iris := $v.global.iris -}}
+{{- $products := $iris.products -}}
+{{- $redis := default (dict) $iris.redis -}}
+{{- $role := dict -}}
+{{- range $k := list "metadata" "content" "jobs" "lens" "gatewayCredentials" "intent" }}{{ $_ := set $role $k (default (dict) (get $redis $k)) }}{{ end -}}
+{{- if not $role.jobs }}{{ $_ := set $role "jobs" $role.metadata }}{{ end -}}
+{{- $ai := default (dict) (dig "inference" "openai" (dict) $iris) -}}
+{{- $key := toString (default "" $ai.apiKey) -}}
+{{- $dims := int (default 1536 $ai.embeddingDimensions) -}}
+{{- $credentials := dict "type" "static" "api_key" $key -}}
+{{- $openaiEmbedders := dict "openai" (dict "base_url" $ai.baseURL "credentials" $credentials) -}}
+{{- $chat := dict "default_chat_model" $ai.chatModel -}}
+{{- $llm := dict "provider" "local" "credentials" (dict "type" "none") "models" $chat -}}
+{{- $providers := dict "local" (dict "protocol" "noop") -}}
+{{- $embedding := dict "provider" "noop" "models" (dict "default_embedding_model" "noop" "dimensions" $dims) "dimensions" $dims -}}
+{{- $embedders := dict "noop" (dict "protocol" "noop") -}}
+{{- $model := dict "provider" "noop" "model" "noop" "dimensions" $dims -}}
+{{- if $key -}}
+{{- $llm = dict "provider" "openai" "credentials" $credentials "models" $chat -}}
+{{- $providers = dict "openai" (dict "protocol" "openai" "endpoint" (dict "base_url" $ai.baseURL)) -}}
+{{- $embedding = dict "provider" "openai" "models" (dict "default_embedding_model" $ai.embeddingModel "dimensions" $dims) "dimensions" $dims -}}
+{{- $embedders = $openaiEmbedders -}}
+{{- $model = dict "provider" "openai" "model" $ai.embeddingModel "dimensions" $dims -}}
+{{- end -}}
+{{- $inference := dict "models" (list $model) -}}
+{{- $connectionsData := dict "embedders_connection_details" (ternary $openaiEmbedders (dict) (ne $key "")) -}}
+{{- $out := list -}}
+{{- with $v.identityService.metadata }}
+{{- if eq (toString .existingSecret) "iris-identity-service-metadata" }}
+{{- $out = append $out (dict "name" .existingSecret "ref" "identityService.metadata.existingSecret" "needs" (list "metadata")
+  "data" (dict (default "metadata.yaml" .secretKey) (dict "metadata" $role.metadata))) }}
+{{- end }}
+{{- end }}
+{{- if and $products.memory.enabled (eq (toString (dig "secrets" "secretName" "" $v.memory)) "iris-memory-overlay") }}
+{{- $out = append $out (dict "name" "iris-memory-overlay" "ref" "memory.secrets.secretName" "needs" (list "metadata" "content" "jobs")
+  "data" (dict (default "overlay.yaml" (dig "secrets" "overlayKey" "" $v.memory)) (dict
+    "metadata" $role.metadata
+    "databases" (dict "1" $role.content)
+    "background_jobs" (dict "redis" $role.jobs "idempotency" $role.jobs)
+    "embedding" $embedding
+    "embedders_connection_details" $embedders
+    "inference_providers" $providers
+    "classification" (dict "llm" $llm)
+    "promote_session_memory" (dict "strategies" (dict "instruct" (dict "llm" $llm)))))) }}
+{{- end }}
+{{- if $products.playbook.enabled }}
+{{- with $v.playbook }}
+{{- if eq (toString (dig "storage" "existingSecret" "" .)) "iris-playbook-storage" }}
+{{- $storage := dict "storage" (dict "metadata" $role.metadata "content" $role.content) }}
+{{- $served := list }}
+{{- if eq (toString (dig "inference" "existingSecret" "" .)) "iris-playbook-inference" }}{{ $_ := set $storage "inference" $inference }}{{ $served = $inference.models }}{{ end }}
+{{- $out = append $out (dict "name" "iris-playbook-storage" "ref" "playbook.storage.existingSecret" "needs" (list "metadata" "content")
+  "sameRedis" (and $role.content (eq (toJson $role.content) (toJson $role.metadata))) "models" $served
+  "data" (dict (default "playbook-storage.yaml" (dig "storage" "playbookKey" "" .)) $storage)) }}
+{{- end }}
+{{- if eq (toString (dig "inference" "existingSecret" "" .)) "iris-playbook-inference" }}
+{{- $out = append $out (dict "name" "iris-playbook-inference" "ref" "playbook.inference.existingSecret"
+  "data" (dict (default "inference.yaml" (dig "inference" "secretKey" "" .)) $connectionsData)) }}
+{{- end }}
+{{- if and $iris.extraction.enabled (eq (toString (dig "worker" "existingSecret" "" .)) "iris-playbook-worker") }}
+{{- $out = append $out (dict "name" "iris-playbook-worker" "ref" "playbook.worker.existingSecret" "needs" (list "jobs")
+  "data" (dict (default "worker.yaml" (dig "worker" "secretKey" "" .)) (dict "worker" (dict "redis" $role.jobs "llm" $llm) "inference_providers" $providers))) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if and $products.lens.enabled (eq (toString (dig "storage" "existingSecret" "" $v.lens)) "iris-lens-storage") }}
+{{- $out = append $out (dict "name" "iris-lens-storage" "ref" "lens.storage.existingSecret" "needs" (list "metadata" "lens")
+  "data" (dict
+    (default "lens-dataplane-storage.yaml" (dig "storage" "dataplaneKey" "" $v.lens)) (dict "storage" (dict "streams" $role.lens "content" $role.lens "index" $role.lens "metadata" $role.metadata))
+    (default "lens-controlplane-storage.yaml" (dig "storage" "controlplaneKey" "" $v.lens)) (dict "storage" (dict "metadata" $role.metadata) "dram" $role.lens))) }}
+{{- end }}
+{{- if $products.contextGateway.enabled }}
+{{- with $v.contextGateway }}
+{{- if eq (toString (dig "metadataDB" "existingSecret" "" .)) "iris-context-gateway-metadata" }}
+{{- $out = append $out (dict "name" "iris-context-gateway-metadata" "ref" "contextGateway.metadataDB.existingSecret" "needs" (list "metadata")
+  "data" (dict (default "config.yaml" (dig "metadataDB" "secretKey" "" .)) (dict "metadata_db" $role.metadata))) }}
+{{- end }}
+{{- if eq (toString (dig "credentialStorage" "redis" "connection" "existingSecret" "" .)) "iris-context-gateway-credential-redis" }}
+{{- $out = append $out (dict "name" "iris-context-gateway-credential-redis" "ref" "contextGateway.credentialStorage.redis.connection.existingSecret" "needs" (list "gatewayCredentials")
+  "data" (dict (default "config.yaml" (dig "credentialStorage" "redis" "connection" "secretKey" "" .)) (dict "credential_storage" (dict "redis" $role.gatewayCredentials)))) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if $products.intent.enabled }}
+{{- with $v.intent }}
+{{- if eq (toString (dig "storage" "existingSecret" "" .)) "iris-intent-storage" }}
+{{- $cp := dict "storage" (dict "metadata" $role.metadata) }}
+{{- $dp := dict "storage" (dict "redis" $role.intent) "runtime" (dict "redis" $role.metadata) }}
+{{- $served := list }}
+{{- if eq (toString (dig "inference" "existingSecret" "" .)) "iris-intent-inference" }}
+{{- /* The noop model needs allow_local_models in the production profile the chart sets; OpenAI turns it off. */}}
+{{- $intentInference := merge (dict "allow_local_models" (not $key)) $inference }}
+{{- $_ := set $cp "inference" $intentInference }}{{ $_ := set $dp "inference" $intentInference }}{{ $served = $inference.models }}
+{{- end }}
+{{- $out = append $out (dict "name" "iris-intent-storage" "ref" "intent.storage.existingSecret" "needs" (list "metadata" "intent") "models" $served
+  "data" (dict
+    (default "intent-controlplane-storage.yaml" (dig "storage" "controlplaneKey" "" .)) $cp
+    (default "intent-dataplane-storage.yaml" (dig "storage" "dataplaneKey" "" .)) $dp)) }}
+{{- end }}
+{{- if eq (toString (dig "inference" "existingSecret" "" .)) "iris-intent-inference" }}
+{{- $out = append $out (dict "name" "iris-intent-inference" "ref" "intent.inference.existingSecret"
+  "data" (dict (default "inference.yaml" (dig "inference" "secretKey" "" .)) $connectionsData)) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- range $o := $out }}
+{{- $missing := "" }}
+{{- range $n := $o.needs }}
+{{- if and (not $missing) (not (dig "urls" list (get $role $n))) }}
+{{- $missing = printf "global.iris.redis.%s" $n }}
+{{- end }}
+{{- end }}
+{{- $_ := set $o "missing" $missing }}
+{{- end }}
+{{- toJson $out -}}
+{{- end }}
+{{- range include "redis-iris.overlays" . | fromJsonArray }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .name }}
+  labels:
+    app.kubernetes.io/name: redis-iris
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+    app.kubernetes.io/component: overlays
+type: Opaque
+data:
+  {{- range $k, $content := .data }}
+  {{ $k }}: {{ toYaml $content | b64enc }}
+  {{- end }}
+{{- end }}

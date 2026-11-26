@@ -154,6 +154,38 @@
       },
       "additionalProperties": false
     },
+    "redisClientTLS": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingSecret": {
+          "type": "string",
+          "description": "Secret with tls.crt and tls.key presented by every rediss:// client; empty disables client certificates."
+        },
+        "extraCertificates": {
+          "type": "array",
+          "description": "Per-connection client certificates, mounted at /etc/redis-client-tls/<name>/.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "existingSecret"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"
+              },
+              "existingSecret": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
     "license": {
       "type": "object",
       "properties": {
@@ -345,6 +377,14 @@
             "roleClaims": { "type": "array", "items": { "type": "string", "minLength": 1 } },
             "roleMappings": { "type": "object", "additionalProperties": { "type": "string", "enum": ["viewer", "operator", "product_admin", "suite_admin"] } },
             "allowInsecureTransport": { "type": ["boolean", "null"], "description": "Null means false; redis-iris derives it." }
+          },
+          "additionalProperties": false
+        },
+        "tenantIdentityProviders": {
+          "type": "object",
+          "description": "Users of the tenant IdP records of the Identity Service, for reads (MOD-19515).",
+          "properties": {
+            "enabled": { "type": "boolean" }
           },
           "additionalProperties": false
         }

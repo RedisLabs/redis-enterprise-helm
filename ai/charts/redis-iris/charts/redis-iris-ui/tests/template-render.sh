@@ -7,7 +7,7 @@ CHART="$ROOT/iris/ui/helm"
 VALUES="$CHART/tests/values-test.yaml"
 OUT="$(mktemp)"
 BARE_OUT="$(mktemp)"
-trap 'rm -f "$OUT" "$BARE_OUT"' EXIT
+trap 'rm -f "$OUT" "$BARE_OUT" "${LENS_CP_OUT:-}"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -48,6 +48,27 @@ helm lint "$CHART" -f "$VALUES" >/dev/null
 helm template ui-test "$CHART" -f "$VALUES" >"$OUT"
 helm template ui-bare "$CHART" --set image.tag=0.0.0-test >"$BARE_OUT"
 
+# Multi-tenant Lens adds a hidden lens-cp route. The route is not in values-test.yaml, so the
+# standalone render diff of that file does not change. products is the last key of the file,
+# so the appended entry joins its list.
+LENS_CP_VALUES="$(mktemp)"
+LENS_CP_OUT="$(mktemp)"
+cat "$VALUES" - >"$LENS_CP_VALUES" <<'EOF'
+  - key: lens-cp
+    label: Lens CP
+    product: lens
+    authScheme: bearer
+    healthPath: /health/readiness
+    showInNavigation: false
+    upstream:
+      host: lens-controlplane.lens.svc.cluster.local
+      port: 9300
+      basePath: ""
+      scheme: http
+EOF
+helm template ui-lens-cp "$CHART" -f "$LENS_CP_VALUES" >"$LENS_CP_OUT"
+rm -f "$LENS_CP_VALUES"
+
 # Exact-line matches, not substring counts: "kind: Service" is itself a
 # prefix of "kind: ServiceAccount", so a plain substring count would
 # double-count the ServiceAccount as a Service.
@@ -80,6 +101,12 @@ assert_contains "$OUT" "image: \"redislabs/iris-ui-gateway:0.0.0-test\""
 assert_contains "$OUT" "- nginx"
 assert_contains "$OUT" "- daemon off;"
 
+# NGINX reads the ConfigMap template and writes the generated config to a pod volume.
+assert_contains "$OUT" $'mountPath: /etc/nginx/templates/default.conf.template\n              subPath: default.conf.template\n              readOnly: true'
+assert_contains "$OUT" $'- name: nginx-generated-config\n              mountPath: /etc/nginx/conf.d'
+assert_absent "$OUT" $'mountPath: /etc/nginx/conf.d\n              readOnly: true'
+assert_contains "$OUT" $'- name: nginx-generated-config\n          emptyDir: {}'
+
 # --- Phase 2: reverse proxy + runtime config (AC3, AC4, AC5) ---
 
 # /config.json location, and one reverse-proxy block per configured
@@ -87,6 +114,8 @@ assert_contains "$OUT" "- daemon off;"
 # (AC3's prefix rewrite).
 assert_contains "$OUT" "location = /config.json"
 assert_contains "$OUT" 'location ~ ^/api/memory/(?<rest>.*)$ {'
+assert_contains "$OUT" 'location ~ ^/api/memory-dp/(?<rest>.*)$ {'
+assert_contains "$OUT" 'set $upstream "http://redis-agent-memory.redis-agent-memory.svc.cluster.local:9000";'
 assert_contains "$OUT" 'set $upstream "http://redis-agent-memory-controlplane-onprem.redis-agent-memory.svc.cluster.local:8080";'
 assert_contains "$OUT" 'proxy_pass $upstream/$rest$is_args$args;' # memory routes: empty basePath
 assert_contains "$OUT" 'location ~ ^/api/memory-tls/(?<rest>.*)$ {'
@@ -98,6 +127,10 @@ assert_contains "$OUT" 'set $upstream "https://lens-dataplane.lens.svc.cluster.l
 assert_absent "$OUT" 'proxy_pass $upstream/iris/data/v1beta1/lens/instances/' # lens route: empty basePath, the SDK paths carry /iris/data/v1beta1/lens/instances/<id>
 grep -F -A2 'location ~ ^/api/lens/(?<rest>.*)$ {' "$OUT" | grep -F -q 'proxy_pass $upstream/$rest$is_args$args;' ||
   fail "the lens route must proxy to the data plane root"
+assert_contains "$LENS_CP_OUT" 'location ~ ^/api/lens-cp/(?<rest>.*)$ {' # hidden route: the SPA asks it for the tenant's Lens instance
+assert_contains "$LENS_CP_OUT" 'set $upstream "http://lens-controlplane.lens.svc.cluster.local:9300";'
+assert_contains "$LENS_CP_OUT" '"key": "lens"'
+assert_absent "$LENS_CP_OUT" '"key": "lens-cp"'
 assert_contains "$OUT" 'location = /api/playbook/health/readiness {'
 assert_contains "$OUT" 'location = /api/playbook-dp/health/readiness {'
 assert_contains "$OUT" 'proxy_pass $upstream/health/readiness;'
@@ -178,6 +211,8 @@ assert_contains "$OUT" "\"authScheme\": \"apiKey\""
 assert_contains "$OUT" "\"healthPath\": \"/health/readiness\""
 assert_contains "$OUT" '"key": "playbook"'
 assert_absent "$OUT" '"key": "playbook-dp"'
+assert_absent "$OUT" '"key": "memory-dp"'
+assert_contains "$OUT" '"dataPlaneEnabled": true'
 assert_contains "$OUT" '"key": "context-gateway"'
 assert_absent "$OUT" '"key": "context-gateway-dp"'
 assert_contains "$OUT" '"key": "api-keys"'
@@ -458,7 +493,7 @@ expect_public_url_accepted "https://iris.example.internal:08443"
 # One route's product limit must not cap or change another route's limit.
 helm template ui-upload "$CHART" -f "$VALUES" --set 'products[0].maxRequestBodyBytes=16777216' >"$OUT"
 assert_count "$OUT" "client_max_body_size 16777216;" 1
-assert_count "$OUT" "client_max_body_size 8388608;" 1
+assert_count "$OUT" "client_max_body_size 8388608;" 2
 assert_count "$OUT" "client_max_body_size 1048576;" 8
 
 # Security headers on the SPA's pages and /config.json (TDD SEC-4). They do not
@@ -527,6 +562,20 @@ assert_exact_count "$SSO_OUT" "kind: Service" 2
 assert_exact_count "$SSO_OUT" "kind: ConfigMap" 3
 assert_exact_count "$SSO_OUT" "kind: Secret" 1
 assert_exact_count "$SSO_OUT" "kind: NetworkPolicy" 1
+assert_absent "$SSO_OUT" "redis-client-tls"
+assert_absent "$SSO_OUT" "redis_client_tls"
+
+# Redis client certificates (MOD-14536): UI auth mounts the pair read-only, without subPath, and names it in its config.
+CLIENT_TLS_OUT="$(mktemp)"
+sso_render --set redisClientTLS.existingSecret=ui-client \
+  --set 'redisClientTLS.extraCertificates[0].name=session' --set 'redisClientTLS.extraCertificates[0].existingSecret=session-client' >"$CLIENT_TLS_OUT"
+assert_contains "$CLIENT_TLS_OUT" 'redis_client_tls: {"cert_path":"/etc/redis-client-tls/tls.crt","key_path":"/etc/redis-client-tls/tls.key"}'
+assert_contains "$CLIENT_TLS_OUT" "$(printf -- '- name: redis-client-tls\n              mountPath: /etc/redis-client-tls\n              readOnly: true')"
+assert_contains "$CLIENT_TLS_OUT" 'name: "ui-client"'
+assert_contains "$CLIENT_TLS_OUT" 'path: session/tls.crt'
+assert_count "$CLIENT_TLS_OUT" "subPath" 1 # the gateway's nginx template only, never the certificate mount
+assert_count "$CLIENT_TLS_OUT" "mountPath: /etc/redis-client-tls" 1 # UI auth only; the gateway has no Redis
+rm -f "$CLIENT_TLS_OUT"
 assert_contains "$SSO_OUT" "name: ui-sso-redis-iris-ui-auth-session-key"
 assert_contains "$SSO_OUT" "image: \"redislabs/iris-ui-auth:0.0.0-test\""
 assert_contains "$SSO_OUT" "path: /readyz"
@@ -546,6 +595,9 @@ assert_contains "$SSO_OUT" 'client_id: "iris-ui"'
 assert_contains "$SSO_OUT" 'client_secret_file: "/etc/ui-auth/client/client-secret"'
 assert_contains "$SSO_OUT" 'encryption_key_file: "/etc/ui-auth/session/key"'
 assert_contains "$SSO_OUT" '  - key: "playbook-dp"'
+assert_contains "$SSO_OUT" '  - key: "memory-dp"'
+assert_contains "$SSO_OUT" '"dataPlaneEnabled": true'
+assert_absent "$SSO_OUT" '"key": "memory-dp"'
 assert_contains "$SSO_OUT" '  - key: "intent-data"'
 assert_contains "$SSO_OUT" '    product: "intent"'
 assert_contains "$SSO_OUT" '    product: "playbook"'
@@ -717,7 +769,7 @@ for DIRECTIVE in "ssoApiDirectives" "auth_request" "upstream ui_auth" "location 
 done
 assert_contains "$OUT" '"products": ['
 assert_contains "$OUT" '"enabled": false'
-# Routes with showInNavigation: false (playbook-dp, intent-data, context-gateway-dp) are not in /config.json.
+# Routes with showInNavigation: false (playbook-dp, intent-data, context-gateway-dp, lens-cp) are not in /config.json.
 navigation_routes() {
   echo $(( $(grep -c '^  - key: ' "$1") - $(grep -c '^    showInNavigation: false$' "$1" || true) ))
 }
@@ -924,6 +976,7 @@ umbrella_fails() { # <message> <helm flags...>
 umbrella_render >"$OUT"
 for route in \
   'memory|redis-agent-memory-controlplane.ai.svc.cluster.local:9100' \
+  'memory-dp|redis-agent-memory.ai.svc.cluster.local:9000' \
   'api-keys|iris-identity-service.ai.svc.cluster.local:9200' \
   'playbook|redis-agent-playbook-controlplane.ai.svc.cluster.local:9200' \
   'playbook-dp|redis-agent-playbook-dataplane.ai.svc.cluster.local:9201'; do
@@ -932,11 +985,14 @@ for route in \
 done
 assert_contains "$OUT" 'client_max_body_size 8388608;'
 assert_contains "$OUT" '"key": "playbook",'
+assert_contains "$OUT" '"dataPlaneEnabled": true'
+assert_absent "$OUT" '"key": "memory-dp"'
 umbrella_render --set global.iris.products.playbook.enabled=false >"$OUT"
 assert_absent "$OUT" '/api/playbook'
 assert_contains "$OUT" 'location ~ ^/api/api-keys/(?<rest>'
 umbrella_render --set global.iris.products.memory.enabled=false >"$OUT"
-assert_absent "$OUT" '/api/memory/'
+assert_absent "$OUT" '/api/memory'
+assert_absent "$OUT" '"dataPlaneEnabled"'
 assert_contains "$OUT" 'location ~ ^/api/playbook-dp/(?<rest>'
 umbrella_render --set global.iris.clusterDomain=corp.local >"$OUT"
 assert_contains "$OUT" 'set $upstream "http://redis-agent-memory-controlplane.ai.svc.corp.local:9100";'
@@ -953,8 +1009,17 @@ done
 assert_contains "$OUT" '"instanceId": "default"'
 assert_contains "$OUT" 'location ~ ^/api/context-gateway-dp/\.well-known/oauth-protected-resource/(?<rest>.*)$ {'
 assert_contains "$OUT" 'location = /api/context-gateway-dp/health/liveness {'
-[ "$(route_keys "$OUT")" = "memory playbook playbook-dp lens context-gateway context-gateway-dp api-keys" ] ||
+[ "$(route_keys "$OUT")" = "memory memory-dp playbook playbook-dp lens context-gateway context-gateway-dp api-keys" ] ||
   fail "unexpected route order: $(route_keys "$OUT")"
+
+# Multi-tenant Lens discovers its instance through a hidden control-plane route.
+umbrella_render --set global.iris.products.lens.enabled=true --set global.iris.auth.oidc.tenantIdClaim=tenant_id >"$OUT"
+assert_absent "$OUT" '"instanceId"'
+assert_contains "$OUT" 'location ~ ^/api/lens-cp/(?<rest>'
+assert_contains "$OUT" 'set $upstream "http://redis-lens-controlplane.ai.svc.cluster.local:9300";'
+assert_absent "$OUT" '"key": "lens-cp"'
+umbrella_render --set global.iris.products.lens.enabled=false --set global.iris.auth.oidc.tenantIdClaim=tenant_id >"$OUT"
+assert_absent "$OUT" '/api/lens'
 
 # Overrides: only label, showInNavigation and maxRequestBodyBytes; every enabled route stays.
 umbrella_render --set 'products[0].key=memory' --set 'products[0].label=Memory' >"$OUT"
@@ -983,6 +1048,8 @@ SSO_UMBRELLA=(--set sso.enabled=true --set sso.clientId=iris-ui --set sso.client
   --set global.tls.caCertSecret=corp-ca --set global.iris.ingress.className=traefik --set global.iris.ingress.tls.secretName=iris-tls
   --set-json 'global.iris.auth.roleBindings=[{"group":"admins","role":"suite_admin"},{"group":"pb","role":"viewer","product":"playbook"},{"group":"keys","role":"viewer","product":"identity"}]')
 umbrella_render "${SSO_UMBRELLA[@]}" --set global.iris.products.playbook.enabled=false >"$OUT"
+assert_contains "$OUT" '"dataPlaneEnabled": true'
+assert_absent "$OUT" '"key": "memory-dp"'
 assert_contains "$OUT" 'public_url: "https://iris.corp.example:8443"'
 assert_contains "$OUT" 'issuer_url: "http://idp.localhost:8190/realms/iris"'
 assert_contains "$OUT" 'allow_insecure_transport: true'

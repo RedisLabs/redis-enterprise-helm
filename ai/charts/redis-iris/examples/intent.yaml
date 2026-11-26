@@ -7,7 +7,7 @@
 # upgrade from 0.4.0 needs this file too, or global.iris.products.intent.enabled:
 # false; without either the render fails and names the missing intent.* field.
 #
-# Create these first in namespace redis-ai (tests/kind.sh shows them):
+# Create these first in namespace redis-ai (scripts/quickstart-local.sh shows them except intent-inference):
 #   intent-storage    key intent-controlplane-storage.yaml  storage.metadata.urls (and databases)
 #                     key intent-dataplane-storage.yaml     storage.redis.urls, runtime.redis.urls
 #                                                           (the control plane's metadata Redis), and databases

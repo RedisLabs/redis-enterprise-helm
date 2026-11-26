@@ -5,7 +5,7 @@ image:
   repository: redislabs/iris-ui-gateway
   pullPolicy: IfNotPresent
   # The image release this chart version ships; override to run another.
-  tag: "1.0.1"
+  tag: "1.1.1"
 
 imagePullSecrets: []
 
@@ -21,7 +21,7 @@ serviceAccount:
   name: ""
   annotations: {}
 
-# nginxinc/nginx-unprivileged (the image this chart deploys) runs as the
+# The gateway's nginx base image runs as the
 # built-in "nginx" user, uid/gid 101 — not the 65532 distroless convention
 # used by this repo's Go services, which this image does not contain.
 podSecurityContext:
@@ -86,6 +86,18 @@ products: []
 #     scheme: http               # http | https
 #     caSecretName: ""           # https only: Secret with a "ca.crt" key to trust. Mutually exclusive with insecureSkipVerify -- exactly one is required for scheme: https.
 #     insecureSkipVerify: false  # https only: skip upstream cert verification entirely (documented escape hatch, never a silent default)
+#   - key: memory-dp
+#     label: "Agent Memory DP"
+#     product: agent_memory
+#     authScheme: bearer
+#     healthPath: /health/readiness
+#     showInNavigation: false
+#     maxRequestBodyBytes: 8388608
+#     upstream:
+#       host: redis-agent-memory.redis-agent-memory.svc.cluster.local
+#       port: 9000
+#       basePath: ""
+#       scheme: http
 # - key: api-keys               # the Identity Service control API, behind the SPA's /api-keys page
 #   label: "Access & Identity"
 #   product: identity
@@ -112,6 +124,21 @@ products: []
 #     host: lens-dataplane.<namespace>.svc.cluster.local
 #     port: 9000
 #     basePath: ""               # the Lens SDK paths carry /iris/data/v1beta1/lens/instances/<instanceId>
+#     scheme: http
+# Optional, for multi-tenant Lens with SSO on: a hidden route to the Lens control plane.
+# Remove instanceId from the lens route above. Then the SPA asks this route for the
+# instance of the signed-in user's tenant. Without this route, or on a 404, the SPA
+# reads the instance "default".
+# - key: lens-cp
+#   label: "Lens CP"
+#   product: lens
+#   authScheme: bearer
+#   healthPath: /health/readiness
+#   showInNavigation: false
+#   upstream:
+#     host: lens-controlplane.<namespace>.svc.cluster.local  # the Lens chart's <fullname>-controlplane Service
+#     port: 9300                 # the Lens chart's controlplane.service.port
+#     basePath: ""               # the control plane paths carry /iris/v1beta1/lens/instance
 #     scheme: http
 
 # Playbook browser routes: CP for inventory/settings, DP for content/proposals.
@@ -297,6 +324,16 @@ nginx:
     authProxyBuffers: 4 16k
     authProxyConnectTimeout: 5s
     authProxyReadTimeout: 30s
+
+# Redis client certificates (MOD-14536) for the UI auth service's session Redis.
+# existingSecret names a Secret with tls.crt and tls.key that UI auth presents on
+# every rediss:// connection; the chart renders redis_client_tls with their paths.
+# extraCertificates mounts more pairs at /etc/redis-client-tls/<name>/. All
+# Secrets share one read-only projected volume at /etc/redis-client-tls, so a
+# renewed pair is reloaded without a restart. Empty disables the feature.
+redisClientTLS:
+  existingSecret: ""
+  extraCertificates: []  # [{name, existingSecret}]
 
 # The UI auth service workload (only rendered when sso.enabled is true).
 uiAuth:

@@ -15,6 +15,10 @@ metadata:
 data:
   intent-controlplane.yaml: |
     profile: prod
+    {{- with include "redis-onprem.redisClientTLS.config" .Values.redisClientTLS | fromJson }}
+    redis_client_tls:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
     tenant_id: {{ $suite.tenantId | quote }}
     server:
       host: 0.0.0.0

@@ -126,12 +126,17 @@ identityService.<path>:
   (dict "key" "lens" "id" "lens" "name" "redis-lens-controlplane" "port" 9300)
   (dict "key" "contextGateway" "id" "context-gateway" "name" "redis-context-gateway-controlplane" "port" 9100)
   (dict "key" "intent" "id" "intent" "name" "redis-intent-router-controlplane" "port" 9400) -}}
+{{- $iris := include "redis-onprem.suite.iris" . | fromJson -}}
 {{- $credentials := list -}}
 {{- $products := dict -}}
 {{- range $cp := $controlPlanes -}}
 {{- if include "redis-onprem.suite.productEnabled" (dict "root" $ "product" $cp.key) -}}
 {{- $dp := include "redis-onprem.suite.credential" (dict "root" $ "product" $cp.id "credential" "dataplane") | fromJson -}}
-{{- $credentials = append $credentials (dict "name" $dp.secretKey "subject" $dp.secretKey "allowedOperations" (list "api-key-introspect") "allowedProducts" (list $cp.id) "existingSecret" $dp.existingSecret "secretKey" $dp.secretKey) -}}
+{{- $operations := list "api-key-introspect" -}}
+{{- if and (eq $cp.key "playbook") (dig "products" "playbook" "tenantIdentityProvidersEnabled" false $iris) -}}
+{{- $operations = concat $operations (list "identity-provider-resolve" "subject-grant-lookup") -}}
+{{- end -}}
+{{- $credentials = append $credentials (dict "name" $dp.secretKey "subject" $dp.secretKey "allowedOperations" $operations "allowedProducts" (list $cp.id) "existingSecret" $dp.existingSecret "secretKey" $dp.secretKey) -}}
 {{- $token := include "redis-onprem.suite.credential" (dict "root" $ "product" $cp.id "credential" "controlplane") | fromJson -}}
 {{- $_ := set $products $cp.id (dict "baseURL" (printf "http://%s:%d" (include "redis-onprem.suite.fqdn" (dict "root" $ "name" $cp.name)) (int $cp.port)) "credential" $token) -}}
 {{- end -}}
@@ -145,6 +150,8 @@ identityService.<path>:
 {{- $bindings := list -}}
 {{- if $oidc.issuer -}}
 {{- $derivedOIDC = dict "enabled" true "issuer" $oidc.accessTokenIssuer "jwks_uri" $oidc.jwksURI "audience" (list $oidc.audience) "role_claims" $oidc.roleClaims -}}
+{{- /* The multi-tenant mode: each operator token names its tenant, and singleTenantID stays empty. */ -}}
+{{- with include "redis-onprem.suite.tenantIdClaim" (dict "root" .) }}{{- $_ := set $derivedOIDC "tenant_id_claim" . -}}{{- end -}}
 {{- if $oidc.allowInsecureTransport }}{{- $_ := set $derivedOIDC "allow_insecure_transport" true -}}{{- end -}}
 {{- $bindings = include "redis-onprem.suite.ids.roleBindings" (dict "root" .) | fromJsonArray -}}
 {{- end -}}
@@ -338,6 +345,12 @@ arrive through the metadata Secret as a second --config.
 {{- end }}
 {{- $_ := set $cfg "runtime" $runtime -}}
 {{- $_ := set $cfg "product_validation" $validation -}}
+{{- with include "redis-onprem.redisClientTLS.config" .Values.redisClientTLS | fromJson }}
+{{- if hasKey $cfg "redis_client_tls" -}}
+{{- fail "configure the Redis client certificate in either configData.redis_client_tls or redisClientTLS, not both" -}}
+{{- end -}}
+{{- $_ := set $cfg "redis_client_tls" . -}}
+{{- end }}
 {{- $_ := unset $cfg "subject_grants" -}}
 {{- with (default (dict) .Values.subjectGrants).allowed }}
 {{- $allowed := list -}}
@@ -458,6 +471,7 @@ after the policy overlays, so an overlay cannot redirect them.
   mountPath: /etc/ssl/custom
   readOnly: true
 {{- end }}
+{{- include "redis-onprem.redisClientTLS.volumeMount" .Values.redisClientTLS }}
 {{- with .Values.volumeMounts }}
 {{ toYaml . }}
 {{- end }}
@@ -510,6 +524,7 @@ after the policy overlays, so an overlay cannot redirect them.
       - key: {{ (default (dict) $.Values.tls).caCertKey | default "ca.crt" }}
         path: {{ (default (dict) $.Values.tls).caCertKey | default "ca.crt" }}
 {{- end }}
+{{- include "redis-onprem.redisClientTLS.volume" .Values.redisClientTLS }}
 {{- with .Values.volumes }}
 {{ toYaml . }}
 {{- end }}

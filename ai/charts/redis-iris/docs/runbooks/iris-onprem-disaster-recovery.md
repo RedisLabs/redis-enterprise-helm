@@ -27,9 +27,11 @@ kubectl -n redis-ai get secrets -o json \
 ```
 
 The export holds credentials in clear text (base64): store it as you store the database
-passwords. It covers the Secrets you supplied and the ones the chart generated
-(`app.kubernetes.io/component=credentials`), which the Identity Service and the products already
-trust. Refresh it after every credential rotation.
+passwords. It covers the Secrets you supplied, the ones the chart generated
+(`app.kubernetes.io/component=credentials`), and the aggregates of the credential handover
+(redis-iris README, "Hand over generated credentials"), which the Identity Service and the products
+already trust. Refresh it after every credential rotation. Helm never restores a credential: this
+export is the only copy outside the cluster.
 
 ## Restore
 
@@ -39,14 +41,21 @@ namespace needs a new install, not a restore.
 
 1. Recreate the namespace: `kubectl create namespace redis-ai`.
 2. Apply the export: `kubectl -n redis-ai apply -f iris-secrets.json`.
-3. Install the same chart version with the same values:
-   `helm install iris ./redis-iris-<version>.tgz -n redis-ai -f values.yaml --wait --timeout 10m`.
-   The chart finds its generated credentials and reuses them.
+3. Install the same chart version with the same values, including the handover overlay
+   (`global.iris.secrets.generate: false` and the references):
+   `helm install iris ./redis-iris-<version>.tgz -n redis-ai -f values.yaml -f handover-values.yaml --wait --timeout 10m`.
+   The products read the restored credentials through those references. An install with
+   `generate: true` refuses them, listing their names, because the chart never accepts existing
+   credentials by itself: if the lost release had not been handed over yet, run the handover on the
+   restored Secrets first (README, "Hand over generated credentials"), then install with its overlay.
 4. Verify: `helm test iris -n redis-ai --logs`, then read a known record with an existing agent key.
 
 ## Without the export
 
 If the generated credential Secrets are lost too, the databases still hold the data, but the
 products and the Identity Service no longer share their service credentials and internal tokens.
-Install again with the same values: the chart generates new credentials, and agent keys, which the
-Identity Service keeps in its database, keep working. This path is documented, not tested.
+Install again with your values but without the handover overlay (`generate: true`): the chart
+generates new credentials in the empty namespace, and agent keys, which the Identity Service keeps in
+its database, keep working. Hand the new credentials over before the next upgrade. A supplied
+credential that is lost must be recreated by whoever provisions it. This path is documented, not
+tested.

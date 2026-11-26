@@ -32,8 +32,11 @@ global:
     # (helm template, Argo CD, Flux), which needs secrets.generate: false.
     renderMode: helm
     secrets:
-      # Generate the suite's credentials as lookup-guarded hook Secrets (see
-      # templates/credentials.yaml); each product's own generator is off.
+      # Bootstrap: create fresh suite credentials as hook Secrets (see
+      # templates/credentials.yaml); each product's own generator is off. Fails
+      # if any of the generated names already exists, so after the first install
+      # hand the credentials over and set false (README "Hand over generated
+      # credentials"). false: use the Secrets you reference, generate nothing.
       generate: true
       # With generate: false, the Secrets you supply. Each product reads only
       # its own key: <product>-dp in the first (memory-dp, playbook-dp, lens-dp,
@@ -49,10 +52,38 @@ global:
       # and Memory's trust in them. Needs both products, playbook.worker.region,
       # and playbook.worker.existingSecret. Turning it off: see README.md (Suite values).
       enabled: false
+    # Suite-level Redis inputs (MOD-21051). Each is a Redis client object,
+    # {urls: [...]} (credentials in the URL, rediss:// for TLS). They fill the
+    # iris-* overlay Secrets (templates/overlays.yaml) that a product reference
+    # names, for example memory.secrets.secretName: iris-memory-overlay; see
+    # examples/suite-inputs.yaml. Unset, nothing renders. They are stored in the
+    # release (and in Git under renderMode gitops).
+    redis:
+      # Every product's metadata keyspace, and Intent Router's mailbox.
+      metadata: {}
+      # Agent Memory database "1" and Agent Playbook content (not metadata's Redis).
+      content: {}
+      # Agent Memory background jobs and the extraction worker; empty: metadata.
+      jobs: {}
+      # Lens streams, content, index and DRAM.
+      lens: {}
+      # Context Gateway credential storage (credentialStorage.provider: redis).
+      gatewayCredentials: {}
+      # Intent Router storage (not the mailbox, metadata's Redis).
+      intent: {}
+    inference:
+      openai:
+        # Empty: every overlay uses noop models; set: OpenAI.
+        apiKey: ""
+        baseURL: https://api.openai.com/v1
+        chatModel: gpt-4o-mini
+        embeddingModel: text-embedding-3-small
+        embeddingDimensions: 1536
 
 # The admin token, Control token, and session key references below name the
-# generated Secrets (templates/credentials.yaml). To bring your own, create
-# Secrets with these names before installing, or point a reference at your own.
+# generated Secrets (templates/credentials.yaml). With generate: false they name
+# the Secrets you supply; never pre-create them for generate: true, which refuses
+# existing names.
 
 # Availability (MOD-20416, MOD-20760; README "Availability"). Every data plane
 # rolls without dropping ready capacity: one surge Pod, none removed before it is
@@ -148,6 +179,15 @@ contextGateway:
   controlplane:
     adminToken:
       existingSecret: iris-context-gateway-admin-token
+  # The Upstream credential keyring (credentialStorage.provider: redis). With
+  # this name and generate: true, templates/credentials.yaml creates it in the
+  # bootstrap (one base64 32-byte key per keyFiles file, k1 by default); an
+  # existing gateway-keyring fails the bootstrap like the other credentials. A CSI
+  # keyring (secretProviderClass) needs existingSecret: "".
+  credentialStorage:
+    redis:
+      keyring:
+        existingSecret: gateway-keyring
 
 intent:
   fullnameOverride: redis-intent-router

@@ -1,5 +1,14 @@
 # Identity Service chart changes
 
+## 1.1.1
+
+- No component changes.
+
+## 1.1.0
+
+- Add opt-in Iris token exchange and manage external identity provider records and settings per tenant.
+- Support Redis client certificates for mutual TLS and certificate-only login.
+
 ## 1.0.1
 
 - Publish every image of this chart for `linux/amd64` and `linux/arm64` under the same tag, as one

@@ -1,5 +1,18 @@
 # Intent Router chart changes
 
+## 1.1.1
+
+- No component changes.
+
+## 1.1.0
+
+- Add `redisClientTLS` to present a client certificate to Redis (mutual TLS and certificate-only
+  login). The Secrets are mounted read-only at `/etc/redis-client-tls` and the config names them;
+  a renewed certificate is used without a restart (MOD-14536).
+
+- Add ID and name filters on Router lists and support tenant-aware on-prem operation.
+- Back off convergence retries per Router when its database fails.
+
 ## 1.0.1
 
 - Publish every image of this chart for `linux/amd64` and `linux/arm64` under the same tag, as one

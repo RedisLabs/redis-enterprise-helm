@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: client-tls-fixture
+data:
+  config.yaml: |
+    {{- with include "redis-onprem.redisClientTLS.config" .Values.redisClientTLS | fromJson }}
+    {{- dict "redis_client_tls" . | toYaml | nindent 4 }}
+    {{- end }}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: client-tls-fixture
+spec:
+  containers:
+    - name: fixture
+      image: fixture:latest
+      {{- with include "redis-onprem.redisClientTLS.volumeMount" .Values.redisClientTLS | trim }}
+      volumeMounts:
+        {{- . | nindent 8 }}
+      {{- end }}
+  {{- with include "redis-onprem.redisClientTLS.volume" .Values.redisClientTLS | trim }}
+  volumes:
+    {{- . | nindent 4 }}
+  {{- end }}

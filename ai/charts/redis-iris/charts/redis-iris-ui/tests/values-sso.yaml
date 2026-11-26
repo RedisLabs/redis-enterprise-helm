@@ -92,6 +92,18 @@ products:
       port: 9200
       basePath: ""
       scheme: http
+  - key: memory-dp
+    label: "Agent Memory DP"
+    product: agent_memory
+    authScheme: bearer
+    healthPath: /health/readiness
+    showInNavigation: false
+    maxRequestBodyBytes: 8388608
+    upstream:
+      host: redis-agent-memory.redis-agent-memory.svc.cluster.local
+      port: 9000
+      basePath: ""
+      scheme: http
 
   - key: intent
     label: Intent Router

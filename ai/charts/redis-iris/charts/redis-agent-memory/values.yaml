@@ -4,7 +4,7 @@ image:
   repository: 'redislabs/agent-memory'
   pullPolicy: IfNotPresent
   # The image release this chart version ships; override to run another.
-  tag: "1.0.1"
+  tag: "1.1.1"
 
 # Empty falls back to global.imagePullSecrets.
 imagePullSecrets: []
@@ -20,7 +20,8 @@ fullnameOverride: 'redis-agent-memory'
 # static tenant of every enabled auth.oidc block (data plane and control
 # plane) and, with controlplane.config.render, the control plane's
 # auth.admin_tenant_id: stores created with the static admin token belong to
-# this tenant. Empty keeps the control plane's deprecated admin tenant "1"; with
+# this tenant. Empty keeps the control plane's deprecated admin tenant "1", or
+# the system tenant _system when the control plane has a tenant_id_claim; with
 # controlplane.config.existingSecret, set auth.admin_tenant_id yourself. Set
 # the Identity Service release's runtime.apiKeyTenant.singleTenantID to the
 # same value, which pins every agent key to it; this chart cannot check another
@@ -372,6 +373,21 @@ tls:
   # Key inside the Secret that contains the PEM-encoded CA certificate(s).
   caCertKey: "ca.crt"
 
+# Redis client certificates (mTLS (mutual TLS) and certificate-only login).
+# The server, worker and control plane present them on every rediss://
+# connection and reload a renewed pair without a restart. The queue monitor
+# does not: it is unsupported with certificate-only Redis.
+redisClientTLS:
+  # Pre-created Secret with tls.crt and tls.key, mounted at
+  # /etc/redis-client-tls/ and rendered as redis_client_tls in the service
+  # config. With config.existingSecret, add that block to your own config.
+  # Empty disables client certificates.
+  existingSecret: ""
+  # Per-connection certificates: [{name, existingSecret}], each mounted at
+  # /etc/redis-client-tls/<name>/tls.{crt,key} for a connection block's own
+  # tls: (cert_path, key_path) in the service config.
+  extraCertificates: []
+
 # Enterprise license file. Provide a customer-specific Secret and reference it
 # with license.existingSecret.
 license:
@@ -473,7 +489,7 @@ controlplane:
     repository: 'redislabs/agent-memory-control-plane'
     pullPolicy: IfNotPresent
     # The image release this chart version ships; override to run another.
-    tag: "1.0.1"
+    tag: "1.1.1"
 
   replicaCount: 1
 

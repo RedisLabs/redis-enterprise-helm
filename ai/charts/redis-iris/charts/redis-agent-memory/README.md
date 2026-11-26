@@ -51,7 +51,7 @@ Prerequisite matrix:
 | Area | Requirement | Notes |
 | --- | --- | --- |
 | Kubernetes | Kubernetes 1.28+ and Helm 3+ | The chart installs standard `apps/v1` Deployments, Services, optional `autoscaling/v2` HPAs, optional Ingress, and pre-created Secrets. |
-| Content store Redis | Redis 7.2.0 through 8.4.x with RedisJSON and RediSearch / Query Engine, reachable from RAM | Configure endpoints in `databases.<id>.urls`. The content store holds session memory JSON documents and long-term memory hashes, so it must support JSON commands, hashes, TTLs, `FT.CREATE`, `FT.SEARCH`, JSON indexing, and vector `HNSW` fields. |
+| Content store Redis | Redis 7.2.0 through 8.4.x with RedisJSON and Redis Search 2.10.0 or later, reachable from RAM | Configure endpoints in `databases.<id>.urls`. The store indexes require `INDEXMISSING` and `INDEXEMPTY` from Redis Search 2.10.0. The content store holds session memory JSON documents and long-term memory hashes, so it must support JSON commands, hashes, TTLs, `FT.CREATE`, `FT.SEARCH`, JSON indexing, and vector `HNSW` fields. |
 | Job Redis | Redis 6.2+ reachable from RAM server and worker pods | Configure `background_jobs.redis.urls` to the regional job Redis endpoint, use a non-volatile / `noeviction` policy, and keep exactly one async backend enabled per process. The job Redis does not need RediSearch or RedisJSON unless the same Redis also serves as the content store. |
 | Metadata Redis | Redis 6.2+ reachable from the control plane, server, and worker | Configure `metadata.urls` and a shared `metadata.namespace`. It stores dynamic store records. Agent-key records live in the Identity Service release's own metadata Redis, which may be the same Redis. |
 | Architecture support | Releases built by `memory-onprem-release.yml` publish one multi-platform tag (`linux/amd64` and `linux/arm64`) for each RAM image; earlier releases are `linux/amd64` only | On a mixed or ARM64 cluster the node pulls its own platform from the same tag. A private-registry mirror must copy every platform (`skopeo copy --all` or `crane copy`); `docker pull`/`tag`/`push` mirrors only the host platform. The optional `ghcr.io/jpedrosouza/asynqdash` console image publishes both platforms. |
@@ -787,6 +787,324 @@ previously not instrumented, now reports under `session_summary_view_llm`.
 Each strategy keeps its own HTTP client and connection pool: clients are
 cached per strategy tag and resolved configuration.
 
+### Using Vertex AI for embeddings
+
+Memory can embed with Google's `gemini-embedding-001` through the `vertex-ai`
+embedding protocol, authenticated with a Google service account. See
+`examples/vertex-ai/` for a values file and credentials overlay. Chat models are
+configured separately; see the Gemini chat section of
+[`pkg/inference/README.md`](../../pkg/inference/README.md).
+
+```yaml
+embedding:
+  provider: vertex            # the embedders_connection_details key below
+  models:
+    default_embedding_model: gemini-embedding-001
+    dimensions: 1536
+embedders_connection_details:
+  vertex:
+    protocol: vertex-ai
+    base_url: https://us-central1-aiplatform.googleapis.com/v1/projects/<project>/locations/us-central1/publishers/google/models/gemini-embedding-001:predict
+    embeddings_input_field: content
+    credentials:
+      type: gcp-service-account   # the key itself arrives through the overlay
+```
+
+- **URL and dimension.** `base_url` is the full `:predict` URL, and the model in
+  it is the model used. In `content` mode `dimensions` is sent as `outputDimensionality`
+  and checked against every returned vector (in `text` mode it is neither); `gemini-embedding-001` accepts 768,
+  1536 and 3072. `gemini-embedding-2` is not supported. Set the same width in
+  `controlplane.configData.embedding.dimensions`, which sizes the index.
+- **Layering over `examples/basic`.** Helm merges maps, so `examples/basic`
+  keeps its `openai` embedder entry, and Memory validates every embedder at
+  startup. The overlay therefore also carries a placeholder `openai` key (an
+  `openai: null` override does not remove the entry). Set both widths:
+  `memory.embedding.models.dimensions` and
+  `controlplane.configData.embedding.dimensions`; the control plane sizes the
+  vector index from its own value.
+- **Request shape.** `embeddings_input_field: content` is the shape Google's
+  published models expect. Leave it out for a Model Garden endpoint that takes
+  `text`.
+- **Credentials.** Put the service-account key in the credentials overlay under
+  `embedders_connection_details.vertex.credentials.gcp.service_account_json`,
+  never in values. The account needs permission to call Vertex AI
+  (`roles/aiplatform.user` is the usual role). After you replace the key, run
+  `kubectl rollout restart` on the Memory data plane and worker workloads.
+- **Batches.** At most 250 texts go in one request. The shared client splits a
+  larger call into ordered requests.
+- **Over-limit input is rejected.** `gemini-embedding-001` reads about 2,048
+  tokens, roughly 8,000 English characters, while Memory accepts up to 50,000
+  characters. In `content` mode Memory sends `autoTruncate: false`, so Vertex
+  refuses an over-limit input and Memory returns a client error. The text is not
+  stored and is never silently cut. The limit is in tokens, so token-dense text
+  fails sooner than plain English. A `text`-mode endpoint is sent no
+  `autoTruncate` and keeps its own behavior.
+
+| Symptom | Cause |
+| --- | --- |
+| Client error on a long memory | The text is over the model's token limit. Shorten or split it. |
+| HTTP 500 "The service could not complete a model request"; the data-plane log says "platform model credentials rejected by provider" with `invalid_grant` | The service account is unknown or disabled. Replace the key. |
+| Startup error about the service-account key | `service_account_json` is missing, empty or malformed. |
+| Vector width mismatch (`ErrInvalidResponse`) | `dimensions` is not one the model accepts, or the endpoint serves a different model. |
+
+#### Gemini chat for the LLM roles
+
+Vertex's OpenAI-compatible endpoint serves the Memory LLM roles. The registry
+entry uses the `openai` protocol under an alias key, and each `llm` block that
+names it carries the service-account credential. `examples/vertex-ai/` configures
+the instruct, summarisation and classification roles this way.
+
+```yaml
+inference_providers:
+  vertex-gemini:
+    protocol: openai
+    endpoint:
+      base_url: https://aiplatform.googleapis.com/v1/projects/<project>/locations/global/endpoints/openapi
+      base_url_as_is: true          # otherwise Iris appends /v1 and Google answers 404
+      generation_api: chat_completions   # the endpoint has no Responses API
+promote_session_memory:
+  strategies:
+    instruct:
+      llm:
+        provider: vertex-gemini
+        credentials:
+          type: gcp-service-account   # the key arrives through the overlay
+        models:
+          default_chat_model: google/gemini-3.6-flash
+```
+
+- Use the `global` location. Model names are `google/<model>`.
+- Set `generation_api: chat_completions` on the entry: only summary views default
+  to it, and every other role would call the Responses API, which Vertex does not serve.
+- Use `google/gemini-3.6-flash`. Gemini reasoning models such as
+  `google/gemini-3.8-flash` spend output tokens on reasoning and answer slowly for
+  namespace routing, which has a fixed 3-second deadline. Memory sends no output
+  cap unless you set `promote_session_memory.strategies.instruct.max_completion_tokens`;
+  set it for these models (the example uses 4096).
+- Put each role's key in the overlay under that role's
+  `credentials.gcp.service_account_json`, then run `kubectl rollout restart`.
+
+### Using Anthropic for LLM roles
+
+Anthropic can serve every Memory LLM role (promotion, custom extraction,
+session summarisation, classification, summary views) through its
+OpenAI-compatible endpoint. Anthropic has no embeddings API, so it never
+replaces the embedder: keep `embedding` on another provider such as OpenAI. A
+config that selects `anthropic` as an embedder fails at startup with
+`embedder "<name>": protocol: must be one of cohere, noop, oip, openai, vertex-ai`
+(`key must be one of ... when protocol is unset` when the entry is keyed `anthropic`).
+
+Register the connection once, set `generation_api: chat_completions`
+explicitly, and point each LLM role at it. Keep the key in the credentials
+overlay, not in values. See `examples/anthropic/` for a complete values file
+and overlay.
+
+```yaml
+inference_providers:
+  anthropic:
+    endpoint:
+      base_url: https://api.anthropic.com/v1/
+      generation_api: chat_completions
+      auth_format: bearer
+promote_session_memory:
+  strategies:
+    instruct:
+      llm:
+        provider: anthropic
+        credentials:
+          type: static   # api_key arrives through the overlay
+        models:
+          default_chat_model: claude-haiku-5-5
+```
+
+Behavior to know before you switch a role to Anthropic:
+
+- **Credential changes.** Memory reads the key when it builds its client.
+  After you change the Secret, run `kubectl rollout restart` on the Memory
+  data plane and worker workloads.
+- **Missing and invalid keys.** An invalid key returns `401 Invalid Anthropic API Key`.
+  A missing key never reaches Anthropic: with a `static` credential and an empty
+  `api_key`, Memory fails when it builds the client ("api_key is required for
+  static credentials"). If you see that error, check that the overlay holds the
+  key under the right role.
+- **Anthropic as an embedder.** Anthropic has no embeddings API, so it can
+  never be an embedder. An embedder endpoint that names the `anthropic`
+  protocol, or is declared under the key `anthropic`, fails at startup. An
+  Anthropic URL configured as an `openai` embedder cannot be recognised,
+  because a proxy can hide the host. It passes startup and fails on the first
+  embedding call with a `404` whose body contains `not_found_error`. If you see
+  that error, point the embedder at a provider that embeds, such as OpenAI.
+- **Summary views.** Anthropic accepts only strict, closed response formats,
+  and those cannot describe a summary view with optional fields or free-form
+  objects. For Anthropic, Memory sends no response format. It puts the view
+  schema in the prompt, asks for one JSON object, and checks the reply against
+  the schema before it stores the value. Other providers keep today's response
+  format. Custom memory types and extraction are not affected.
+  - Optional fields and free-form `object` fields work. A field the model
+    cannot support from the memories is left out of the value. It is not
+    filled with a placeholder.
+  - When a view is built from several batches of memories, a value stated in a
+    newer batch replaces an older one, including `false`, `0` and an empty
+    list. A field a newer batch does not mention keeps its older value.
+  - The provider does not enforce the shape of the reply. A reply that is not
+    one valid JSON object matching the schema fails the refresh with
+    `OUTPUT_VALIDATION_FAILED`. A code fence or a sentence around the object is
+    removed first.
+  - Avoid a catch-all free-form `object` field such as "anything else". The
+    model can copy unrelated memories into it, so every partial result stays as
+    large as its input and the refresh fails or times out. This can happen with
+    other providers too. A test with OpenAI needed many more model calls and
+    returned a truncated, less accurate value.
+- **Numeric bounds and list sizes.** Anthropic rejects `minimum`, `maximum`,
+  `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `minLength`,
+  `maxLength` and `maxItems` in response formats and tool schemas, so Memory
+  removes them from those. A summary view schema travels as prompt text, so
+  bounds it declares stay there as guidance. The response validation inside
+  Memory enforces all of these limits.
+- **Model limits and pricing.** Context size, output limit and pricing are the
+  provider's; check its current figures for `claude-haiku-5-5`.
+
+### Using Cohere for LLM roles and embeddings
+
+Cohere can serve every Memory LLM role and the embedder through its
+OpenAI-compatible endpoint, with a static API key. See `examples/cohere/` for a
+values file and overlay.
+
+```yaml
+inference_providers:
+  cohere:
+    endpoint:
+      base_url: https://api.cohere.ai/compatibility/v1
+      generation_api: chat_completions   # Cohere serves no Responses API
+embedding:
+  provider: cohere
+  models:
+    default_embedding_model: embed-v5.0-pro
+    dimensions: 2048
+embedders_connection_details:
+  cohere:
+    protocol: cohere
+    base_url: https://api.cohere.ai/compatibility/v1
+    credentials:
+      type: static   # api_key arrives through the overlay
+```
+
+- **Role models.** Use `command-a-plus-05-2026` for extraction and summarisation
+  and set `promote_session_memory.strategies.instruct.max_completion_tokens`
+  (the example uses 4096): Memory sends no output cap by default. Use
+  `command-a-plus-05-2026` for `classification.llm` too: Memory uses it for
+  classification and namespace routing. Do not use `command-r7b-12-2024` for
+  either: it is faster, but it left routing cases unmatched in testing and can
+  return invalid JSON for document extraction.
+- **Embedding width.** Cohere is not sent a `dimensions` setting, so the
+  configured `dimensions` must be the model's own width, and a different width
+  fails the call. `embed-v5.0-pro` and `-fast` return 2048; set the same width in
+  `controlplane.configData.embedding.dimensions`, which sizes the index. No Cohere model
+  reaches 3072, the Memory default, so a Cohere deployment is a separate vector
+  space. Changing the model or width does not migrate or re-embed existing
+  vectors.
+- **Layering over `examples/basic`.** Helm merges maps, so `examples/basic`
+  keeps its `openai` embedder entry, and Memory validates every embedder at
+  startup. The overlay therefore also carries a placeholder `openai` key (an
+  `openai: null` override does not remove the entry). Set both widths:
+  `memory.embedding.models.dimensions` and
+  `controlplane.configData.embedding.dimensions`; the control plane sizes the
+  vector index from its own value.
+- **Batches.** At most 96 texts go in one request; the shared client splits
+  larger calls in order.
+- **Long input.** Cohere trims over-limit input on its side without an error,
+  after Iris's own 15,000-byte cut. Token-dense text can be shortened silently.
+  Cohere's compatible endpoint cannot be told to reject it.
+- **Summary views.** Cohere rejects an object with no required fields, so for
+  Cohere Memory sends no response format, puts the view schema in the prompt and
+  checks the reply before it stores the value, as it does for Anthropic.
+- **Credential changes.** Run `kubectl rollout restart` on the Memory data plane
+  and worker workloads after you change the Secret.
+- **Failures.** A wrong key returns `401 Incorrect API key provided`. A missing
+  key fails when Memory builds the client ("api_key is required for static
+  credentials"). A request with more than 96 texts that
+  bypasses the shared client returns `400 total number of texts must be at most 96`.
+
+### Enabling summary views
+
+Summary views are off by default. Enable them in `summary_views` and give them
+explicit limits; Memory refuses to start with `enabled: true` and any of these
+unset or zero:
+
+```yaml
+summary_views:
+  enabled: true
+  llm:                      # a full client block, not an inference_providers entry
+    provider: openai        # anthropic, cohere, or openai with a Vertex endpoint
+    endpoint:
+      base_url: https://api.openai.com
+    credentials:
+      type: static          # api_key arrives through the overlay
+    models:
+      default_chat_model: gpt-5.6-luna
+  page_size: 10
+  max_definitions: 100
+  max_partitions: 100
+  max_concurrent_refreshes: 2
+  max_concurrent_refreshes_per_store: 1
+  max_input_tokens: 8000
+  max_source_records: 100
+  max_source_tokens: 100000
+  default_debounce: 1s
+  min_debounce: 1s
+  max_debounce: 1m
+  default_reconcile_interval: 1h
+  min_reconcile_interval: 1s
+  max_reconcile_interval: 24h
+  schedule_repair_interval: 1m
+  cleanup_batch_size: 100
+  cleanup_timeout: 5s
+  generation:
+    max_output_tokens: 4000
+    timeout: 90s
+dataplane_client:
+  base_url: http://redis-agent-memory:9000   # the worker calls the data plane for view maintenance
+```
+
+- `summary_views.llm` carries its own `endpoint`. For Anthropic and Cohere set
+  `endpoint.base_url` and `endpoint.generation_api: chat_completions`; for Vertex
+  use `provider: openai` with the Vertex `base_url`, `base_url_as_is: true` and
+  `credentials.type: gcp-service-account`. Keys go in the overlay under
+  `summary_views.llm.credentials`.
+- The worker needs `dataplane_client.base_url`; without it view maintenance jobs
+  fail and retry.
+- Anthropic and Cohere answer in prompt-guided mode, as described above.
+
+### Enabling custom extraction and document ingestion
+
+Both are off by default and need the worker to run. Custom extraction uses the
+instruct strategy's LLM unless `promote_session_memory.strategies.custom_extraction.llm`
+is set.
+
+```yaml
+custom_extraction:
+  enabled: true
+document_ingestion:
+  enabled: true
+  max_decoded_bytes: 1048576
+  max_input_tokens: 8000
+  max_reconciliation_input_tokens: 32000
+  max_chunks: 32
+  max_output_records: 100
+  max_queued_bytes_per_store: 10485760
+  max_retries: 3
+  max_execution_seconds: 900
+  source_retention_seconds: 86400       # required; Memory refuses to start without it
+  checkpoint_retention_seconds: 86400   # required; Memory refuses to start without it
+```
+
+Register a custom memory type with an `extractionStrategy.prompt` on the control
+plane, then write session events: the worker extracts memories of that type with
+their attributes. For documents, create an extractor (`source: DOCUMENTS`,
+`strategy: CUSTOM`, a registered `memoryType`) and post the document to
+`document-ingestions`; the worker chunks it and writes the extracted memories.
+Both work with OpenAI, Anthropic, Cohere and Vertex.
+
 Most important config fields:
 
 - `request_region.*`: request-origin region resolution for regional queue submission
@@ -1053,9 +1371,8 @@ server and worker:
   [Connecting to the Identity Service](#connecting-to-the-identity-service).
 
 > **Upgrading an existing install:** the internal token is optional. A config that
-> carries only `auth.admin_token` keeps starting unchanged, and the
-> `/internal/v1/grants/validate` route is simply not registered — requests to it
-> return 404. Add `auth.internal_token` only when you connect an Identity Service
+> carries only `auth.admin_token` keeps starting unchanged. The control plane
+> refuses each request to the `/internal/v1/grants/validate` route with 401. Add `auth.internal_token` only when you connect an Identity Service
 > release and want it to validate grants against this control plane. If you manage the CP
 > config yourself through `controlplane.config.existingSecret`, adding the token to
 > chart values is not enough: the config file must also point at the mounted path
@@ -1255,12 +1572,12 @@ precedence"):
 
 | Value | Under redis-iris |
 | --- | --- |
-| `tenantId` | `global.iris.tenantId` (default `default`) |
+| `tenantId` | `global.iris.tenantId` (default `default`). With `global.iris.auth.oidc.tenantIdClaim`, no tenant |
 | `license.existingSecret`, `license.secretKey` | `global.iris.license.*` (defaults `iris-license`, `license.key`) |
 | `auth.oidc.audience` | `global.iris.auth.oidc.audience` (default `api://redis-iris`) |
 | `dataplane.identityServiceBaseURL`, `identityService.allowInsecureTransport` | the suite's Identity Service, `http://iris-identity-service.<namespace>.svc.<clusterDomain>:9200` |
-| `controlplane.configData.auth.oidc` | `global.iris.auth.oidc` (issuer = access-token issuer) with `role_mappings` from `global.iris.auth.roleBindings` for `agent_memory`, only when an issuer is set |
-| `memory.auth.oidc` `issuer`, `jwks_uri`, `role_claims`, `role_mappings`, `allow_insecure_transport` | The same `global.iris.auth.oidc` values, only when `memory.auth.oidc.enabled` is true (the suite does not enable the data plane's OIDC for you) and an issuer is set. A different local value fails the render, including `allow_insecure_transport: true` against an https JWKS; `role_mappings` come from `global.iris.auth.roleBindings`. Enabled with no issuer or `jwks_uri` also fails the render, standalone too; set `config.render=false` or `config.existingSecret` to keep them in your own config |
+| `controlplane.configData.auth.oidc` | `global.iris.auth.oidc` (issuer = access-token issuer) with `role_mappings` from `global.iris.auth.roleBindings` for `agent_memory`, only when an issuer is set. `tenant_id_claim` is `global.iris.auth.oidc.tenantIdClaim` |
+| `memory.auth.oidc` `enabled`, `issuer`, `jwks_uri`, `role_claims`, `role_mappings`, `tenant_id_claim`, `allow_insecure_transport` | The suite enables data-plane OIDC when `global.iris.auth.oidc.issuer` is set, using the same IdP settings as the control plane. `tenant_id_claim` is `global.iris.auth.oidc.tenantIdClaim`, and a local `static_tenant_id` with it fails the render. `role_mappings` come from `global.iris.auth.roleBindings` for `agent_memory`. A different local value fails the render. Enabled OIDC without an issuer or `jwks_uri` also fails, standalone too; with `config.existingSecret`, supply the OIDC block in that Secret |
 | `workerAuth.enabled`, `memory.dataplane_client`, `memory.auth.worker_identity` | the worker's projected ServiceAccount token, trusted against `global.iris.workloadIdentity` for subject `system:serviceaccount:<namespace>:<worker ServiceAccount>` |
 
 Leave these unset: a value that differs fails the render and names the field.
@@ -1586,28 +1903,50 @@ Static configuration keys (`metadata.source`, `metadata.stores`, and
 through the bundled Control Plane; there is no automatic import or adoption of
 static store IDs or data.
 
-### Federated data-plane authentication preview
+### Operator SSO on the data plane
 
-OIDC is disabled by default. This preview validates IdP access tokens, but
-subject-based grant resolution is not implemented yet: otherwise-valid
-federated resource requests receive `403`. Use agent keys for working runtime
-access until [MOD-18385](https://redislabs.atlassian.net/browse/MOD-18385) lands.
-Enabling OIDC does not disable agent keys or worker identity.
+The suite enables OIDC on both planes when an IdP issuer is set. Standalone
+installations must enable it explicitly. The on-prem data plane validates the
+token's signature, issuer, audience, and expiry. With an explicit
+`auth.oidc.static_tenant_id`, that tenant must match `auth.admin_tenant_id`.
+Mapped human viewers receive store read access, operators receive data read/write
+access, and `product_admin` or `suite_admin` users receive full `mem-store:*`
+access within that tenant. Shared configuration, including global namespace
+routing, still requires an admin role. Kubernetes ServiceAccounts and configured
+machine subjects cannot gain these human console grants.
+
+Claim-based OIDC (`auth.oidc.tenant_id_claim`) keeps its existing tenant resolution
+and role/grant policy. It does not receive these automatic console grants.
+
+Store tenant and personal-record ownership checks still apply. Full store
+grants do not let an admin read another user's personal records. The shared
+admin token has no user ID and cannot access personal records when ownership
+enforcement is enabled. Enabling OIDC keeps agent keys, worker identities, and
+the local admin token available.
+
+The admin token is a shared recovery credential for both the control plane and
+the authenticated data plane. A store without an owning tenant can still appear
+in the control-plane list, but data-plane access with this token is denied, so
+the Inspector cannot open it. Development installations with `auth.method: none`
+remain open; the chart does not inject an admin-token requirement into that mode.
 
 The following is a data-plane application configuration fragment. With
 `config.render=true`, place it under `memory:` in Helm values (for example,
 `memory.auth.oidc.enabled`). With `config.existingSecret`, place it at the root
-of the data-plane configuration file in that Secret instead.
+of the data-plane configuration file in that Secret instead. For this Helm
+example, also set top-level `tenantId: default` so the CP and DP use the same
+tenant.
 
 ```yaml
 auth:
+  admin_tenant_id: default
   oidc:
     enabled: true
     issuer: https://idp.example.com/tenant
     jwks_uri: https://idp.example.com/tenant/discovery/v2.0/keys
     static_tenant_id: default
     role_mappings:
-      memory-operators: operator
+      memory-admins: product_admin
 ```
 
 `issuer` may be `http://` or `https://`: it is an identifier compared with the
@@ -1623,29 +1962,46 @@ grant check, and a role-claim value (read from `role_claims`, default
 `[roles, groups]`) confers an Iris role only through an explicit mapping,
 matched case-insensitively. Without one, every federated caller is roleless and
 is refused at the role gate with the same `403` a missing grant produces. The
-default-off `allow_unmapped_roles` additionally accepts unmapped claim values
-verbatim; leave it off unless you govern the IdP's group namespace, because with
-it on a group named `operator` confers that role by spelling alone. Mapping
-keys that are equal ignoring case (`admins` and `Admins`) are refused at
-startup.
+on-prem data plane rejects `allow_unmapped_roles` and `oidc_role_only` for
+static-tenant console grants, which require explicit role mappings and resource grants. Mapping keys
+that are equal ignoring case (`admins` and `Admins`) are refused at startup.
 
 Every agent key carries a tenant. For a single-tenant installation, set
 `tenantId`. The Identity Service then stamps it on each grant that has no tenant
 when you create or change a key, and it rejects a grant that names another tenant.
 Stores created with the static admin token also belong to `tenantId`: the chart
 renders it as the control plane's `auth.admin_tenant_id`, and a differing
-`controlplane.configData.auth.admin_tenant_id` fails the render. With `tenantId`
-empty, admin-token stores keep the deprecated tenant `"1"`.
+`controlplane.configData.auth.admin_tenant_id` fails the render. With no
+`tenantId`, tenant claim, or explicit admin tenant, admin-token stores keep the
+deprecated tenant `"1"` so existing 0.0.x stores retain their owner.
+
+In the multi-tenant mode, `tenant_id_claim` names the tenant of each caller.
+Then, when `auth.admin_tenant_id` is not set, admin-token stores belong to the
+system tenant `_system`. No IdP can name that tenant, so no tenant user sees
+those stores. Each plane gets this tenant from its own `auth.oidc`. So when the
+data plane uses the admin token, set `tenant_id_claim` on both
+`controlplane.configData.auth.oidc` and `memory.auth.oidc`, or set
+`controlplane.configData.auth.admin_tenant_id`. If not, the render fails.
+
+Upgrade note: before this change, a release with `tenant_id_claim` and no
+`auth.admin_tenant_id` kept admin-token stores in tenant `"1"`. After the
+upgrade, new admin-token stores go to `_system`, and the data-plane admin token
+can no longer use stores in the old tenant. To retain that access, set
+`controlplane.configData.auth.admin_tenant_id: "1"` before the upgrade.
+Use this only if tenant `"1"` is the intended owner; its IdP users can access
+those stores.
 
 An IdP user sees only the stores of its own tenant, also with `suite_admin`.
-Only the static admin token sees the stores of all tenants. So with `tenantId`
-empty, an IdP admin whose tenant is not `"1"` cannot see the admin-token stores.
-To prevent this, set `tenantId`, or set the control plane's `static_tenant_id`
-to `"1"`.
+Only the static control-plane admin token sees the stores of all tenants.
+An IdP admin sees admin-token stores only when those stores belong to its own
+tenant. Use the IdP token to create stores for that tenant.
 
 For a multi-tenant installation, leave `tenantId` empty and configure the
 Identity Service release's `controlAuth.oidc` with a `tenant_id_claim`. Each
-grant then names its tenant. A control OIDC with only a `static_tenant_id` also
+grant then names its tenant. Under the `redis-iris` umbrella, set
+`global.iris.auth.oidc.tenantIdClaim` instead: the umbrella then leaves
+`tenantId` empty and sets `tenant_id_claim` on the Identity Service and on this
+chart. A control OIDC with only a `static_tenant_id` also
 renders: operator tokens carry that tenant, and the admin token must name a
 tenant on each write. The Identity Service chart does not render with none of
 these.
@@ -1659,11 +2015,10 @@ support. For an older configuration containing both fields, choose the intended
 tenant source explicitly before upgrading. Static assignment must not be used
 for a multi-tenant deployment.
 
-**Current RAM DP ownership constraint:** the resolved tenant string (static or
-claim-derived) must equal the owning store's numeric account ID in decimal form,
-for example `"1"` for the `databases."1"` account. A symbolic value such as
-`"onprem"` from the CP integration guide does not match this DP ownership check.
-The shared tenant-ID type remains an opaque string; this is a RAM DP limitation.
+**RAM DP ownership check:** the resolved tenant string (static or
+claim-derived) must be equal to the `TenantID` of the store. The match is exact.
+Only a legacy store with no `TenantID` falls back to its numeric account ID in
+decimal form.
 During the preview, both missing grants and a tenant mismatch result in `403`.
 
 #### Token audience
@@ -1730,6 +2085,51 @@ immediate revocation.
 
 See the [authentication support matrix](../../docs/specs/identity-service/product-authentication-support.md)
 for product and deployment coverage.
+
+## Redis client certificates
+
+Use this when your Redis Enterprise database requires a client certificate:
+mTLS (mutual TLS), or certificate-only login with no password. The
+server, worker and control plane present the certificate on every `rediss://` connection. The full
+setup, rotation and CA (certificate authority) rotation steps are in the
+[Redis client certificate runbook](../../docs/runbooks/iris-onprem-redis-mtls.md).
+
+```yaml
+redisClientTLS:
+  existingSecret: redis-client-cert        # Secret with tls.crt and tls.key
+  extraCertificates:                       # optional, per connection
+    - name: store-1
+      existingSecret: redis-client-cert-store-1
+```
+
+- The chart projects every Secret into one read-only volume at
+  `/etc/redis-client-tls`, without `subPath`: the default pair at
+  `/etc/redis-client-tls/tls.crt` and `tls.key`, an extra one at
+  `/etc/redis-client-tls/<name>/tls.crt` and `tls.key`.
+- The chart renders `redis_client_tls` with the default pair's paths into the
+  service config. When the config comes from your own Secret (`config.existingSecret` or
+  `controlplane.config.existingSecret`), the chart cannot change it: add
+
+  ```yaml
+  redis_client_tls:
+    cert_path: /etc/redis-client-tls/tls.crt
+    key_path: /etc/redis-client-tls/tls.key
+  ```
+
+  to that config yourself.
+- An extra certificate is used by a connection block that names it in its own
+  `tls:` block (`cert_path`, `key_path`). A `tls:` block on a `redis://` URL
+  stops the service at startup.
+- Certificate-only login: use a `rediss://` URL with no user name or password.
+  With a password in the URL, the service sends both (mTLS plus password).
+- Rotation: update the Secret. The service rereads the files about every 30
+  seconds and uses the new pair for new connections, without a restart. A
+  broken pair keeps the last good one and increments
+  `iris.redis.client_certificate.reload_failures`.
+- Server trust stays on `tls.caCertSecret`.
+
+- The queue monitor (Asynqdash) has no client certificate: it does not work
+  with a Redis that requires one.
 
 ## Queue Monitor (optional)
 
@@ -1865,6 +2265,8 @@ policy in front of the queue monitor Service.
   `1.2.0` (Git tag `v1.2.0`), a maintained fork of `hibiken/asynqmon` that keeps
   its flags and reads the same Asynq data in Redis. Keep the image tag pinned and
   validate it when changing the repository's Asynq version.
+- The monitor presents no Redis client certificate, so it does not work with
+  certificate-only Redis (see [Redis client certificates](#redis-client-certificates)).
 - The image publishes `linux/amd64` and `linux/arm64` manifests from one tag. A
   private-registry mirror must copy both (`skopeo copy --all` or `crane copy`).
 

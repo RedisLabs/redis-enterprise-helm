@@ -1,0 +1,85 @@
+# Redis Agent Memory — Vertex AI embeddings (gemini-embedding-001) and Gemini
+# chat for the LLM roles (google/gemini-3.6-flash).
+#
+# Start from ../basic/values.yaml and merge this file over it:
+#   helm install ram ../.. -f ../basic/values.yaml -f values.yaml \
+#     --set image.tag=<RAM_VERSION> --set controlplane.image.tag=<RAM_VERSION>
+#
+# The service-account key arrives through the overlay in
+# secret-overlay.example.yaml, never through values.
+
+memory:
+  inference_providers:
+    # Gemini chat goes through Vertex's OpenAI-compatible endpoint, so the entry
+    # uses the openai protocol under an alias key. The service-account credential
+    # belongs to each llm block below (and its key to the overlay), not here.
+    vertex-gemini:
+      protocol: openai
+      endpoint:
+        # The global location; the Gemini models answered 404 in us-central1.
+        base_url: https://aiplatform.googleapis.com/v1/projects/REPLACE_PROJECT/locations/global/endpoints/openapi
+        # Without this Iris appends /v1 to an OpenAI base URL and Google answers 404.
+        base_url_as_is: true
+        # The endpoint has no Responses API.
+        generation_api: chat_completions
+        timeout: 60s
+      http_client:
+        skip_verify: false
+        timeout: 60s
+        max_retry_attempts: 3
+
+  promote_session_memory:
+    strategies:
+      instruct:
+        max_completion_tokens: 4096
+        llm:
+          provider: vertex-gemini
+          credentials:
+            type: gcp-service-account
+          models:
+            # Memory sends no output cap by default; Gemini reasoning models spend
+            # output tokens on reasoning, so set one.
+            default_chat_model: google/gemini-3.6-flash
+
+  session_summarisation:
+    enabled: true
+    llm:
+      provider: vertex-gemini
+      credentials:
+        type: gcp-service-account
+      models:
+        default_chat_model: google/gemini-3.6-flash
+
+  classification:
+    llm:
+      provider: vertex-gemini
+      credentials:
+        type: gcp-service-account
+      models:
+        default_chat_model: google/gemini-3.6-flash
+
+  embedding:
+    # Selects the embedders_connection_details entry below.
+    provider: vertex
+    models:
+      default_embedding_model: gemini-embedding-001
+      # gemini-embedding-001 accepts 768, 1536 and 3072.
+      dimensions: 1536
+
+  embedders_connection_details:
+    vertex:
+      protocol: vertex-ai
+      # The full :predict URL. The model in the URL is the model used.
+      base_url: https://us-central1-aiplatform.googleapis.com/v1/projects/REPLACE_PROJECT/locations/us-central1/publishers/google/models/gemini-embedding-001:predict
+      # Google's published embedding models take `content`. Omit this line for
+      # a Model Garden endpoint that takes `text`.
+      embeddings_input_field: content
+      credentials:
+        type: gcp-service-account
+
+# The control plane sizes the long-term-memory index from its own copy of the
+# width. It must equal memory.embedding.models.dimensions above.
+controlplane:
+  configData:
+    embedding:
+      dimensions: 1536

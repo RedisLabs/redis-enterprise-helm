@@ -9,10 +9,12 @@
 # with the chart's Ingress below, or with your own routing to the Service
 # redis-context-gateway-dataplane:8083 (then set dataplane.ingress.enabled: false).
 #
-# Create these first in namespace redis-ai (tests/kind.sh shows each one):
+# Create these first in namespace redis-ai (scripts/quickstart-local.sh shows each one except mcp-tls):
 #   gateway-metadata          key config.yaml  metadata_db.urls (the Gateway metadata Redis)
 #   gateway-credential-redis  key config.yaml  credential_storage.redis.urls (a separate Redis)
-#   gateway-keyring           key k1           a base64 32-byte key: openssl rand -base64 32
+#   gateway-keyring           key k1           only with global.iris.secrets.generate: false: a base64
+#                                              32-byte key (openssl rand -base64 32); with generate: true
+#                                              the chart creates it, and an existing one is refused
 #   mcp-tls                   kubernetes.io/tls for mcp.example.com
 # The license, tenant, Identity Service connection, and credentials are the suite's.
 

@@ -22,13 +22,26 @@ their playbook.* field under the umbrella (playbook/helm/templates/validation.ya
 {{- if and $memory (not (dig "secrets" "secretName" "" .Values.memory)) (not (dig "secrets" "additionalSecrets" list .Values.memory)) (not (dig "config" "existingSecret" "" .Values.memory)) }}
 {{- fail "memory.secrets.secretName: required with global.iris.products.memory.enabled (the Agent Memory Redis URLs and model credentials), or set memory.secrets.additionalSecrets or memory.config.existingSecret" }}
 {{- end }}
+{{- /* Suite inputs (templates/overlays.yaml): a reference naming an iris-* overlay needs the inputs
+that fill it. Messages name fields only, never a URL or a key. */}}
+{{- range $o := include "redis-iris.overlays" . | fromJsonArray }}
+{{- if $o.missing }}
+{{- fail (printf "%s: required with %s: %s, which redis-iris renders from it" $o.missing $o.ref $o.name) }}
+{{- end }}
+{{- if $o.sameRedis }}
+{{- fail (printf "global.iris.redis.content: name another Redis than global.iris.redis.metadata; Agent Playbook refuses to keep its content beside its metadata (%s: %s)" $o.ref $o.name) }}
+{{- end }}
+{{- end }}
 {{- /* MCP clients use contextGateway.publicBaseURL as is, so under the suite it is an https origin:
 the chart's own rule accepts http:// and a path for standalone installs. It is never derived from
-global.iris.publicURL, the UI's address. */}}
+global.iris.publicURL, the UI's address. A local development install (MOD-21051) may use an http://
+origin such as http://localhost:8083 (a port-forward) with contextGateway.profile dev and no chart
+Ingress. The rule guards against a mistaken http:// origin; it does not check that the host is local. */}}
 {{- if $contextGateway }}
 {{- $publicBaseURL := toString (dig "publicBaseURL" "" .Values.contextGateway) }}
-{{- if not (regexMatch "^https://[^/@?#]+/?$" $publicBaseURL) }}
-{{- fail (printf "contextGateway.publicBaseURL (%q): required with global.iris.products.contextGateway.enabled, an https:// origin with no path, query or fragment (the URL MCP clients reach the Context Gateway data plane at)" $publicBaseURL) }}
+{{- $local := and (eq (toString (dig "profile" "" .Values.contextGateway)) "dev") (not (dig "dataplane" "ingress" "enabled" false .Values.contextGateway)) }}
+{{- if not (or (regexMatch "^https://[^/@?#]+/?$" $publicBaseURL) (and $local (regexMatch "^http://[^/@?#]+/?$" $publicBaseURL))) }}
+{{- fail (printf "contextGateway.publicBaseURL (%q): required with global.iris.products.contextGateway.enabled, an https:// origin with no path, query or fragment (the URL MCP clients reach the Context Gateway data plane at); an http:// origin needs contextGateway.profile=dev and contextGateway.dataplane.ingress.enabled=false (meant for local development; the host is not checked)" $publicBaseURL) }}
 {{- end }}
 {{- end }}
 {{- /* Extraction connects the two products; Playbook names its own missing worker.region and
@@ -149,6 +162,10 @@ ponytail: a group name containing U+E000 or U+E001 itself could collide with "ı
 {{- end }}
 {{- end }}
 {{- end }}
+{{- /* Only an operator token can name its tenant, so the multi-tenant mode needs the IdP. */}}
+{{- if and $oidc.tenantIdClaim (not $oidc.issuer) }}
+{{- fail "global.iris.auth.oidc.issuer: required with global.iris.auth.oidc.tenantIdClaim, because only an operator token can name its tenant" }}
+{{- end }}
 {{- if eq (dig "security" "profile" "" .Values.global) "fips" }}
 {{- fail "global.security.profile: fips is not supported by redis-iris 0.1; FIPS support is planned for redis-iris 1.1" }}
 {{- end }}
@@ -176,10 +193,17 @@ ponytail: a group name containing U+E000 or U+E001 itself could collide with "ı
 {{- if eq $dataplane $controlplane }}
 {{- fail (printf "global.iris.secrets: dataplaneServiceCredentials and controlplaneInternalTokens must name different Secrets (both are %q)" $dataplane) }}
 {{- end }}
-{{- /* An empty memory or playbook controlplane.adminToken, or identityService.control, reference already fails
-in the product chart, which names the field: the umbrella turns both generators off. The UI
-would generate its own session key, so that one is checked here. */}}
-{{- if and .Values.ui.sso.enabled (not .Values.ui.sso.session.existingSecret) }}
-{{- fail "ui.sso.session.existingSecret: required with ui.sso.enabled and global.iris.secrets.generate: false" }}
 {{- end }}
+{{- /* In both modes no product chart generates a credential of its own (MOD-20913): its lookup-or-generate
+would reuse any Secret already under its name, outside the bootstrap's conflict check. The umbrella turns
+those generators off; an empty reference then fails in the product chart, which names the field, so only a
+generator switched back on, and the UI's session key (generated whenever its reference is empty), are
+checked here. Playbook's chart refuses its own under the umbrella. */}}
+{{- range $path, $c := dict "memory.controlplane.adminToken" .Values.memory.controlplane.adminToken "lens.controlplane.adminToken" .Values.lens.controlplane.adminToken "intent.controlplane.adminToken" .Values.intent.controlplane.adminToken "identityService.control" .Values.identityService.control }}
+{{- if and $c.autoGenerate (not $c.existingSecret) }}
+{{- fail (printf "%s.autoGenerate: not supported under redis-iris, where the product chart would reuse any Secret under its generated name; set %s.existingSecret (global.iris.secrets.generate: true generates the suite's own)" $path $path) }}
+{{- end }}
+{{- end }}
+{{- if and .Values.ui.sso.enabled (not .Values.ui.sso.session.existingSecret) }}
+{{- fail "ui.sso.session.existingSecret: required with ui.sso.enabled (global.iris.secrets.generate: true generates iris-ui-session-key under that default name)" }}
 {{- end }}

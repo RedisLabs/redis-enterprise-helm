@@ -1,0 +1,64 @@
+# Suite-level Redis and LLM inputs (MOD-21051): redis-iris renders every
+# product's Redis and model overlay Secret (iris-*, templates/overlays.yaml)
+# from global.iris.redis and global.iris.inference, so you create none of them.
+# Layer it last, on the product examples:
+#   helm install iris redis-ai/redis-iris -n redis-ai \
+#     -f examples/memory-only.yaml -f examples/playbook.yaml -f examples/lens.yaml \
+#     -f examples/context-gateway.yaml -f examples/intent.yaml -f examples/suite-inputs.yaml
+#
+# The URLs name in-namespace Redis Services (credentials go in the URL, and
+# rediss:// turns on TLS). The values are stored in the Helm release Secret, and
+# in Git under renderMode gitops. A reference naming another Secret keeps that
+# Secret (bring your own), and redis-iris renders nothing for it.
+#
+# No model provider: every product uses noop models. Set
+# global.iris.inference.openai.apiKey and every product uses OpenAI (choose
+# before the first install: Playbooks and Routers keep their embedding model).
+# For Agent Playbook and Intent Router the iris-*-storage overlays set the served
+# embedding model; the product examples' inline inference.models only pass the
+# charts' render checks.
+# With global.iris.extraction.enabled, set playbook.worker.existingSecret:
+# iris-playbook-worker (it uses global.iris.redis.jobs, else metadata).
+
+global:
+  iris:
+    redis:
+      metadata: {urls: ["redis://metadata-db:6379"]}
+      # Playbook refuses its content on its metadata Redis.
+      content: {urls: ["redis://playbook-content:6379"]}
+      lens: {urls: ["redis://telemetry-db:6379"]}
+      gatewayCredentials: {urls: ["redis://gateway-secrets:6379"]}
+      # Not the mailbox Redis (metadata).
+      intent: {urls: ["redis://intent-db:6379"]}
+
+identityService:
+  metadata:
+    existingSecret: iris-identity-service-metadata
+
+memory:
+  secrets:
+    secretName: iris-memory-overlay
+
+playbook:
+  storage:
+    existingSecret: iris-playbook-storage
+  inference:
+    existingSecret: iris-playbook-inference
+
+lens:
+  storage:
+    existingSecret: iris-lens-storage
+
+contextGateway:
+  metadataDB:
+    existingSecret: iris-context-gateway-metadata
+  credentialStorage:
+    redis:
+      connection:
+        existingSecret: iris-context-gateway-credential-redis
+
+intent:
+  storage:
+    existingSecret: iris-intent-storage
+  inference:
+    existingSecret: iris-intent-inference
