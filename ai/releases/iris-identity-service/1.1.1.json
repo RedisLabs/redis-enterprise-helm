@@ -1,0 +1,40 @@
+{
+  "product": "iris-identity-service",
+  "deployment": "on-prem",
+  "version": "1.1.1",
+  "release": true,
+  "commit": "ec4379ef0379381e105d85a63a229e1ebb0674b5",
+  "components": {
+    "identity-service": {
+      "candidateImage": "docker.io/redislabs/iris-identity-service:1.1.1",
+      "registryDigest": "sha256:2096e82f6e1ab49d483914430a1b00b2d6c4ccb5b40fd6460054cd05edcc5b32",
+      "platforms": [
+        {
+          "os": "linux",
+          "architecture": "amd64",
+          "digest": "sha256:91b4f015a3d7d716b9fa1a3f947ff184c45e91e6d6d75ffa1903cc84a26cba40"
+        },
+        {
+          "os": "linux",
+          "architecture": "arm64",
+          "digest": "sha256:1384dd85b6f8d8e3b8b11d848b67e740ccd6384e74d497da26567fee62215890"
+        }
+      ],
+      "publication": {
+        "status": "published",
+        "component": "identity-service",
+        "commit": "ec4379ef0379381e105d85a63a229e1ebb0674b5",
+        "image": "docker.io/redislabs/iris-identity-service:1.1.1",
+        "digest": "sha256:2096e82f6e1ab49d483914430a1b00b2d6c4ccb5b40fd6460054cd05edcc5b32",
+        "reference": "docker.io/redislabs/iris-identity-service@sha256:2096e82f6e1ab49d483914430a1b00b2d6c4ccb5b40fd6460054cd05edcc5b32"
+      }
+    }
+  },
+  "chart": "chart/iris-identity-service-1.1.1.tgz",
+  "publication": {
+    "status": "published",
+    "sourceRun": "https://github.com/redislabsdev/iris/actions/runs/45752380593",
+    "chartSha256": "sha256:afaebb5feda0ecf379b00640d40baef7fde11754fbeb75bf23829569eaa58160",
+    "contentsDigest": "sha256:afb51a88acc92b9e6ae710bac2e264029dd00b1e71ec7e8737a93481d63e0c39"
+  }
+}
