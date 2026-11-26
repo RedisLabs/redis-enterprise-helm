@@ -1,0 +1,27 @@
+# Worker overlay for Anthropic — plaintext contents of the Secret named by
+# worker.existingSecret. This is NOT a Helm values file.
+#
+# Embeddings stay on a provider that has an embeddings API (see
+# ../basic/values.yaml and prerequisites.example.yaml). Anthropic has none.
+#
+# After you change the key, update existingSecretChecksum and run `helm upgrade`,
+# or restart the worker.
+inference_providers:
+  anthropic:
+    endpoint:
+      base_url: https://api.anthropic.com/v1/
+      # Set explicitly so a provider default change cannot change this role.
+      generation_api: chat_completions
+    http_client:
+      timeout: 60s
+      max_retry_attempts: 0
+worker:
+  redis:
+    urls: ["rediss://USER:PASSWORD@regional-queue:6379"]
+  llm:
+    provider: anthropic
+    models:
+      default_chat_model: claude-haiku-5-5
+    credentials:
+      type: static
+      api_key: sk-ant-REPLACE-ME

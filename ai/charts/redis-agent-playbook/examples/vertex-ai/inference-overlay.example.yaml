@@ -1,0 +1,23 @@
+# Embedder overlay for Vertex AI — plaintext contents of the Secret named by
+# inference.existingSecret (key inference.yaml). This is NOT a Helm values file.
+#
+# Values must name the same vector space:
+#   inference:
+#     models:
+#       - provider: vertex
+#         model: gemini-embedding-001
+#         dimensions: 1536
+#
+# After you replace the key, update inference.existingSecretChecksum and run
+# `helm upgrade`, or restart the data plane: no component reloads a changed key
+# in place.
+embedders_connection_details:
+  vertex:
+    protocol: vertex-ai
+    base_url: https://us-central1-aiplatform.googleapis.com/v1/projects/REPLACE_PROJECT/locations/us-central1/publishers/google/models/gemini-embedding-001:predict
+    embeddings_input_field: content
+    credentials:
+      type: gcp-service-account
+      gcp:
+        service_account_json: |
+          {"type": "service_account", "project_id": "REPLACE_PROJECT", "...": "REPLACE-ME"}

@@ -1,0 +1,20 @@
+# Embedder overlay for Cohere — plaintext contents of the Secret named by
+# inference.existingSecret (key inference.yaml). This is NOT a Helm values file.
+# The worker LLM overlay is in worker-overlay.example.yaml.
+#
+# Values must name the same vector space:
+#   inference:
+#     models:
+#       - provider: cohere
+#         model: embed-v5.0-pro
+#         dimensions: 2048   # the model's own width
+#
+# After you change a key, update existingSecretChecksum and run `helm upgrade`,
+# or restart the pods: no component reloads a changed key in place.
+embedders_connection_details:
+  cohere:
+    protocol: cohere
+    base_url: https://api.cohere.ai/compatibility/v1
+    credentials:
+      type: static
+      api_key: REPLACE-ME

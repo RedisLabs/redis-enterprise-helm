@@ -1,6 +1,9 @@
 nameOverride: ""
 fullnameOverride: ""
 
+# The deployment tenant (single-tenant mode). Leave it empty for the
+# multi-tenant mode: then dataplane.oidc and controlplane.oidc must be enabled
+# with dataplane.oidc.tenantIDClaim, and each caller brings its own tenant.
 tenantId: ""
 
 # Audience of IdP access tokens, shared by every Iris service. Set it to the
@@ -62,6 +65,20 @@ tls:
   caCertSecret: ""
   caCertSecretChecksum: ""
 
+# Redis client certificates (mTLS (mutual TLS) and certificate-only login).
+# The control plane, data plane and worker present them on every rediss://
+# connection and reload a renewed pair without a restart.
+redisClientTLS:
+  # Pre-created Secret with tls.crt and tls.key, mounted at
+  # /etc/redis-client-tls/ and rendered as redis_client_tls in the service
+  # configs. With controlplane.config.existingSecret, add that block to your
+  # own control-plane config. Empty disables client certificates.
+  existingSecret: ""
+  # Per-connection certificates: [{name, existingSecret}], each mounted at
+  # /etc/redis-client-tls/<name>/tls.{crt,key} for a connection block's own
+  # tls: (cert_path, key_path) in the service config.
+  extraCertificates: []
+
 license:
   existingSecret: ""
   secretKey: ""  # default license; redis-iris sets global.iris.license.secretKey
@@ -117,7 +134,7 @@ controlplane:
   image:
     repository: redislabs/iris-agent-playbook-control
     # The image release this chart version ships; override to run another.
-    tag: "1.0.1"
+    tag: "1.1.1"
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
@@ -163,7 +180,7 @@ dataplane:
   image:
     repository: redislabs/iris-agent-playbook-data
     # The image release this chart version ships; override to run another.
-    tag: "1.0.1"
+    tag: "1.1.1"
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
@@ -174,7 +191,7 @@ dataplane:
   # identityService.allowInsecureTransport=true.
   identityServiceBaseURL: ""
   # Optional direct validation of corporate IdP access tokens. Agent keys stay
-  # enabled. The resolved tenant must equal tenantId. Explicitly mapped human
+  # enabled. With tenantId set, the resolved tenant must equal it. Explicitly mapped human
   # product_admin/suite_admin roles receive tenant-wide Playbook full access.
   oidc:
     enabled: null  # false when unset; redis-iris derives it
@@ -193,6 +210,12 @@ dataplane:
     # Empty grants no admin access; raw role names are never accepted implicitly.
     roleMappings: null
     allowInsecureTransport: null  # false when unset
+  # Users of the IdP records that the Identity Service holds for each tenant
+  # (MOD-19515). Such a user needs subject grants on the playbooks. The
+  # playbook-dp runtime credential then also needs the operations
+  # identity-provider-resolve and subject-grant-lookup.
+  tenantIdentityProviders:
+    enabled: false
   resources: {}
   podAnnotations: {}
   podLabels: {}

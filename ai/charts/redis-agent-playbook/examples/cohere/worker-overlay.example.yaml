@@ -1,0 +1,22 @@
+# Worker overlay for Cohere — plaintext contents of the Secret named by
+# worker.existingSecret. This is NOT a Helm values file.
+#
+# Set http_client.timeout for your key's rate-limit tier.
+inference_providers:
+  cohere:
+    endpoint:
+      base_url: https://api.cohere.ai/compatibility/v1
+      # Cohere serves no Responses API.
+      generation_api: chat_completions
+    http_client:
+      timeout: 60s
+worker:
+  redis:
+    urls: ["rediss://USER:PASSWORD@regional-queue:6379"]
+  llm:
+    provider: cohere
+    models:
+      default_chat_model: command-a-plus-05-2026
+    credentials:
+      type: static
+      api_key: REPLACE-ME

@@ -1,0 +1,109 @@
+{
+  "product": "redis-agent-playbook",
+  "deployment": "on-prem",
+  "version": "1.1.1",
+  "release": true,
+  "commit": "ec4379ef0379381e105d85a63a229e1ebb0674b5",
+  "components": {
+    "controlplane": {
+      "candidateImage": "docker.io/redislabs/iris-agent-playbook-control:1.1.1",
+      "localImage": "playbook-controlplane-onprem:1.1.1",
+      "artifact": "images/oci-playbook-cp-onprem.tar",
+      "registryDigest": "sha256:e3a3341cd671e80cb4b787893c36f59d2de6f500431025dfcf9227160d9c3e16",
+      "platforms": [
+        {
+          "os": "linux",
+          "architecture": "amd64",
+          "digest": "sha256:a46e14220233ec429194e02f192733df4253cedaada740730f9dcb501384a20c",
+          "imageId": "sha256:26f147301e94addc6c870ee43cf84aee881e9c2ff27ba9d02b3e2cd8425e4dde"
+        },
+        {
+          "os": "linux",
+          "architecture": "arm64",
+          "digest": "sha256:2d6bd92a9cf777e6677bd495d79304e585e909890d9fad720a1d3238f0cdc73f",
+          "imageId": "sha256:153fc84dfcaf76679f07cfc5610d3e5436afcc0f21a1d3d16cad80fe6a951bbe"
+        }
+      ],
+      "archiveSha256": "sha256:f8838b5a0aa866ed55e69804d7941c3416f42c6326a9a3bc64efd32da138a94c",
+      "publication": {
+        "status": "published",
+        "component": "controlplane",
+        "commit": "ec4379ef0379381e105d85a63a229e1ebb0674b5",
+        "image": "docker.io/redislabs/iris-agent-playbook-control:1.1.1",
+        "digest": "sha256:e3a3341cd671e80cb4b787893c36f59d2de6f500431025dfcf9227160d9c3e16",
+        "reference": "docker.io/redislabs/iris-agent-playbook-control@sha256:e3a3341cd671e80cb4b787893c36f59d2de6f500431025dfcf9227160d9c3e16",
+        "platforms": [
+          {
+            "os": "linux",
+            "architecture": "amd64",
+            "digest": "sha256:a46e14220233ec429194e02f192733df4253cedaada740730f9dcb501384a20c",
+            "imageId": "sha256:26f147301e94addc6c870ee43cf84aee881e9c2ff27ba9d02b3e2cd8425e4dde"
+          },
+          {
+            "os": "linux",
+            "architecture": "arm64",
+            "digest": "sha256:2d6bd92a9cf777e6677bd495d79304e585e909890d9fad720a1d3238f0cdc73f",
+            "imageId": "sha256:153fc84dfcaf76679f07cfc5610d3e5436afcc0f21a1d3d16cad80fe6a951bbe"
+          }
+        ]
+      }
+    },
+    "dataplane": {
+      "candidateImage": "docker.io/redislabs/iris-agent-playbook-data:1.1.1",
+      "localImage": "playbook-dataplane-onprem:1.1.1",
+      "artifact": "images/oci-playbook-dp.tar",
+      "registryDigest": "sha256:70b723e87ad96554d7825c94a8b4139a76f91f9e571f85a1608b68730b83d6bb",
+      "platforms": [
+        {
+          "os": "linux",
+          "architecture": "amd64",
+          "digest": "sha256:7d4bdc957475498df1f900ae9dbc5d015a1931a8da3dde1d1f89b01df10601bd",
+          "imageId": "sha256:63dae6ee4f24955092abcc0be62fe92fbb276e51544c8277d6b0cd718a1b06a3"
+        },
+        {
+          "os": "linux",
+          "architecture": "arm64",
+          "digest": "sha256:4b5af500900c233c1b841f602050bf50079f40b20409ce5ab688c405165df9db",
+          "imageId": "sha256:e1fb03daa716042306e83f2ef9ebc5acff39d6a420c42a0a24f645b71515f925"
+        }
+      ],
+      "archiveSha256": "sha256:42c5164d10b6dd4ff9208142ce697a69804074da792c0440f9585244aab40605",
+      "publication": {
+        "status": "published",
+        "component": "dataplane",
+        "commit": "ec4379ef0379381e105d85a63a229e1ebb0674b5",
+        "image": "docker.io/redislabs/iris-agent-playbook-data:1.1.1",
+        "digest": "sha256:70b723e87ad96554d7825c94a8b4139a76f91f9e571f85a1608b68730b83d6bb",
+        "reference": "docker.io/redislabs/iris-agent-playbook-data@sha256:70b723e87ad96554d7825c94a8b4139a76f91f9e571f85a1608b68730b83d6bb",
+        "platforms": [
+          {
+            "os": "linux",
+            "architecture": "amd64",
+            "digest": "sha256:7d4bdc957475498df1f900ae9dbc5d015a1931a8da3dde1d1f89b01df10601bd",
+            "imageId": "sha256:63dae6ee4f24955092abcc0be62fe92fbb276e51544c8277d6b0cd718a1b06a3"
+          },
+          {
+            "os": "linux",
+            "architecture": "arm64",
+            "digest": "sha256:4b5af500900c233c1b841f602050bf50079f40b20409ce5ab688c405165df9db",
+            "imageId": "sha256:e1fb03daa716042306e83f2ef9ebc5acff39d6a420c42a0a24f645b71515f925"
+          }
+        ]
+      }
+    }
+  },
+  "chart": "chart/redis-agent-playbook-1.1.1.tgz",
+  "imageValues": "playbook-images.values.json",
+  "sbom": "sbom/",
+  "openapi": [
+    "openapi/playbook-controlplane.openapi.json",
+    "openapi/playbook-dataplane.openapi.json",
+    "openapi/playbook-grant-validation.openapi.json"
+  ],
+  "publication": {
+    "status": "published",
+    "sourceRun": "https://github.com/redislabsdev/iris/actions/runs/45755217770",
+    "chartSha256": "sha256:00420688311e5dadfdd2dad10ae3aa2ec838fdffcd2664a33ab085266363586b",
+    "contentsDigest": "sha256:62e328db4014c08d7ccb1f15c649b10013205ba12f3ea05489d03ad6ef5b3f37"
+  }
+}

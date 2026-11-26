@@ -78,9 +78,11 @@ The Playbook admin token is a shared recovery credential for **both planes**.
 The chart mounts the same `controlplane.adminToken` Secret/key into CP and DP;
 `Authorization: Bearer <token>` grants full Playbook resource access within
 `tenantId`, including content, proposals, and skill uploads with SSO disabled.
-It also works alongside OIDC. It grants no authority to other Iris products and
-retains resource ownership and lifecycle checks. Keep the token private: audits
-identify shared recovery use, not an individual operator. Verification is local,
+It also works alongside OIDC. In the multi-tenant mode (empty `tenantId`), both
+planes refuse it with `403`; see [Multi-tenant mode](#multi-tenant-mode).
+It grants no authority to other Iris products and retains resource ownership and
+lifecycle checks. Keep the token private: audits identify shared recovery use,
+not an individual operator. Verification is local,
 although operations still require their ordinary storage/processing dependencies.
 
 Both planes reread the mounted admin-token file for each request. Kubernetes
@@ -99,6 +101,24 @@ secret manager, and never commit the rendered secrets. The storage Secret's
 `storage.content.urls` to CP and DP. The Identity Service's metadata Redis
 belongs to its own release (`metadata.*`); use a separate, least-privileged
 Redis user even when it shares the physical metadata deployment.
+
+Index provisioning uses one `FT._LIST` on content Redis to find existing indexes,
+then `FT.INFO` only for those indexes to validate their schema, prefix and vector
+dimensions before creating missing indexes. Grant the control-plane user
+`+ft._list` to avoid expected missing-index errors during normal provisioning.
+[`FT._LIST`](https://redis.io/docs/latest/commands/ft._list/) enumerates all index
+names and has different ACL requirements from per-index commands; Playbook does
+not log the returned names. If enumeration is denied (`NOPERM`), provisioning
+falls back to the existing per-index `FT.INFO` checks, preserving restricted
+customer ACLs. This fallback can still produce expected missing-index telemetry,
+plus an enumeration denial on each ensure operation. The denial is not cached:
+startup reconciliation retries `FT._LIST` for each Playbook on every control-plane
+restart, and resuming a Playbook retries it too, even when both indexes already
+exist and are compatible. These repeated denials remain visible in Redis
+access-denied statistics and, where supported, `ACL LOG`; account for them when
+monitoring security events. Authentication, transport, schema-validation and
+index-creation failures still fail provisioning; they are never treated as an
+empty index list. Readiness checks continue to use `FT.INFO`.
 
 Every existing-Secret reference has an optional checksum value. Set it to a
 stable digest of the referenced Secret payload when the Secret name stays the
@@ -182,8 +202,9 @@ The chart pins the published `redis-iris-onprem-lib` 0.4.0 from
 linting, rendering, or local installation. Dependency resolution also works
 when the package workflow copies the chart outside this repository.
 
-Install-time validation requires non-empty image tags, tenant, storage and
-license Secret references, an explicit model list, the Identity Service URL and
+Install-time validation requires non-empty image tags, a tenant (or the
+multi-tenant mode with SSO), storage and license Secret references, an explicit
+model list, the Identity Service URL and
 data-plane credential, plus either a generated or existing Secret for each
 control-plane token. It refuses to mount the same Secret key as two credential
 roles. Operators must keep all resolved credential values distinct, even with
@@ -296,7 +317,7 @@ precedence"):
 
 | Value | Under redis-iris |
 | --- | --- |
-| `tenantId` | `global.iris.tenantId` (default `default`) |
+| `tenantId` | `global.iris.tenantId` (default `default`). With `global.iris.auth.oidc.tenantIdClaim` it is empty, and each caller brings its own tenant |
 | `license.existingSecret`, `license.secretKey` | `global.iris.license.*` (defaults `iris-license`, `license.key`) |
 | `auth.oidc.audience` | `global.iris.auth.oidc.audience` (default `api://redis-iris`) |
 | `dataplane.identityServiceBaseURL`, `identityService.allowInsecureTransport` | the suite's Identity Service, `http://iris-identity-service.<namespace>.svc.<clusterDomain>:9200` |
@@ -421,6 +442,48 @@ unsupported. The following manual migration is untested guidance:
    `storage.identityServiceKey` from your values; the schema rejects them.
 5. Keep the tenant your existing Playbooks and keys use: set `tenantId` and the
    Identity Service release's `runtime.apiKeyTenant.singleTenantID` to it.
+
+## Redis client certificates
+
+Use this when your Redis Enterprise database requires a client certificate:
+mTLS (mutual TLS), or certificate-only login with no password. The
+control plane, data plane and worker present the certificate on every `rediss://` connection. The full
+setup, rotation and CA (certificate authority) rotation steps are in the
+[Redis client certificate runbook](../../docs/runbooks/iris-onprem-redis-mtls.md).
+
+```yaml
+redisClientTLS:
+  existingSecret: redis-client-cert        # Secret with tls.crt and tls.key
+  extraCertificates:                       # optional, per connection
+    - name: store-1
+      existingSecret: redis-client-cert-store-1
+```
+
+- The chart projects every Secret into one read-only volume at
+  `/etc/redis-client-tls`, without `subPath`: the default pair at
+  `/etc/redis-client-tls/tls.crt` and `tls.key`, an extra one at
+  `/etc/redis-client-tls/<name>/tls.crt` and `tls.key`.
+- The chart renders `redis_client_tls` with the default pair's paths into the
+  service config. When the control-plane config comes from your own Secret
+  (`controlplane.config.existingSecret`), the chart cannot change it: add
+
+  ```yaml
+  redis_client_tls:
+    cert_path: /etc/redis-client-tls/tls.crt
+    key_path: /etc/redis-client-tls/tls.key
+  ```
+
+  to that config yourself.
+- An extra certificate is used by a connection block that names it in its own
+  `tls:` block (`cert_path`, `key_path`). A `tls:` block on a `redis://` URL
+  stops the service at startup.
+- Certificate-only login: use a `rediss://` URL with no user name or password.
+  With a password in the URL, the service sends both (mTLS plus password).
+- Rotation: update the Secret. The service rereads the files about every 30
+  seconds and uses the new pair for new connections, without a restart. A
+  broken pair keeps the last good one and increments
+  `iris.redis.client_certificate.reload_failures`.
+- Server trust stays on `tls.caCertSecret`.
 
 ## MCP endpoint exposure
 
@@ -565,11 +628,41 @@ dataplane:
 ```
 
 The accepted audience is `auth.oidc.audience`, described below. The chart does
-not expose an `azp` fallback. The resolved tenant must equal the
-chart's `tenantId`, even for suite admins. For an issuer without a tenant claim,
+not expose an `azp` fallback. In the single-tenant mode, the resolved tenant must
+equal the chart's `tenantId`, even for suite admins. For an issuer without a tenant claim,
 use `staticTenantID` equal to `tenantId` only when that issuer and its admin
 groups are confined to this deployment's tenant. A shared multi-tenant issuer
 must use `tenantIDClaim` to preserve that boundary.
+
+### Multi-tenant mode
+
+Leave `tenantId` empty to serve more than one tenant with one release. Then
+enable `dataplane.oidc` and `controlplane.oidc`, and set
+`dataplane.oidc.tenantIDClaim`. The chart refuses an empty `tenantId` with
+other settings. Without SSO, use the single-tenant mode.
+
+Under the `redis-iris` umbrella, set `global.iris.auth.oidc.tenantIdClaim`
+to the tenant claim of your IdP and leave `global.iris.tenantId` empty. The
+umbrella supplies the shared OIDC settings to both planes. Without a tenant
+claim, the umbrella serves one configured tenant.
+
+In this mode:
+
+- Each caller keeps the tenant of its agent key or of its operator token.
+  Playbooks, proposals and extraction bindings of another tenant give `403` or
+  `404`.
+- Store discovery sends the caller's own operator token to the RAM control
+  plane, which returns only the stores of the caller's tenant. The control
+  plane's RAM token is not used for discovery.
+- The extraction worker gets the tenant of the Playbook that each request
+  names.
+- The data plane refuses the Playbook admin token, because the token has no
+  tenant. Each tenant's `product_admin` does content administration, proposal
+  review and skill uploads through the UI with SSO.
+- The control plane also refuses the admin token, because the token has no
+  tenant of its own. Health and readiness still work. Automation and tests must
+  use an IdP token with the tenant claim. While the IdP is down, no operator
+  can call the Playbook planes in this mode.
 
 `roleMappings` defaults to `{}`; unmapped claims never grant access, even if
 their values spell an Iris admin role. Map only trusted human-admin groups.
@@ -616,6 +709,30 @@ Only a fetched HTTP JWKS URL requires the explicit
 `allowInsecureTransport: true` development opt-in; the issuer is an identifier.
 The FIPS profile rejects that opt-in and requires HTTPS for JWKS. Mount private CA
 material through `tls.caCertSecret` when the IdP uses an internal certificate authority.
+
+## Tenant IdP users
+
+For a standalone chart, set `dataplane.tenantIdentityProviders.enabled=true` to accept the users of the
+IdP records that the Identity Service holds for each tenant (MOD-19515). Such a
+user needs subject grants on the playbooks. Add `identity-provider-resolve` and
+`subject-grant-lookup` to the `allowedOperations` of the `playbook-dp` runtime
+credential. The default is `false`, and the chart then renders no
+`tenant_identity_providers` block.
+
+For standalone multi-tenant Playbook, leave `tenantId` empty. Enable
+`controlplane.oidc.enabled` and keep the issuer, JWKS, tenant claim, and role
+mappings in `dataplane.oidc` for the control plane. Set `dataplane.oidc.enabled=false`
+to let the data plane resolve tenants from Identity Service records.
+
+Under `redis-iris`, set `global.iris.products.playbook.tenantIdentityProvidersEnabled=true`.
+The umbrella adds the required operations to the Playbook runtime credential.
+The suite's OIDC issuer retains precedence on the data plane.
+
+For either installation, allow the grant in the Identity Service chart values before
+assigning it to a user. For example, add
+`{product: playbook, resourceType: playbook, actions: [read]}` to `subjectGrants.allowed`
+(`identityService.subjectGrants.allowed` under `redis-iris`). Then grant the user
+`read` on the specific playbook they need.
 
 ## Reading Agent Memory for extraction (MOD-20121)
 
@@ -1066,7 +1183,7 @@ Run the package gates with:
 task playbook:test:chart
 task playbook:fips:test:runtime
 task playbook:test:lifecycle
-task playbook:test:release-artifacts
+task playbook:test:release-license
 ```
 
 Manual dispatch of the package-validation workflow accepts a Playbook version,
@@ -1155,8 +1272,8 @@ plan before switching to this chart.
 
 ### Publication and recovery
 
-The release workflow serializes publication with RAM under the
-shared `iris-onprem-release-publication` group. It builds and publishes no
+The release workflow serializes Playbook releases under its own
+`iris-onprem-release-playbook` group. It builds and publishes no
 Identity Service image; operators install a published `iris-identity-service`
 release. Each image job records its registry
 manifest digest and can be retried independently. Existing tags are accepted only
@@ -1301,6 +1418,137 @@ Secret contents are loaded at client construction: update the appropriate `exist
 `helm upgrade`, or restart the affected workload after changing a Secret in place.
 Model changes apply to unfinished/new sessions; retained completed sessions do not
 re-extract automatically.
+
+#### Using Vertex AI for embeddings
+
+Playbook can embed with Google's `gemini-embedding-001` through the `vertex-ai`
+protocol and a Google service account. Declare the vector space in
+`inference.models` and put the connection in the `inference.existingSecret`
+overlay. See `examples/vertex-ai/inference-overlay.example.yaml`.
+
+```yaml
+embedders_connection_details:
+  vertex:
+    protocol: vertex-ai
+    base_url: https://us-central1-aiplatform.googleapis.com/v1/projects/<project>/locations/us-central1/publishers/google/models/gemini-embedding-001:predict
+    embeddings_input_field: content
+    credentials:
+      type: gcp-service-account
+      gcp:
+        service_account_json: "<key JSON>"
+```
+
+- `base_url` is the full `:predict` URL; the model in it is the model used. The
+  vector-space `dimensions` is sent as `outputDimensionality` and checked against
+  every returned vector (`gemini-embedding-001` accepts 768, 1536 and 3072).
+  `gemini-embedding-2` is not supported.
+- At most 250 texts go in one request; the shared client splits larger calls in
+  order.
+- In `content` mode the request sets `autoTruncate: false`, so Vertex refuses an
+  input over the model's token limit (about 2,048 tokens for
+  `gemini-embedding-001`) and the call fails. Input is never silently cut.
+- Replacing the key: update `existingSecretChecksum` and run `helm upgrade`, or
+  restart the data plane. A key for an unknown service account fails on the
+  first call with `invalid credentials: failed to obtain GCP access token ... invalid_grant`.
+
+#### Gemini chat for the worker LLM
+
+Vertex's OpenAI-compatible endpoint can serve the worker. Use the `openai` protocol
+under an alias key with `base_url_as_is: true`, the `global` location,
+`generation_api: chat_completions`, model `google/gemini-3.6-flash` and a
+`gcp-service-account` credential in `worker.llm.credentials`. See
+`examples/vertex-ai/worker-overlay.example.yaml`. Without `base_url_as_is`
+Iris appends `/v1` and Google answers 404. Replace the key as for the embedder: update `existingSecretChecksum` and run
+`helm upgrade`, or restart the worker.
+
+#### Using Anthropic for the worker LLM
+
+The worker can call Anthropic through its OpenAI-compatible endpoint. Anthropic
+has no embeddings API, so it is never a Playbook embedder: keep `inference.models`
+on a provider that embeds, such as OpenAI. An `anthropic` embedder fails at
+startup with `embedding provider "anthropic" does not support embeddings`.
+
+Put this in the `worker.existingSecret` overlay in place of the `private-model`
+shape above, and keep the key in the Secret. Set `generation_api:
+chat_completions` explicitly. See `examples/anthropic/worker-overlay.example.yaml`.
+
+```yaml
+inference_providers:
+  anthropic:
+    endpoint:
+      base_url: https://api.anthropic.com/v1/
+      generation_api: chat_completions
+worker:
+  llm:
+    provider: anthropic
+    models:
+      default_chat_model: claude-haiku-5-5
+    credentials:
+      type: static
+      api_key: REPLACE_WITH_ANTHROPIC_API_KEY
+```
+
+- **Credential changes.** Update `existingSecretChecksum` and run `helm upgrade`,
+  or restart the worker after you change the Secret in place.
+- **Missing and invalid keys.** Both return `401 Invalid Anthropic API Key`, so
+  the message does not tell you which one it is.
+- **Anthropic as an embedder.** Anthropic has no embeddings API, so it can
+  never be an embedder. An embedder endpoint that names the `anthropic`
+  protocol, or is declared under the key `anthropic`, fails at startup. An
+  Anthropic URL configured as an `openai` embedder cannot be recognised,
+  because a proxy can hide the host. It passes startup and fails on the first
+  embedding call with a `404` whose body contains `not_found_error`. If you see
+  that error, point the embedder at a provider that embeds, such as OpenAI.
+- **Reasoning effort.** `claude-haiku-5-5` needs no `reasoning_mappings` entry
+  at effort `low`. Mappings accept only the `openai`, `oip`, `noop` and `cohere` providers, so there is
+  no `anthropic` mapping.
+- **Schema limits.** Anthropic rejects `minimum`, `maximum`, `exclusiveMinimum`,
+  `exclusiveMaximum`, `multipleOf`, `minLength`, `maxLength` and `maxItems` in
+  structured-output schemas. The shared client removes them, so only local
+  validation enforces those limits.
+- **Model limits and pricing.** Context size, output limit and pricing are the
+  provider's; check its current figures for `claude-haiku-5-5`.
+
+#### Using Cohere for embeddings and the worker LLM
+
+Cohere serves Playbook embeddings and the worker LLM through its
+OpenAI-compatible endpoint with a static key. See
+`examples/cohere/inference-overlay.example.yaml` and `worker-overlay.example.yaml`.
+
+```yaml
+embedders_connection_details:        # inference.existingSecret
+  cohere:
+    protocol: cohere
+    base_url: https://api.cohere.ai/compatibility/v1
+    credentials:
+      type: static
+      api_key: REPLACE_PRIVATELY
+---
+inference_providers:                 # worker.existingSecret
+  cohere:
+    endpoint:
+      base_url: https://api.cohere.ai/compatibility/v1
+      generation_api: chat_completions
+worker:
+  llm:
+    provider: cohere
+    models:
+      default_chat_model: command-a-plus-05-2026
+    credentials:
+      type: static
+      api_key: REPLACE_PRIVATELY
+```
+
+- Cohere is not sent a `dimensions` setting, so the vector space's `dimensions`
+  must be the model's own width (2048 for `embed-v5.0-pro` and `-fast`); any
+  other width fails the call. Changing the model or width needs a new Playbook
+  and does not re-embed existing data.
+- At most 96 texts go in one request; the shared client splits larger calls.
+- Cohere trims over-limit input silently after Iris's 15,000-byte cut.
+- Latency of `command-a-plus-05-2026` is not re-measured on a key with a known
+  rate-limit tier. Set `http_client.timeout` for your tier.
+- Update `existingSecretChecksum` and run `helm upgrade` (or restart the pods)
+  after you change a key.
 
 `worker.jobs` selects registered job types; concurrency is per queue per replica.
 Workers stop dispatch, stop every consumer, drain, then close dependencies. The

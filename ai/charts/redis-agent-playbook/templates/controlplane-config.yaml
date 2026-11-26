@@ -16,6 +16,9 @@ metadata:
 data:
   playbook-controlplane.yaml: |
     profile: prod
+    {{- with include "redis-onprem.redisClientTLS.config" .Values.redisClientTLS | fromJson }}
+    {{- dict "redis_client_tls" . | toYaml | nindent 4 }}
+    {{- end }}
     tenant_id: {{ $suite.tenantId | quote }}
     server:
       host: 0.0.0.0
