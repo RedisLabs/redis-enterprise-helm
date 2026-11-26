@@ -497,13 +497,16 @@ kubectl -n "$NAMESPACE" port-forward --address 127.0.0.1 "service/${SSO_RELEASE}
 FORWARDS+=("$!")
 ready=false
 for _ in $(seq 1 30); do
-  if curl -sf "$SSO_BASE/healthz" >/dev/null 2>&1; then
+  # nginx's own health endpoint does not exercise its ui-auth upstream.
+  status="$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 2 \
+    "$SSO_BASE/api/http-test/foo" || true)"
+  if [ "$status" = "401" ]; then
     ready=true
     break
   fi
   sleep 0.5
 done
-"$ready" || fail "SSO gateway never became reachable through kubectl port-forward"
+"$ready" || fail "SSO auth upstream never became ready through kubectl port-forward (last HTTP $status)"
 
 # The shell is told SSO is on, and the console needs no session.
 curl -sS "$SSO_BASE/config.json" | grep -q '"enabled": true' || fail "config.json must report sso.enabled: true"

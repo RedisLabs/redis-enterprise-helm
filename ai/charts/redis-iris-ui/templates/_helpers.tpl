@@ -60,7 +60,7 @@ Takes (dict "root" $ "upstream" .upstream).
 {{/*
 The values the redis-iris umbrella owns, resolved once as JSON (redis-onprem.suite.*):
   products       the routes. Standalone: products as given. Under redis-iris: the routes of the
-                 enabled products (memory; playbook and playbook-dp; lens; context-gateway and
+                 enabled products (memory and memory-dp; playbook and playbook-dp; lens; context-gateway and
                  context-gateway-dp; intent and intent-data; always api-keys), with
                  explicit products entries merged by key. An entry may change label,
                  showInNavigation and maxRequestBodyBytes; any other differing field, a duplicate
@@ -101,6 +101,7 @@ Under redis-iris a local value that differs from the derived one fails, naming u
 {{- $route := dict "authScheme" "bearer" "healthPath" "/health/readiness" -}}
 {{- $known := dict
   "memory" (merge (dict "key" "memory" "label" "Agent Memory" "product" "agent_memory" "upstream" (dict "service" "redis-agent-memory-controlplane" "port" 9100 "basePath" "" "scheme" "http")) $route)
+  "memory-dp" (merge (dict "key" "memory-dp" "label" "Agent Memory DP" "product" "agent_memory" "showInNavigation" false "maxRequestBodyBytes" 8388608 "upstream" (dict "service" "redis-agent-memory" "port" 9000 "basePath" "" "scheme" "http")) $route)
   "api-keys" (merge (dict "key" "api-keys" "label" "Access & Identity" "product" "identity" "upstream" (dict "service" "iris-identity-service" "port" 9200 "basePath" "" "scheme" "http")) $route)
   "playbook" (merge (dict "key" "playbook" "label" "Agent Playbooks" "product" "playbook" "upstream" (dict "service" "redis-agent-playbook-controlplane" "port" 9200 "basePath" "" "scheme" "http")) $route)
   "playbook-dp" (merge (dict "key" "playbook-dp" "label" "Agent Playbooks DP" "product" "playbook" "showInNavigation" false "maxRequestBodyBytes" 8388608 "upstream" (dict "service" "redis-agent-playbook-dataplane" "port" 9201 "basePath" "" "scheme" "http")) $route)
@@ -109,6 +110,11 @@ Under redis-iris a local value that differs from the derived one fails, naming u
   "context-gateway-dp" (merge (dict "key" "context-gateway-dp" "label" "Context Gateway DP" "product" "context_gateway" "healthPath" "/health/liveness" "showInNavigation" false "protectedResourceMetadata" true "upstream" (dict "service" "redis-context-gateway-dataplane" "port" 8083 "basePath" "" "scheme" "http")) $route)
   "intent" (merge (dict "key" "intent" "label" "Intent Router" "product" "intent" "upstream" (dict "service" "redis-intent-router-controlplane" "port" 9400 "basePath" "" "scheme" "http")) $route)
   "intent-data" (merge (dict "key" "intent-data" "label" "Intent Router DP" "product" "intent" "showInNavigation" false "upstream" (dict "service" "redis-intent-router-dataplane" "port" 9401 "basePath" "" "scheme" "http")) $route) -}}
+{{- $multiTenant := ne (include "redis-onprem.suite.tenantIdClaim" (dict "root" .)) "" -}}
+{{- if $multiTenant -}}
+{{- $_ := unset $known.lens "instanceId" -}}
+{{- $_ := set $known "lens-cp" (merge (dict "key" "lens-cp" "label" "Lens CP" "product" "lens" "showInNavigation" false "upstream" (dict "service" "redis-lens-controlplane" "port" 9300 "basePath" "" "scheme" "http")) $route) -}}
+{{- end -}}
 {{- $overrides := dict -}}
 {{- range $i, $o := default (list) .Values.products -}}
 {{- $at := printf "%sproducts[%d]" $p $i -}}
@@ -116,7 +122,7 @@ Under redis-iris a local value that differs from the derived one fails, naming u
 {{- fail (printf "%s.key %q is declared more than once" $at (toString $o.key)) -}}
 {{- end -}}
 {{- if not (hasKey $known (toString $o.key)) -}}
-{{- fail (printf "%s.key %q is not a redis-iris route; the keys are memory, playbook, playbook-dp, lens, context-gateway, context-gateway-dp, intent, intent-data and api-keys" $at (toString $o.key)) -}}
+{{- fail (printf "%s.key %q is not a redis-iris route; the keys are memory, memory-dp, playbook, playbook-dp, lens, lens-cp (multi-tenant only), context-gateway, context-gateway-dp, intent, intent-data and api-keys" $at (toString $o.key)) -}}
 {{- end -}}
 {{- $d := index $known $o.key -}}
 {{- range $field, $v := $o -}}
@@ -128,8 +134,11 @@ Under redis-iris a local value that differs from the derived one fails, naming u
 {{- end -}}
 {{- /* Route order: products in suite order, then api-keys. */ -}}
 {{- $keys := list -}}
-{{- range $r := list (list "memory" "memory") (list "playbook" "playbook" "playbook-dp") (list "lens" "lens") (list "contextGateway" "context-gateway" "context-gateway-dp") (list "intent" "intent" "intent-data") -}}
+{{- range $r := list (list "memory" "memory" "memory-dp") (list "playbook" "playbook" "playbook-dp") (list "lens" "lens") (list "contextGateway" "context-gateway" "context-gateway-dp") (list "intent" "intent" "intent-data") -}}
 {{- if include "redis-onprem.suite.productEnabled" (dict "root" $ "product" (first $r)) -}}{{- $keys = concat $keys (rest $r) -}}{{- end -}}
+{{- end -}}
+{{- if and $multiTenant (include "redis-onprem.suite.productEnabled" (dict "root" . "product" "lens")) -}}
+{{- $keys = append $keys "lens-cp" -}}
 {{- end -}}
 {{- $keys = append $keys "api-keys" -}}
 {{- $routes := list -}}
@@ -228,6 +237,9 @@ products:
 {{- with (include "ui.resolved" $ | fromJson).sso.roleMappings }}
 role_mappings: {{ . | toJson }}
 {{- end }}
+{{- with include "redis-onprem.redisClientTLS.config" .Values.redisClientTLS | fromJson }}
+redis_client_tls: {{ . | toJson }}
+{{- end }}
 {{- end -}}
 
 {{- define "ui.auth.args" -}}
@@ -263,6 +275,7 @@ checksum/ui-auth-config: {{ include "ui.auth.config" . | sha256sum | quote }}
   mountPath: /etc/ssl/custom
   readOnly: true
 {{- end }}
+{{- include "redis-onprem.redisClientTLS.volumeMount" .Values.redisClientTLS }}
 {{- end -}}
 
 {{- define "ui.auth.volumes" -}}
@@ -290,6 +303,7 @@ checksum/ui-auth-config: {{ include "ui.auth.config" . | sha256sum | quote }}
       - key: {{ .Values.sso.tls.caCertKey }}
         path: {{ .Values.sso.tls.caCertKey }}
 {{- end }}
+{{- include "redis-onprem.redisClientTLS.volume" .Values.redisClientTLS }}
 {{- end -}}
 
 {{/*
