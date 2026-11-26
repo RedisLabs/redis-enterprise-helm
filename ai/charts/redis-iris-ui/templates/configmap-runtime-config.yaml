@@ -6,9 +6,17 @@ server-side. The shell reads this shape and still reads the bare array an older 
 */}}
 {{- define "ui.runtimeConfig" -}}
 {{- $products := list -}}
-{{- range (include "ui.resolved" $ | fromJson).products -}}
+{{- $resolvedProducts := (include "ui.resolved" . | fromJson).products -}}
+{{- $memoryDataPlane := false -}}
+{{- range $resolvedProducts -}}
+{{- if eq .key "memory-dp" -}}{{- $memoryDataPlane = true -}}{{- end -}}
+{{- end -}}
+{{- range $resolvedProducts -}}
 {{- if ne .showInNavigation false -}}
 {{- $product := dict "key" .key "label" .label "authScheme" .authScheme "healthPath" .healthPath "product" .product -}}
+{{- if eq .key "memory" -}}
+{{- $_ := set $product "dataPlaneEnabled" $memoryDataPlane -}}
+{{- end -}}
 {{- with .instanceId -}}
 {{- $_ := set $product "instanceId" . -}}
 {{- end -}}
