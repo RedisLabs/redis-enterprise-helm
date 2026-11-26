@@ -1,5 +1,9 @@
 # Identity Service chart changes
 
+## 1.1.1
+
+- No component changes.
+
 ## 1.1.0
 
 - Add opt-in Iris token exchange and manage external identity provider records and settings per tenant.
