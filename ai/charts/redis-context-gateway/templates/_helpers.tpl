@@ -72,6 +72,8 @@ app.kubernetes.io/component: dataplane
 {{- if $oidc.issuer -}}
 {{- $derived = dict "enabled" true "issuer" $oidc.accessTokenIssuer "jwks_uri" $oidc.jwksURI "audience" (list $oidc.audience) "role_claims" $oidc.roleClaims "role_mappings" (include "redis-onprem.suite.roleMappings" (dict "root" . "product" "context_gateway") | fromJson) -}}
 {{- if $oidc.allowInsecureTransport -}}{{- $_ := set $derived "allow_insecure_transport" true -}}{{- end -}}
+{{- /* The multi-tenant mode: each operator token names its tenant, and tenantId stays empty. */ -}}
+{{- with include "redis-onprem.suite.tenantIdClaim" (dict "root" .) }}{{- $_ := set $derived "tenant_id_claim" . -}}{{- end -}}
 {{- end -}}
 {{- $localOIDC := dig "auth" "oidc" nil (default (dict) $v.controlplane.config) -}}
 {{- $_ := set $out "controlplaneOIDC" (include "redis-onprem.suite.owned" (dict "prefix" $p "path" "controlplane.config.auth.oidc" "local" $localOIDC "derived" ($derived | default nil)) | fromJson).value -}}
@@ -184,6 +186,9 @@ app.kubernetes.io/component: dataplane
 {{- $_ := set $config "profile" $v.profile -}}
 {{- $_ := set $config "license" (dict "license_path" (include "gateway.referencePath" (dict "name" "license" "reference" $s.license))) -}}
 {{- $_ := set $config "credential_storage" $credentialStorage -}}
+{{- with include "redis-onprem.redisClientTLS.config" $v.redisClientTLS | fromJson -}}
+  {{- $_ := set $config "redis_client_tls" . -}}
+{{- end -}}
 {{- $defaults := dict -}}
 {{- if $v.defaultDatabases.gatewayDb -}}
   {{- $_ := set $defaults "gateway" $v.defaultDatabases.gatewayDb -}}
@@ -259,6 +264,7 @@ checksum/files: {{ include "gateway.references" . | sha256sum | quote }}
   mountPath: /etc/context-gateway/files/{{ .name }}
   readOnly: true
 {{- end }}
+{{- include "redis-onprem.redisClientTLS.volumeMount" .root.Values.redisClientTLS }}
 {{- with concat .root.Values.volumeMounts .settings.volumeMounts }}
 {{ toYaml . }}
 {{- end }}
@@ -287,6 +293,7 @@ checksum/files: {{ include "gateway.references" . | sha256sum | quote }}
       secretProviderClass: {{ .reference.secretProviderClass | quote }}
   {{- end }}
 {{- end }}
+{{- include "redis-onprem.redisClientTLS.volume" .root.Values.redisClientTLS }}
 {{- with concat .root.Values.volumes .settings.volumes }}
 {{ toYaml . }}
 {{- end }}

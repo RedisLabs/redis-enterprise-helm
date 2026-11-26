@@ -6,7 +6,11 @@
 
 # Required installation inputs.
 # tenantId is the single tenant served by both planes. It must equal the
-# Identity Service chart's runtime.apiKeyTenant.singleTenantID.
+# Identity Service chart's runtime.apiKeyTenant.singleTenantID. Leave it empty
+# for the multi-tenant mode: enable controlplane.config.auth.oidc with
+# tenant_id_claim. If dataplane.config.auth.oidc is enabled,
+# it also needs tenant_id_claim; otherwise agent keys carry the tenant. Each
+# caller brings its own tenant. See "Multi-tenant mode" in README.md.
 tenantId: ""
 # publicBaseURL is the data-plane URL advertised to MCP clients.
 publicBaseURL: ""
@@ -171,7 +175,7 @@ controlplane:
 
   image:
     repository: redislabs/iris-context-gateway-control
-    tag: "1.0.1"
+    tag: "1.1.1"
     pullPolicy: IfNotPresent
 
   replicaCount: 1
@@ -245,6 +249,10 @@ controlplane:
   #     write_timeout: 35s
   #   discovery:
   #     timeout: 10s
+  #   # Allows creating http Upstreams, which are still being rolled out.
+  #   upstreams:
+  #     http:
+  #       enabled: false
   #   credential_storage:
   #     call_timeout: 2s
   #   auth:
@@ -303,7 +311,7 @@ dataplane:
 
   image:
     repository: redislabs/iris-context-gateway-data
-    tag: "1.0.1"
+    tag: "1.1.1"
     pullPolicy: IfNotPresent
 
   replicaCount: 1
@@ -401,6 +409,13 @@ dataplane:
   #     timeout: 30s
   #     read_timeout: 30s
   #     write_timeout: 35s
+  #   client_pool:
+  #     client:
+  #       pool_size: 8
+  #   context_surface:
+  #     client_pool:
+  #       client:
+  #         pool_size: 8
   #   # Both capabilities default to disabled. Caching still needs a tool policy.
   #   # Both need the Gateway's databaseId to select a configured database, and
   #   # each serves only Gateways whose cache or compression is enabled.
@@ -409,9 +424,7 @@ dataplane:
   #     max_entry_bytes: 262144
   #     lookup_timeout: 100ms
   #     write_timeout: 1s
-  #     # Fraction of the Gateway database's maxmemory the cache may hold.
-  #     # With compression.max_memory_share, at most 0.95 together.
-  #     max_memory_share: 0.4
+  #     # max_memory_share is deprecated and ignored: Redis enforces maxmemory.
   #   compression:
   #     enabled: false
   #     # Fallback TTL; a tool policy may override it. Maximum 24h.
@@ -433,8 +446,7 @@ dataplane:
   #     write_timeout: 1s
   #     operation_timeout: 2s
   #     max_query_response_bytes: 32768
-  #     # Fraction of the Gateway database's maxmemory handles may hold.
-  #     max_memory_share: 0.5
+  #     # max_memory_share is deprecated and ignored: Redis enforces maxmemory.
   #   auth:
   #     agent_keys:
   #       introspection:
@@ -459,7 +471,8 @@ dataplane:
   #       audience: []
   #       jwks_uri: ""
   #       user_id_claim: sub
-  #       # The chart supplies tenantId as static_tenant_id.
+  #       # The chart supplies tenantId as static_tenant_id. With an empty
+  #       # tenantId, set tenant_id_claim instead.
   #       email_claim: email
   #       role_claims: [roles, groups]
   #       # Requires a Gateway image with mapped-role support (MOD-19688).
@@ -489,7 +502,11 @@ dataplane:
   # Identity Service to validate MCP callers' agent keys. It is NOT an agent key.
   # Register the SAME value in the Identity Service chart's
   # runtime.serviceCredentials with allowedOperations: [api-key-introspect] and
-  # allowedProducts: [context-gateway].
+  # allowedProducts: [context-gateway]. If the data plane uses auth.oidc or a
+  # service subject (jwt_subjects, identity_service authority), also add
+  # subject-grant-lookup to allowedOperations. The data plane uses this
+  # token to get the grants of each signed-in user and service subject.
+  #
   # Keep it distinct from adminToken/internalToken and Identity Service's control
   # credential. This path currently uses a shared secret, not Kubernetes SA JWTs.
   runtimeToken:
@@ -525,10 +542,13 @@ metadataDB:
 # gatewayDb. A context-surface Upstream create without contextSurface.databaseId
 # uses surfaceDb; without surfaceDb that request is refused with 400.
 # The Gateway database holds the cache and compression handles and only
-# the Gateway writes it. Set maxmemory-policy noeviction on it, and load JSON
-# for compression. The Surface database holds the customer data your Context
-# Surfaces read, and the Gateway never writes it. Do not point both at one
-# Redis when compression is on: noeviction would then apply to customer data.
+# the Gateway writes it. Give it a finite maxmemory and maxmemory-policy
+# volatile-ttl (handles accept any volatile-* policy), and load
+# JSON for compression. noeviction and an unbounded maxmemory still work with a
+# warning and will be refused in a later release. Redis enforces the memory limit. The Surface database
+# holds the customer data your Context Surfaces read, and the Gateway never
+# writes it. Do not point both at one Redis when compression is on: the
+# Gateway's maxmemory and policy would then apply to customer data.
 defaultDatabases:
   gatewayDb: ""
   surfaceDb: ""
@@ -569,6 +589,18 @@ license:
   # fileName: license
   # Optional for either method: change this value to trigger a rollout.
   # checksum: ""
+
+redisClientTLS:
+  # Optional Secret with tls.crt and tls.key: the client certificate every
+  # rediss:// connection presents (redis_client_tls in the service config). With
+  # a certificate-based Redis database user, use a rediss:// URL with no login.
+  # Mounted read-only at /etc/redis-client-tls without subPath, so a renewed
+  # pair is picked up without a restart. Empty disables the feature.
+  existingSecret: ""
+  # Optional per-connection certificates: [{name, existingSecret}]. Each is
+  # mounted at /etc/redis-client-tls/<name>/tls.{crt,key}; a connection block's
+  # own tls: names those paths (cert_path, key_path).
+  extraCertificates: []
 
 tls:
   # Optional PEM CA bundle for outbound connections that need a private CA.

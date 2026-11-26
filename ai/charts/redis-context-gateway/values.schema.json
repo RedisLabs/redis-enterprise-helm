@@ -223,6 +223,22 @@
                 }
               }
             },
+            "upstreams": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "http": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "Allows creating http Upstreams. Off by default; existing http Upstreams keep working either way."
+                    }
+                  }
+                }
+              }
+            },
             "credential_storage": {
               "type": "object",
               "additionalProperties": false,
@@ -372,6 +388,18 @@
             "opentelemetry": {
               "$ref": "#/definitions/telemetry"
             },
+            "client_pool": {
+              "$ref": "#/definitions/customerSocketPool"
+            },
+            "context_surface": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "client_pool": {
+                  "$ref": "#/definitions/customerSocketPool"
+                }
+              }
+            },
             "cache": {
               "type": "object",
               "additionalProperties": false,
@@ -386,7 +414,9 @@
                 "max_memory_share": {
                   "type": "number",
                   "exclusiveMinimum": 0,
-                  "maximum": 1
+                  "maximum": 1,
+                  "deprecated": true,
+                  "description": "Deprecated and ignored. Redis now enforces maxmemory on the Gateway database, so remove this key and set a finite maxmemory with maxmemory-policy volatile-ttl on it. A later chart release removes it."
                 },
                 "lookup_timeout": {
                   "type": "string",
@@ -477,7 +507,9 @@
                 "max_memory_share": {
                   "type": "number",
                   "exclusiveMinimum": 0,
-                  "maximum": 1
+                  "maximum": 1,
+                  "deprecated": true,
+                  "description": "Deprecated and ignored. Redis now enforces maxmemory on the Gateway database, so remove this key and set a finite maxmemory with maxmemory-policy volatile-ttl on it. A later chart release removes it."
                 },
                 "ttl": {
                   "type": "string",
@@ -635,6 +667,38 @@
         }
       }
     },
+    "redisClientTLS": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingSecret": {
+          "type": "string",
+          "description": "Secret with tls.crt and tls.key presented by every rediss:// client; empty disables client certificates."
+        },
+        "extraCertificates": {
+          "type": "array",
+          "description": "Per-connection client certificates, mounted at /etc/redis-client-tls/<name>/.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "existingSecret"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"
+              },
+              "existingSecret": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
     "metadataDB": {
       "$ref": "#/definitions/fileReference",
       "description": "Configuration file containing metadata_db.urls, consumed by both planes."
@@ -666,6 +730,24 @@
   },
   "$schema": "https://json-schema.org/draft-07/schema#",
   "definitions": {
+    "customerSocketPool": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "client": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "pool_size": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1024,
+              "description": "Active Redis sockets per customer client per pod and cluster node. Omit or set to 0 to use the image default of 8."
+            }
+          }
+        }
+      }
+    },
     "image": {
       "type": "object",
       "additionalProperties": false,
@@ -1164,6 +1246,10 @@
         "user_id_claim": {
           "type": "string"
         },
+        "tenant_id_claim": {
+          "type": "string",
+          "description": "Multi-tenant mode only (empty tenantId): the claim that names each caller's tenant."
+        },
         "email_claim": {
           "type": "string"
         },
@@ -1232,7 +1318,7 @@
           "description": "Maps IdP role or group claims to gateway_user; requires a Gateway image with MOD-19688 support."
         }
       },
-      "description": "MCP caller sign-in. Tenant comes from tenantId; Gateway access comes from Identity Service grants."
+      "description": "MCP caller sign-in. Tenant comes from tenantId, or from tenant_id_claim when tenantId is empty; Gateway access comes from Identity Service grants."
     },
     "introspectionTuning": {
       "type": "object",
